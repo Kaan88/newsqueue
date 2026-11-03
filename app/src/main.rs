@@ -3,6 +3,7 @@ mod download;
 mod model;
 mod par2;
 mod rss;
+mod search;
 mod theme;
 mod ui;
 mod unrar;
@@ -102,6 +103,7 @@ pub struct SearchResult {
     pub group: String,
     pub poster: String,
     pub percent: u32,
+    pub url: String,
 }
 
 pub struct App {
@@ -114,6 +116,7 @@ pub struct App {
     pub threads: Vec<ThreadRow>,
     pub history: Vec<HistoryItem>,
     pub search_results: Vec<SearchResult>,
+    pub search_rx: Option<std::sync::mpsc::Receiver<Result<Vec<search::SearchHit>, String>>>,
     pub selected: Option<Selection>,
     pub selected_par2: Option<usize>,
     pub active_tab: usize,
@@ -271,6 +274,7 @@ impl App {
             threads,
             history,
             search_results: Vec::new(),
+            search_rx: None,
             selected: None,
             selected_par2: None,
             active_tab: 0,
@@ -1210,6 +1214,40 @@ impl App {
         }
     }
 
+    fn poll_search(&mut self) {
+        let Some(rx) = self.search_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(hits)) => {
+                self.search_results = hits
+                    .into_iter()
+                    .map(|hit| SearchResult {
+                        subject: hit.subject,
+                        size_mb: hit.size_mb,
+                        age: hit.age,
+                        group: hit.group,
+                        poster: hit.poster,
+                        percent: 100,
+                        url: hit.url,
+                    })
+                    .collect();
+                self.search_status = format!("{} results", self.search_results.len());
+                self.log("Search", &format!("Found {} result(s).", self.search_results.len()));
+            }
+            Ok(Err(error)) => {
+                self.search_status = "Search failed".into();
+                self.log("Error", &format!("Search failed: {error}"));
+                self.toast("Search failed");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => self.search_rx = Some(rx),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.search_status = "Search failed".into();
+                self.log("Error", "Search worker stopped unexpectedly.");
+            }
+        }
+    }
+
     fn auto_import_nzbs(&mut self) {
         let folder = PathBuf::from(&self.settings.auto_import_folder);
         if folder.as_os_str().is_empty() {
@@ -1671,6 +1709,7 @@ impl App {
         self.poll_unrar();
         self.poll_par2();
         self.poll_rss();
+        self.poll_search();
         if self.rss_timer
             && self.rss_rx.is_none()
             && now.duration_since(self.rss_last_refresh)
@@ -2115,6 +2154,23 @@ impl App {
             self.search_results.clear();
             return;
         }
+        if !self.settings.newznab_url.trim().is_empty() {
+            if self.search_rx.is_some() {
+                self.toast("Search already running");
+                return;
+            }
+            let base = self.settings.newznab_url.clone();
+            let key = self.settings.newznab_api_key.clone();
+            let query = q.clone();
+            let (tx, rx) = std::sync::mpsc::channel();
+            std::thread::spawn(move || {
+                let _ = tx.send(search::search(&base, &key, &query));
+            });
+            self.search_rx = Some(rx);
+            self.search_status = "Searching...".into();
+            self.log("Search", &format!("Newznab search for: {q}"));
+            return;
+        }
         let seeds = [
             (
                 "Aurora.Field.Recordings.2025",
@@ -2175,6 +2231,7 @@ impl App {
                 group: (*group).to_string(),
                 poster: (*poster).to_string(),
                 percent: 100 - (i as u32 * 7),
+                url: String::new(),
             })
             .collect();
         self.search_status = format!("{} results", self.search_results.len());
@@ -2185,6 +2242,32 @@ impl App {
         let Some(r) = self.search_results.get(index).cloned() else {
             return;
         };
+        if !r.url.trim().is_empty() {
+            let bytes = match search::fetch_nzb(&r.url) {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    self.show_message = Some(("Search".into(), format!("Could not download NZB:\n{error}")));
+                    return;
+                }
+            };
+            let _ = std::fs::create_dir_all(&self.settings.nzb_dir);
+            let path = PathBuf::from(&self.settings.nzb_dir)
+                .join(format!("{}.nzb", sanitize_folder(&r.subject)));
+            if let Err(error) = std::fs::write(&path, bytes) {
+                self.show_message = Some(("Search".into(), format!("Could not save NZB:\n{error}")));
+                return;
+            }
+            match parse_nzb(&path) {
+                Ok(nzb) => {
+                    self.add_nzb_from_parsed(nzb, r.url.clone(), false);
+                }
+                Err(error) => {
+                    let _ = std::fs::remove_file(&path);
+                    self.show_message = Some(("Search".into(), format!("Invalid NZB:\n{error}")));
+                }
+            }
+            return;
+        }
         let id = self.queue.iter().map(|c| c.id).max().unwrap_or(0) + 1;
         let total = (r.size_mb * MB) as u64;
         let c = Collection {
@@ -2471,6 +2554,26 @@ fn main() -> eframe::Result<()> {
             }
             Err(error) => {
                 eprintln!("rss test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Some(position) = args.iter().position(|a| a == "--search-test") {
+        let settings = Settings::load();
+        let query = args
+            .get(position + 1)
+            .cloned()
+            .unwrap_or_else(|| "test".into());
+        match search::search(&settings.newznab_url, &settings.newznab_api_key, &query) {
+            Ok(hits) => {
+                println!("{} search result(s)", hits.len());
+                for hit in hits.iter().take(10) {
+                    println!("{} | {:.1} MB", hit.subject, hit.size_mb);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("search test failed: {error}");
                 std::process::exit(1);
             }
         }

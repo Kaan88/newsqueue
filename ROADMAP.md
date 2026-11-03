@@ -6,7 +6,7 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-03)
 
-- **Phase 0 - partial.** 20 tests, screenshot checks, real PAR2/damaged-RAR
+- **Phase 0 - partial.** 21 tests, screenshot checks, real PAR2/damaged-RAR
   fixture and the user-provided NZB fixtures exist. A mock NNTP server is still
   missing.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
@@ -20,9 +20,10 @@ not a source-code or artwork copy.
 - **Phase 3 — core done.** Overwrite/rename, strip-root, password, delete
   archives, move/delete patterns, target folder, pause-while-unraring and manual
   unpack work. Auto-rename/delete-empty-folder/subfolder variants remain.
-- **Phase 4 — RSS fetch and autodownload work.** Feed URLs and filters are
-  stored locally (never committed); a live feed returned 100 items and the
-  filter test downloaded one NZB. Newznab/global search remains sample-only.
+- **Phase 4 — RSS and search are implemented.** Feed URLs and filters are
+  stored locally (never committed); a live feed returned 100 items, the filter
+  test downloaded one NZB, and generic Newznab search was exercised against a
+  mock endpoint. A real index URL/API key is still not configured.
 - **Phase 5 — improved.** Explorer has selection, navigation, history,
   favourites, context menu, delete, rename, open-with and columns. Drag/drop,
   multi-select and clipboard cut/copy/paste remain.

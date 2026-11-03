@@ -18,6 +18,7 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 - Explorer tab with folder tree, file list, back/forward/up history, favourites,
   filters, context menu, rename/delete and configurable columns
 - RSS feed fetching with filter-based autodownload
+- Generic Newznab search (configure URL/API key in Setup > NZB)
 - Setup pages, server editor, scheduler, categories, statistics, search, notes,
   log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
@@ -45,6 +46,7 @@ cargo run -- --unrar-test <folder-with-rar> <dest>
 cargo run -- --par2-test <folder-with-par2>
 cargo run -- --rss-test
 cargo run -- --rss-download-test
+cargo run -- --search-test <query>
 cargo run -- --download-test <file.nzb>
 ```
 

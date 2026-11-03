@@ -445,6 +445,10 @@ pub struct Settings {
     pub rss_urls: Vec<String>,
     #[serde(default)]
     pub rss_filters: String,
+    #[serde(default)]
+    pub newznab_url: String,
+    #[serde(default)]
+    pub newznab_api_key: String,
     pub auto_cleanup_minutes: u32,
     pub player_exe: String,
     pub delete_rars_after_extract: bool,
@@ -575,6 +579,8 @@ impl Default for Settings {
             rss_refresh_minutes: 15,
             rss_urls: Vec::new(),
             rss_filters: String::new(),
+            newznab_url: String::new(),
+            newznab_api_key: String::new(),
             auto_cleanup_minutes: 0,
             player_exe: String::new(),
             delete_rars_after_extract: false,

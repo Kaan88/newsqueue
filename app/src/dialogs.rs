@@ -606,6 +606,19 @@ fn page_nzb(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 7.0])
         .show(ui, |ui| {
             dir_row(ui, "Default NZB folder", &mut s.nzb_dir);
+            ui.label("Newznab URL");
+            ui.add_sized(
+                [300.0, 20.0],
+                TextEdit::singleline(&mut s.newznab_url)
+                    .hint_text("https://index.example/api"),
+            );
+            ui.end_row();
+            ui.label("Newznab API key");
+            ui.add_sized(
+                [300.0, 20.0],
+                TextEdit::singleline(&mut s.newznab_api_key).password(true),
+            );
+            ui.end_row();
             ui.label("Autoimport NZB files from folder");
             ui.horizontal(|ui| {
                 ui.add_sized(
