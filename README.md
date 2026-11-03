@@ -13,8 +13,8 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 - Real PAR2 verification/repair through the bundled `par2.exe`, followed by
   optional unrar
 - RAR extraction through the bundled 64-bit `UnRAR.exe`, with overwrite/rename,
-  strip-root, password, delete-archive, move/delete-pattern and target-folder
-  options
+  strip-root, password, delete-archive, move/delete-pattern, target-folder,
+  auto-rename-to-collection, delete-empty-folder and group/NZB subfolder options
 - Explorer tab with folder tree, file list, back/forward/up history, favourites,
   filters, context menu, rename/delete and configurable columns
 - RSS feed fetching with filter-based autodownload

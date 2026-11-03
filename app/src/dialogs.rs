@@ -993,6 +993,15 @@ fn page_unpack(ui: &mut Ui, s: &mut Settings) {
             ui.label("Create subfolder based on NZB name");
             ui.checkbox(&mut s.create_dir_nzb_name, "");
             ui.end_row();
+            ui.label("Create subfolder based on group name");
+            ui.checkbox(&mut s.create_dir_group_name, "");
+            ui.end_row();
+            ui.label("Rename single extracted file to collection name");
+            ui.checkbox(&mut s.auto_rename_to_collection, "");
+            ui.end_row();
+            ui.label("Delete empty folders after unpacking");
+            ui.checkbox(&mut s.delete_empty_folder, "");
+            ui.end_row();
             ui.label("Pause downloading while unraring");
             ui.checkbox(&mut s.pause_while_unraring, "");
             ui.end_row();

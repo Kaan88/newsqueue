@@ -12,7 +12,7 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 24 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 26 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
@@ -24,8 +24,9 @@ index, a known-good PAR2 release and a second server.
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
 - **Phase 3 — core done.** Overwrite/rename, strip-root, password, delete
-  archives, move/delete patterns, target folder, pause-while-unraring and manual
-  unpack work. Auto-rename/delete-empty-folder/subfolder variants remain.
+  archives, move/delete patterns, target folder, pause-while-unraring, manual
+  unpack, auto-rename to collection, delete-empty-folder and group/NZB
+  subfolders work. Archive-name subfolders and a password prompt remain.
 - **Phase 4 — RSS and search are implemented.** Feed URLs and filters are
   stored locally (never committed); a live feed returned 100 items, the filter
   test downloaded one NZB, and generic Newznab search was exercised against a

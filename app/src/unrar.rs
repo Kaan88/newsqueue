@@ -22,6 +22,9 @@ pub struct UnrarOptions {
     pub rename_existing: bool,
     pub strip_root: bool,
     pub delete_archives: bool,
+    pub delete_empty_folder: bool,
+    pub auto_rename: bool,
+    pub collection_name: String,
     pub password: String,
     pub move_patterns: Vec<String>,
     pub delete_patterns: Vec<String>,
@@ -36,6 +39,9 @@ impl UnrarOptions {
             rename_existing: settings.rename_existing,
             strip_root: settings.strip_root,
             delete_archives: settings.delete_archives || collection.delete_archives,
+            delete_empty_folder: settings.delete_empty_folder,
+            auto_rename: settings.auto_rename_to_collection,
+            collection_name: collection.subject.clone(),
             password: collection.password.clone(),
             move_patterns: split_patterns(&settings.move_files_to_unrar),
             delete_patterns: split_patterns(&settings.delete_files_after_unrar),
@@ -51,18 +57,20 @@ impl UnrarOptions {
 
 /// Target directory for a collection's archive contents.
 pub fn target_dir(settings: &Settings, collection: &Collection) -> PathBuf {
-    let base = if !collection.unrar_folder.trim().is_empty() {
+    let mut base = if !collection.unrar_folder.trim().is_empty() {
         PathBuf::from(&collection.unrar_folder)
     } else if settings.unrar_to_different {
         PathBuf::from(&settings.unrar_dir)
     } else {
         PathBuf::from(&collection.folder)
     };
-    if settings.create_dir_nzb_name {
-        base.join(sanitize_folder(&collection.subject))
-    } else {
-        base
+    if settings.create_dir_group_name && !collection.group.trim().is_empty() {
+        base = base.join(sanitize_folder(&collection.group));
     }
+    if settings.create_dir_nzb_name {
+        base = base.join(sanitize_folder(&collection.subject));
+    }
+    base
 }
 
 pub fn spawn(collection_id: u64, source: PathBuf, dest: PathBuf, options: UnrarOptions) -> ActiveUnrar {
@@ -139,6 +147,13 @@ pub fn extract(source: &Path, dest: &Path, options: &UnrarOptions) -> Result<Str
     }
     move_matching_files(source, dest, &options.move_patterns, options.case_insensitive);
     delete_matching_files(source, &options.delete_patterns, options.case_insensitive);
+    if options.auto_rename {
+        rename_single_to_collection(dest, &options.collection_name);
+    }
+    if options.delete_empty_folder {
+        remove_empty_dirs(source);
+        remove_empty_dirs(dest);
+    }
 
     let extracted = count_files(dest);
     let warning = if code == 1 {
@@ -307,6 +322,55 @@ fn strip_single_root(dest: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
+fn rename_single_to_collection(dest: &Path, collection_name: &str) {
+    let Some(name) = sanitize_name(collection_name) else {
+        return;
+    };
+    let Ok(entries) = fs::read_dir(dest) else {
+        return;
+    };
+    let entries: Vec<_> = entries.flatten().collect();
+    if entries.len() != 1 || !entries[0].file_type().map(|kind| kind.is_file()).unwrap_or(false) {
+        return;
+    }
+    let source = entries[0].path();
+    let extension = source
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    let target = dest.join(format!("{name}{extension}"));
+    if target != source && !target.exists() {
+        let _ = fs::rename(source, target);
+    }
+}
+
+fn sanitize_name(name: &str) -> Option<String> {
+    let name = sanitize_folder(name);
+    if name.trim().is_empty() || name == "collection" {
+        None
+    } else {
+        Some(name)
+    }
+}
+
+fn remove_empty_dirs(path: &Path) {
+    let Ok(entries) = fs::read_dir(path) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let child = entry.path();
+        if entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false) {
+            remove_empty_dirs(&child);
+            let empty = fs::read_dir(&child)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if empty {
+                let _ = fs::remove_dir(child);
+            }
+        }
+    }
+}
+
 fn move_matching_files(source: &Path, dest: &Path, patterns: &[String], ignore_case: bool) {
     if patterns.is_empty() || source == dest {
         return;
@@ -443,6 +507,61 @@ mod tests {
         assert!(!glob_match("*.nfo", "info.txt", true));
     }
 
+    #[test]
+    fn target_dir_adds_group_and_nzb_subfolders() {
+        let mut settings = Settings::default();
+        let mut collection = crate::model::sample_queue(&settings).remove(0);
+        collection.group = "alt.binaries.test".into();
+        collection.subject = "Test.Release".into();
+        collection.unrar_folder.clear();
+        settings.unrar_to_different = true;
+        settings.unrar_dir = "C:\\base".into();
+        settings.create_dir_group_name = true;
+        settings.create_dir_nzb_name = true;
+        let path = target_dir(&settings, &collection);
+        assert!(path.ends_with(std::path::Path::new("alt.binaries.test").join("Test.Release")));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn auto_renames_single_file_and_removes_empty_folders() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-rename-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let dest = root.join("dest");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(source.join("empty")).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("single.rar");
+        fs::copy(fixture, source.join("single.rar")).unwrap();
+        let options = UnrarOptions {
+            overwrite: true,
+            rename_existing: true,
+            strip_root: true,
+            delete_archives: false,
+            delete_empty_folder: true,
+            auto_rename: true,
+            collection_name: "Renamed.Release".into(),
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        };
+        extract(&source, &dest, &options).unwrap();
+        assert!(dest.join("Renamed.Release.mkv").is_file());
+        assert!(!source.join("empty").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn extracts_a_rar_and_strips_the_root_folder() {
@@ -467,6 +586,9 @@ mod tests {
             rename_existing: true,
             strip_root: true,
             delete_archives: false,
+            delete_empty_folder: false,
+            auto_rename: false,
+            collection_name: String::new(),
             password: String::new(),
             move_patterns: Vec::new(),
             delete_patterns: Vec::new(),
