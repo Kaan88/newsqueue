@@ -6,10 +6,10 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-04)
 
-Current app version: **1.0.0**, versioned independently of the AltBinz 0.48.4
-parity target. The `v1.0.0` release was deleted and rebuilt on 2026-11-04 so it
-contains the yEnc decode fix and the Phase 3 unrar additions; the previous
-`v1.0.0` binaries corrupted every download.
+Current app version: **1.0.1**, versioned independently of the AltBinz 0.48.4
+parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
+binaries corrupted every download; `v1.0.1` supersedes it and adds
+content-based naming for obfuscated posts.
 
 ### Status at a glance
 
@@ -24,7 +24,7 @@ contains the yEnc decode fix and the Phase 3 unrar additions; the previous
 | Tray | Done | Off-screen minimize-to-tray with taskbar entry removed, speed tooltip, download/unrar balloons, Show/Exit |
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
-| Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.0` |
+| Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.1` |
 | Verification | Baseline done | 60 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a valid PAR2 release, a Newznab endpoint/key and a second server |
@@ -257,8 +257,12 @@ live testing.
 6. **Downloads are not self-verifying.** Add a checksum-on-complete option or a
    per-article `=yend size` cross-check so a decode regression cannot pass on
    length alone.
-7. **Minor shortcut polish** and any remaining peripheral settings.
-8. **Per-setting verification checklist**; the current baseline is tests,
+7. **No update check.** `Version?` shows a static dialog and the
+   `check_version_minutes` setting is stored but never used; there is no
+   auto-update. A real check would query the GitHub releases API and offer the
+   installer.
+8. **Minor shortcut polish** and any remaining peripheral settings.
+9. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.
 
 ## Suggested next order

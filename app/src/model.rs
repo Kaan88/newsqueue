@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "NewsQueue";
-pub const VERSION: &str = "1.0.0";
+pub const VERSION: &str = "1.0.1";
 pub const BUILD_DATE: &str = "2026-11-04";
 pub const MAX_SPEED_KBPS: f64 = 55.0;
 pub const MAX_SPEED_MBPS: f64 = 0.44;

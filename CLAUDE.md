@@ -12,16 +12,17 @@ is a private-use desktop Usenet downloader, not a source-code or artwork copy of
 the original. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
-- Current app version: **1.0.0**
+- Current app version: **1.0.1**
 - Current build date: **2026-11-04**
 - Parity target: **AltBinz 0.48.4**
 - Platform: Windows x64
 - UI: eframe/egui 0.29, custom light theme
 - Network: std threads, blocking sockets, no async runtime
 
-The published `v1.0.0` release is rebuilt rather than patched: it was deleted and
-recreated on 2026-11-04 because every download made before the yEnc escape fix
-was corrupt. Its assets keep their build-output file names.
+`v1.0.0` was deleted and recreated on 2026-11-04 because every download made
+before the yEnc escape fix was corrupt; `v1.0.1` supersedes it with
+content-based archive naming for obfuscated posts. Release assets keep their
+build-output file names and carry no label.
 
 ## 2. Repository layout
 
@@ -264,9 +265,10 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 8. Versioning, packaging and releases
 
-NewsQueue uses independent versions. Current version is **1.0.0**. The published
-`v1.0.0` release predates the Phase 3 archive-name/password-prompt additions, so
-do not describe the release as containing them unless a newer release is cut.
+NewsQueue uses independent versions. Current version is **1.0.1**.
+`v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
+`v1.0.1`, which adds content-based naming for obfuscated posts. There is no
+update check and no auto-update; `Version?` is a static dialog.
 
 Portable package:
 
@@ -350,6 +352,8 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   thread.
 - Release builds have no console window. Debug builds do.
 - `app/newsqueue-settings.json` and other runtime JSON files are local-only.
+- There is no update check or auto-update. The `Version?` toolbar button shows a
+  static message and `Settings::check_version_minutes` is stored but never read.
 - The original binaries/evidence are read-only. Use Ghidra/DFM evidence rather
   than guessing measured constants.
 - Keep `MECHANICS.md` and `mechanics.json` in sync when a measured value changes.
