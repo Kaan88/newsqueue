@@ -77,6 +77,7 @@ pub struct DownloadJob {
     pub priority: u32,
     pub cache_mb: u32,
     pub cache_cleanup_minutes: u32,
+    pub proxy: ProxyConfig,
     pub files: Vec<DownloadFile>,
 }
 
@@ -88,6 +89,7 @@ pub fn job_for_collection(
     priority: u32,
     cache_mb: u32,
     cache_cleanup_minutes: u32,
+    proxy: ProxyConfig,
 ) -> DownloadJob {
     DownloadJob {
         id: c.id,
@@ -98,6 +100,7 @@ pub fn job_for_collection(
         priority,
         cache_mb,
         cache_cleanup_minutes,
+        proxy,
         files: c
             .files
             .iter()
@@ -307,7 +310,7 @@ fn run_job(
         job.cache_mb,
         job.cache_cleanup_minutes,
     )));
-    let mut lookup = Nntp::connect(server)?;
+    let mut lookup = Nntp::connect(server, &job.proxy)?;
     let mut tasks: VecDeque<Task> = VecDeque::new();
     let mut paths: Vec<Option<PathBuf>> = vec![None; job.files.len()];
     let mut skipped = vec![false; job.files.len()];
@@ -510,6 +513,7 @@ fn run_job(
     let retry_count = job.retry_count;
     let retry_delay = job.retry_delay;
     let priority = job.priority;
+    let proxy = job.proxy.clone();
     let mut handles = Vec::new();
     for worker_index in 0..worker_count {
         let server = servers[worker_index % servers.len()].clone();
@@ -521,6 +525,7 @@ fn run_job(
         let stop = Arc::clone(stop);
         let snap = Arc::clone(snap);
         let cache = cache.clone();
+        let proxy = proxy.clone();
         handles.push(thread::spawn(move || {
             download_worker(
                 &server,
@@ -532,6 +537,7 @@ fn run_job(
                 &errors,
                 &connect_errors,
                 &cache,
+                &proxy,
                 per_worker_throttle,
                 retry_count,
                 retry_delay,
@@ -648,6 +654,7 @@ fn download_worker(
     errors: &Mutex<Vec<String>>,
     connect_errors: &Mutex<Vec<String>>,
     cache: &Arc<Mutex<ArticleCache>>,
+    proxy: &ProxyConfig,
     throttle_bps: f64,
     retry_count: u32,
     retry_delay: u32,
@@ -656,7 +663,7 @@ fn download_worker(
     set_thread_priority(priority);
     let mut connect_attempt = 0;
     let mut nntp = loop {
-        match Nntp::connect(server) {
+        match Nntp::connect(server, proxy) {
             Ok(nntp) => break nntp,
             Err(e) => {
                 if connect_attempt < retry_count {
@@ -869,8 +876,200 @@ struct Nntp {
     reader: BufReader<NetStream>,
 }
 
+fn connect_direct(host: &str, port: u16, timeout: Duration) -> Result<TcpStream, String> {
+    let addresses = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("Cannot look up {host}: {e}"))?;
+    let mut last_error = String::new();
+    for address in addresses {
+        match TcpStream::connect_timeout(&address, timeout) {
+            Ok(stream) => return Ok(stream),
+            Err(error) => last_error = error.to_string(),
+        }
+    }
+    Err(if last_error.is_empty() {
+        format!("Cannot connect to {host}:{port}")
+    } else {
+        format!("Cannot connect to {host}:{port}: {last_error}")
+    })
+}
+
+fn connect_via_proxy(
+    proxy: &ProxyConfig,
+    target_host: &str,
+    target_port: u16,
+    timeout: Duration,
+) -> Result<TcpStream, String> {
+    let proxy_host = host_only(&proxy.address);
+    let proxy_port = proxy.port.max(1);
+    let mut stream = connect_direct(&proxy_host, proxy_port, timeout)?;
+    stream
+        .set_read_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+    stream
+        .set_write_timeout(Some(timeout))
+        .map_err(|error| error.to_string())?;
+    let kind = proxy.kind.trim().to_ascii_lowercase();
+    if kind == "socks5" || kind == "socks" {
+        socks5_connect(&mut stream, proxy, target_host, target_port)?;
+    } else {
+        http_connect(&mut stream, proxy, target_host, target_port)?;
+    }
+    Ok(stream)
+}
+
+fn http_connect(
+    stream: &mut TcpStream,
+    proxy: &ProxyConfig,
+    target_host: &str,
+    target_port: u16,
+) -> Result<(), String> {
+    let authorization = if proxy.auth {
+        format!(
+            "Proxy-Authorization: Basic {}\r\n",
+            base64_encode(format!("{}:{}", proxy.username, proxy.password).as_bytes())
+        )
+    } else {
+        String::new()
+    };
+    let request = format!(
+        "CONNECT {target_host}:{target_port} HTTP/1.1\r\nHost: {target_host}:{target_port}\r\n{authorization}\r\n"
+    );
+    stream
+        .write_all(request.as_bytes())
+        .map_err(|error| format!("Proxy request failed: {error}"))?;
+    stream
+        .flush()
+        .map_err(|error| format!("Proxy request failed: {error}"))?;
+    let mut response = Vec::new();
+    let mut byte = [0u8; 1];
+    while response.len() < 16 * 1024 {
+        stream
+            .read_exact(&mut byte)
+            .map_err(|error| format!("Proxy response failed: {error}"))?;
+        response.push(byte[0]);
+        if response.ends_with(b"\r\n\r\n") {
+            break;
+        }
+    }
+    let text = String::from_utf8_lossy(&response);
+    let status = text.lines().next().unwrap_or_default();
+    let ok = status
+        .split_whitespace()
+        .nth(1)
+        .map(|code| code == "200")
+        .unwrap_or(false);
+    if ok {
+        Ok(())
+    } else {
+        Err(format!("Proxy CONNECT failed: {status}"))
+    }
+}
+
+fn socks5_connect(
+    stream: &mut TcpStream,
+    proxy: &ProxyConfig,
+    target_host: &str,
+    target_port: u16,
+) -> Result<(), String> {
+    let methods: &[u8] = if proxy.auth { &[0x00, 0x02] } else { &[0x00] };
+    let mut greeting = vec![0x05, methods.len() as u8];
+    greeting.extend_from_slice(methods);
+    stream
+        .write_all(&greeting)
+        .map_err(|error| format!("SOCKS5 greeting failed: {error}"))?;
+    let mut reply = [0u8; 2];
+    stream
+        .read_exact(&mut reply)
+        .map_err(|error| format!("SOCKS5 greeting failed: {error}"))?;
+    if reply[0] != 0x05 || reply[1] == 0xff {
+        return Err("SOCKS5 proxy rejected the authentication methods".into());
+    }
+    if reply[1] == 0x02 {
+        if !proxy.auth {
+            return Err("SOCKS5 proxy requires authentication".into());
+        }
+        let user = proxy.username.as_bytes();
+        let password = proxy.password.as_bytes();
+        if user.len() > 255 || password.len() > 255 {
+            return Err("SOCKS5 proxy credentials are too long".into());
+        }
+        let mut auth = vec![0x01, user.len() as u8];
+        auth.extend_from_slice(user);
+        auth.push(password.len() as u8);
+        auth.extend_from_slice(password);
+        stream
+            .write_all(&auth)
+            .map_err(|error| format!("SOCKS5 authentication failed: {error}"))?;
+        let mut auth_reply = [0u8; 2];
+        stream
+            .read_exact(&mut auth_reply)
+            .map_err(|error| format!("SOCKS5 authentication failed: {error}"))?;
+        if auth_reply[0] != 0x01 || auth_reply[1] != 0x00 {
+            return Err("SOCKS5 authentication rejected".into());
+        }
+    }
+    let host = target_host.as_bytes();
+    if host.len() > 255 {
+        return Err("SOCKS5 target host name is too long".into());
+    }
+    let mut request = vec![0x05, 0x01, 0x00, 0x03, host.len() as u8];
+    request.extend_from_slice(host);
+    request.extend_from_slice(&target_port.to_be_bytes());
+    stream
+        .write_all(&request)
+        .map_err(|error| format!("SOCKS5 connect failed: {error}"))?;
+    let mut header = [0u8; 4];
+    stream
+        .read_exact(&mut header)
+        .map_err(|error| format!("SOCKS5 connect failed: {error}"))?;
+    if header[0] != 0x05 || header[1] != 0x00 {
+        return Err(format!("SOCKS5 connect rejected with code {}", header[1]));
+    }
+    let address_length = match header[3] {
+        0x01 => 4,
+        0x04 => 16,
+        0x03 => {
+            let mut length = [0u8; 1];
+            stream
+                .read_exact(&mut length)
+                .map_err(|error| format!("SOCKS5 connect failed: {error}"))?;
+            length[0] as usize
+        }
+        other => return Err(format!("SOCKS5 returned unknown address type {other}")),
+    };
+    let mut discard = vec![0u8; address_length + 2];
+    stream
+        .read_exact(&mut discard)
+        .map_err(|error| format!("SOCKS5 connect failed: {error}"))?;
+    Ok(())
+}
+
+fn base64_encode(input: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut output = String::new();
+    for chunk in input.chunks(3) {
+        let first = chunk[0];
+        let second = *chunk.get(1).unwrap_or(&0);
+        let third = *chunk.get(2).unwrap_or(&0);
+        output.push(TABLE[(first >> 2) as usize] as char);
+        output.push(TABLE[(((first & 0x03) << 4) | (second >> 4)) as usize] as char);
+        output.push(if chunk.len() > 1 {
+            TABLE[(((second & 0x0f) << 2) | (third >> 6)) as usize] as char
+        } else {
+            '='
+        });
+        output.push(if chunk.len() > 2 {
+            TABLE[(third & 0x3f) as usize] as char
+        } else {
+            '='
+        });
+    }
+    output
+}
+
 impl Nntp {
-    fn connect(server: &Server) -> Result<Self, String> {
+    fn connect(server: &Server, proxy: &ProxyConfig) -> Result<Self, String> {
         let host = host_only(&server.address);
         // Function 0x870648: SSL uses port 563, plain NNTP uses 119.
         let port = if server.port == 0 {
@@ -883,27 +1082,11 @@ impl Nntp {
             server.port
         };
         let timeout = Duration::from_secs(server_timeout());
-        let addresses = (host.as_str(), port)
-            .to_socket_addrs()
-            .map_err(|e| format!("Cannot look up {host}: {e}"))?;
-        let mut chosen: Option<TcpStream> = None;
-        let mut last_error = String::new();
-        for address in addresses {
-            match TcpStream::connect_timeout(&address, timeout) {
-                Ok(stream) => {
-                    chosen = Some(stream);
-                    break;
-                }
-                Err(e) => last_error = e.to_string(),
-            }
-        }
-        let stream = chosen.ok_or_else(|| {
-            if last_error.is_empty() {
-                format!("Cannot connect to {host}:{port}")
-            } else {
-                format!("Cannot connect to {host}:{port}: {last_error}")
-            }
-        })?;
+        let stream = if proxy.is_enabled() {
+            connect_via_proxy(proxy, &host, port, timeout)?
+        } else {
+            connect_direct(&host, port, timeout)?
+        };
         stream
             .set_read_timeout(Some(timeout))
             .map_err(|e| e.to_string())?;
@@ -1273,6 +1456,7 @@ mod tests {
             priority: 3,
             cache_mb: 0,
             cache_cleanup_minutes: 30,
+            proxy: ProxyConfig::default(),
             files: vec![DownloadFile {
                 name: "mock.bin".into(),
                 bytes,
@@ -1322,6 +1506,145 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    fn http_proxy_stub() -> (u16, Arc<Mutex<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let captured = Arc::new(Mutex::new(String::new()));
+        let output = captured.clone();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1];
+            while request.len() < 16 * 1024 {
+                if stream.read_exact(&mut buffer).is_err() {
+                    return;
+                }
+                request.push(buffer[0]);
+                if request.ends_with(b"\r\n\r\n") {
+                    break;
+                }
+            }
+            if let Ok(mut text) = output.lock() {
+                *text = String::from_utf8_lossy(&request).to_string();
+            }
+            let _ = stream.write_all(b"HTTP/1.1 200 Connection established\r\n\r\n");
+            let _ = stream.write_all(b"200 mock ready\r\n");
+            let mut line = String::new();
+            let mut reader = BufReader::new(stream);
+            let _ = reader.read_line(&mut line);
+        });
+        (port, captured)
+    }
+
+    fn socks5_proxy_stub() -> (u16, Arc<Mutex<String>>) {
+        use std::io::{Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let captured = Arc::new(Mutex::new(String::new()));
+        let output = captured.clone();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut greeting = [0u8; 2];
+            if stream.read_exact(&mut greeting).is_err() || greeting[0] != 5 {
+                return;
+            }
+            let mut methods = vec![0u8; greeting[1] as usize];
+            if stream.read_exact(&mut methods).is_err() {
+                return;
+            }
+            let _ = stream.write_all(&[5, 0]);
+            let mut header = [0u8; 4];
+            if stream.read_exact(&mut header).is_err() || header[1] != 1 {
+                return;
+            }
+            let host = if header[3] == 3 {
+                let mut length = [0u8; 1];
+                if stream.read_exact(&mut length).is_err() {
+                    return;
+                }
+                let mut host = vec![0u8; length[0] as usize];
+                if stream.read_exact(&mut host).is_err() {
+                    return;
+                }
+                host
+            } else {
+                let mut host = vec![0u8; if header[3] == 1 { 4 } else { 16 }];
+                if stream.read_exact(&mut host).is_err() {
+                    return;
+                }
+                host
+            };
+            let mut port = [0u8; 2];
+            if stream.read_exact(&mut port).is_err() {
+                return;
+            }
+            if let Ok(mut text) = output.lock() {
+                *text = format!(
+                    "{}:{}",
+                    String::from_utf8_lossy(&host),
+                    u16::from_be_bytes(port)
+                );
+            }
+            let _ = stream.write_all(&[5, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
+            let _ = stream.write_all(b"200 mock ready\r\n");
+            let mut line = String::new();
+            let mut reader = BufReader::new(stream);
+            let _ = reader.read_line(&mut line);
+        });
+        (port, captured)
+    }
+
+    #[test]
+    fn connects_through_an_http_proxy_with_basic_auth() {
+        let (port, captured) = http_proxy_stub();
+        let mut server = Server::default();
+        server.address = "news.invalid".into();
+        server.port = 119;
+        server.ssl = false;
+        server.auth = false;
+        let proxy = ProxyConfig {
+            enabled: true,
+            kind: "http".into(),
+            address: "127.0.0.1".into(),
+            port,
+            auth: true,
+            username: "user".into(),
+            password: "pass".into(),
+        };
+        let nntp = Nntp::connect(&server, &proxy).unwrap();
+        let request = captured.lock().unwrap().clone();
+        assert!(request.contains("CONNECT news.invalid:119"), "{request}");
+        assert!(request.contains("Proxy-Authorization: Basic dXNlcjpwYXNz"), "{request}");
+        drop(nntp);
+    }
+
+    #[test]
+    fn connects_through_a_socks5_proxy() {
+        let (port, captured) = socks5_proxy_stub();
+        let mut server = Server::default();
+        server.address = "news.invalid".into();
+        server.port = 119;
+        server.ssl = false;
+        server.auth = false;
+        let proxy = ProxyConfig {
+            enabled: true,
+            kind: "socks5".into(),
+            address: "127.0.0.1".into(),
+            port,
+            auth: false,
+            username: String::new(),
+            password: String::new(),
+        };
+        let nntp = Nntp::connect(&server, &proxy).unwrap();
+        assert_eq!(*captured.lock().unwrap(), "news.invalid:119");
+        drop(nntp);
+    }
+
     #[test]
     fn article_cache_respects_its_megabyte_limit() {
         let mut cache = ArticleCache::new(1, 30);
@@ -1354,6 +1677,7 @@ mod tests {
             priority: 3,
             cache_mb: 1,
             cache_cleanup_minutes: 30,
+            proxy: ProxyConfig::default(),
             files: vec![
                 DownloadFile {
                     name: "one.bin".into(),
@@ -1446,6 +1770,7 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
         priority: settings.download_priority,
         cache_mb: settings.article_cache_mb,
         cache_cleanup_minutes: settings.cache_cleanup_minutes,
+        proxy: ProxyConfig::from_settings(&settings),
         files: parsed
             .files
             .iter()

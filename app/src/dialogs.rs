@@ -753,6 +753,18 @@ fn page_proxy(ui: &mut Ui, s: &mut Settings) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
+            ui.label("Type");
+            egui::ComboBox::from_id_salt("proxy_kind")
+                .selected_text(if s.proxy_kind.eq_ignore_ascii_case("socks5") {
+                    "SOCKS5"
+                } else {
+                    "HTTP CONNECT"
+                })
+                .show_ui(ui, |ui| {
+                    ui.selectable_value(&mut s.proxy_kind, "http".into(), "HTTP CONNECT");
+                    ui.selectable_value(&mut s.proxy_kind, "socks5".into(), "SOCKS5");
+                });
+            ui.end_row();
             ui.label("Address");
             ui.add_sized([240.0, 20.0], TextEdit::singleline(&mut s.proxy_address));
             ui.end_row();

@@ -347,6 +347,35 @@ fn rebase_app_path(path: &str, base: &Path) -> String {
     path.to_string()
 }
 
+#[derive(Clone, Debug, Default)]
+pub struct ProxyConfig {
+    pub enabled: bool,
+    pub kind: String,
+    pub address: String,
+    pub port: u16,
+    pub auth: bool,
+    pub username: String,
+    pub password: String,
+}
+
+impl ProxyConfig {
+    pub fn from_settings(settings: &Settings) -> Self {
+        Self {
+            enabled: settings.proxy_enabled,
+            kind: settings.proxy_kind.clone(),
+            address: settings.proxy_address.clone(),
+            port: settings.proxy_port,
+            auth: settings.proxy_auth,
+            username: settings.proxy_username.clone(),
+            password: settings.proxy_password.clone(),
+        }
+    }
+
+    pub fn is_enabled(&self) -> bool {
+        self.enabled && !self.address.trim().is_empty()
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -406,6 +435,7 @@ pub struct Settings {
     pub proxy_enabled: bool,
     pub proxy_address: String,
     pub proxy_port: u16,
+    pub proxy_kind: String,
     pub proxy_auth: bool,
     pub proxy_username: String,
     pub proxy_password: String,
@@ -539,6 +569,7 @@ impl Default for Settings {
             proxy_enabled: false,
             proxy_address: String::new(),
             proxy_port: 8080,
+            proxy_kind: "http".into(),
             proxy_auth: false,
             proxy_username: String::new(),
             proxy_password: String::new(),
