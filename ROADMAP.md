@@ -11,8 +11,9 @@ not a source-code or artwork copy.
   missing.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
   sidecars (`.nqpart`) preserve downloaded articles across restarts; all enabled
-  servers are used; watched-folder auto-import works; `Incomplete` feeds the PAR2
-  stage. Retry/backoff, article cache/priorities and execute hooks remain.
+  servers are used; watched-folder auto-import and retry/backoff work;
+  `Incomplete` feeds the PAR2 stage. Article cache/priorities and execute hooks
+  remain.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
@@ -28,8 +29,9 @@ not a source-code or artwork copy.
 - **Phase 6 — partial.** Log retention, persistent history, category routing and
   multi-server use are implemented. Proxy, thread priorities, tray, Join/Split
   and execute/player hooks remain.
-- **Phase 7 — partial.** Original icon and window/exe resource are done. Installer
-  and screenshot diffs remain.
+- **Phase 7 — partial.** Original icon, window/exe resources and a portable
+  release zip (`app/package.ps1`) are done. Installer and screenshot diffs
+  remain.
 
 The supplied `Civilization.IV` and `Love.Under.the.Mistletoe` downloads complete
 at the transfer layer, but their PAR2 packet hashes / RAR payloads are

@@ -72,14 +72,23 @@ pub struct DownloadJob {
     pub id: u64,
     pub folder: String,
     pub skip_existing: bool,
+    pub retry_count: u32,
+    pub retry_delay: u32,
     pub files: Vec<DownloadFile>,
 }
 
-pub fn job_for_collection(c: &Collection, skip_existing: bool) -> DownloadJob {
+pub fn job_for_collection(
+    c: &Collection,
+    skip_existing: bool,
+    retry_count: u32,
+    retry_delay: u32,
+) -> DownloadJob {
     DownloadJob {
         id: c.id,
         folder: c.folder.clone(),
         skip_existing,
+        retry_count,
+        retry_delay,
         files: c
             .files
             .iter()
@@ -399,6 +408,8 @@ fn run_job(
         bytes: 0,
     }));
     let servers = servers.to_vec();
+    let retry_count = job.retry_count;
+    let retry_delay = job.retry_delay;
     let mut handles = Vec::new();
     for worker_index in 0..worker_count {
         let server = servers[worker_index % servers.len()].clone();
@@ -420,6 +431,8 @@ fn run_job(
                 &errors,
                 &connect_errors,
                 per_worker_throttle,
+                retry_count,
+                retry_delay,
             )
         }));
     }
@@ -532,16 +545,26 @@ fn download_worker(
     errors: &Mutex<Vec<String>>,
     connect_errors: &Mutex<Vec<String>>,
     throttle_bps: f64,
+    retry_count: u32,
+    retry_delay: u32,
 ) {
-    let mut nntp = match Nntp::connect(server) {
-        Ok(nntp) => nntp,
-        Err(e) => {
-            // One failed connection should not kill the whole job; the
-            // remaining workers can still finish the queue.
-            if let Ok(mut list) = connect_errors.lock() {
-                list.push(e);
+    let mut connect_attempt = 0;
+    let mut nntp = loop {
+        match Nntp::connect(server) {
+            Ok(nntp) => break nntp,
+            Err(e) => {
+                if connect_attempt < retry_count {
+                    connect_attempt += 1;
+                    thread::sleep(Duration::from_secs(retry_delay.max(1) as u64));
+                    continue;
+                }
+                // One failed connection should not kill the whole job; the
+                // remaining workers can still finish the queue.
+                if let Ok(mut list) = connect_errors.lock() {
+                    list.push(e);
+                }
+                return;
             }
-            return;
         }
     };
     let mut files: HashMap<usize, fs::File> = HashMap::new();
@@ -566,11 +589,24 @@ fn download_worker(
             }
         };
         let Some(mut task) = task else { break };
-        let decoded = match task.prefetched.take() {
-            Some(value) => Ok(value),
-            None => nntp
-                .body(&task.id)
-                .and_then(|body| decode_yenc(&body).map(|(_, begin, data)| (begin, data))),
+        let mut attempts = 0;
+        let decoded = loop {
+            let attempt = match task.prefetched.take() {
+                Some(value) => Ok(value),
+                None => nntp
+                    .body(&task.id)
+                    .and_then(|body| decode_yenc(&body).map(|(_, begin, data)| (begin, data))),
+            };
+            match attempt {
+                Ok(value) => break Ok(value),
+                Err(error)
+                    if !error.starts_with("Article not found") && attempts < retry_count =>
+                {
+                    attempts += 1;
+                    thread::sleep(Duration::from_secs(retry_delay.max(1) as u64));
+                }
+                Err(error) => break Err(error),
+            }
         };
         let (begin, data) = match decoded {
             Ok(value) => value,
@@ -1038,6 +1074,8 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
         id: 1,
         folder: folder.to_string_lossy().to_string(),
         skip_existing: false,
+        retry_count: settings.retry_count,
+        retry_delay: settings.retry_delay,
         files: parsed
             .files
             .iter()

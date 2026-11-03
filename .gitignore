@@ -1,5 +1,6 @@
 # Build output
 /app/target/
+/app/dist/
 
 # Runtime state and downloaded data (contains the local Usenet account)
 /app/newsqueue-settings.json

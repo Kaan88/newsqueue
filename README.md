@@ -48,6 +48,12 @@ cargo run -- --rss-download-test
 cargo run -- --download-test <file.nzb>
 ```
 
+Package a portable release:
+
+```powershell
+.\package.ps1
+```
+
 ## Configuration
 
 The app reads `app/newsqueue-settings.json`, `app/newsqueue-queue.json` and

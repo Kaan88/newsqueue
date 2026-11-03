@@ -1768,8 +1768,12 @@ impl App {
                     .cloned()
                     .collect();
                 if !servers.is_empty() {
-                    let job =
-                        download::job_for_collection(&self.queue[i], self.settings.skip_existing);
+                    let job = download::job_for_collection(
+                        &self.queue[i],
+                        self.settings.skip_existing,
+                        self.settings.retry_count,
+                        self.settings.retry_delay,
+                    );
                     // The downloader opens each server's connection count and
                     // splits the global limit across all workers
                     // (function 0x835e38 divides by the active count).
