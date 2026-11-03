@@ -6,6 +6,12 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-03)
 
+**Core roadmap complete.** Download → PAR2 → unrar, resume/missing articles,
+multi-server workers, RSS autodownload, generic Newznab search, Explorer
+navigation/copy/paste and portable packaging are implemented and exercised.
+The remaining items are optional polish or need external data: a live Newznab
+index, a known-good PAR2 release and a second server.
+
 - **Phase 0 — done for the baseline.** 24 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
