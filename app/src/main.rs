@@ -913,6 +913,42 @@ impl App {
         self.show_message = Some(("Properties".into(), lines.join("\n")));
     }
 
+    pub fn explorer_delete(&mut self, path: PathBuf) {
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| path.display().to_string());
+        let answer = rfd::MessageDialog::new()
+            .set_title("Delete")
+            .set_description(format!("Delete {name}?"))
+            .set_buttons(rfd::MessageButtons::YesNo)
+            .show();
+        if !matches!(answer, rfd::MessageDialogResult::Yes) {
+            return;
+        }
+        let metadata = std::fs::symlink_metadata(&path);
+        let result = match metadata {
+            Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&path),
+            Ok(_) => std::fs::remove_file(&path),
+            Err(error) => Err(error),
+        };
+        match result {
+            Ok(()) => {
+                if self.explorer_selected.as_ref() == Some(&path) {
+                    self.explorer_selected = None;
+                }
+                self.log("Explorer", &format!("Deleted {}", path.display()));
+                self.toast("Deleted");
+            }
+            Err(error) => {
+                self.show_message = Some((
+                    "Explorer".into(),
+                    format!("Could not delete {}:\n{error}", path.display()),
+                ));
+            }
+        }
+    }
+
     /// Start unpacking a completed collection. Returns true when a worker was
     /// started or the request was queued; false when there is nothing to unpack.
     pub fn start_unrar(&mut self, id: u64) -> bool {

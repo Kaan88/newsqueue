@@ -31,6 +31,7 @@ enum ExplorerAction {
     OpenParent(std::path::PathBuf),
     NewFolder,
     Properties(std::path::PathBuf),
+    Delete(std::path::PathBuf),
 }
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -1518,6 +1519,10 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         action = Some(ExplorerAction::Properties(entry.path.clone()));
                         ui.close_menu();
                     }
+                    if ui.button("Delete").clicked() {
+                        action = Some(ExplorerAction::Delete(entry.path.clone()));
+                        ui.close_menu();
+                    }
                 });
             });
         });
@@ -1532,6 +1537,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
         Some(ExplorerAction::OpenParent(path)) => app.explorer_open_containing(path),
         Some(ExplorerAction::NewFolder) => app.explorer_new_folder(),
         Some(ExplorerAction::Properties(path)) => app.explorer_properties(path),
+        Some(ExplorerAction::Delete(path)) => app.explorer_delete(path),
         None => {}
     }
 }
