@@ -12,7 +12,7 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 35 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 37 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -38,7 +38,8 @@ index, a known-good PAR2 release and a second server.
 - **Phase 6 — mostly done.** Log retention, persistent history, category
   routing, multi-server use, thread priority, player launch, execute hooks,
   file Join/Split and HTTP/SOCKS5 proxy support are implemented. Native tray
-  remains.
+  show/restore/Exit, minimize-to-tray and close-to-tray work; tray balloon
+  notifications and speed-in-tray remain.
 - **Phase 7 — mostly done.** Original icon, window/exe resources, a portable
   release zip (`app/package.ps1`) and a golden screenshot matrix
   (`app/screenshots.ps1`) are done. An installer remains.
@@ -49,8 +50,8 @@ inconsistent; the PAR2 repair path is verified with the generated damaged-RAR
 fixture instead.
 
 Current state: usable clone. Strong on layout, queue/status maths, NNTP, PAR2,
-unrar extraction and common Explorer browsing. Weak on native tray, execute
-hooks and a few peripheral settings.
+unrar extraction and common Explorer browsing. Weak on tray balloon
+notifications, Windows shutdown and a few peripheral settings.
 
 Effort: **S** ≈ one focused session, **M** ≈ 2–3, **L** ≈ 4+ and needs repeated
 live testing.
@@ -124,12 +125,11 @@ live testing.
 
 ## Phase 6 — settings, history and auxiliary features (M)
 
-- Enforce settings that are currently UI-only: proxy, thread priorities,
-  auto-import, tray/notifications, execute/player, log retention, history
-  retention.
+- Settings are enforced for proxy, thread priorities, auto-import,
+  execute/player, log retention and history.
 - Persist real download history and statistics; remove seeded/approximate data.
 - Apply category keyword/folder rules on import and manual category changes.
-- Real tray, Windows shutdown, Join/Split and the remaining shortcuts.
+- Tray balloon notifications, Windows shutdown and the remaining shortcuts.
 - **Done when:** every visible setting has an observable effect and a test.
 
 ## Phase 7 — visual and release polish (M)
@@ -162,12 +162,12 @@ live testing.
 
 5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
    binary are included with their license files.
-6. Remaining optional parity work: native tray/notifications and the
-   installer/code signing. Confirm which matter for daily use.
+6. Remaining optional parity work: tray balloon notifications, Windows shutdown
+   and the installer/code signing. Confirm which matter for daily use.
 
 ## Suggested next order
 
-**Validate a different real NZB → add mock NNTP retry/failover tests → finish
-Explorer shell polish → live Newznab search → tray/execute polish.**
+**Validate a different real NZB → add mock NNTP retry/failover tests → build the
+installer → live Newznab search → tray notifications and Windows shutdown.**
 Download robustness and PAR2 are already in place; the remaining gaps are mostly
 peripheral or need external service details.

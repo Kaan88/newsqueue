@@ -22,6 +22,8 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 - Generic Newznab search (configure URL/API key in Setup > NZB)
 - Per-collection or default execute commands after successful download/PAR2/unrar
 - File join/split actions in the queue and Explorer
+- Native Windows notification-area icon with show/restore, Exit, minimize-to-tray
+  and close-to-tray (verified by `app/tray-verify.ps1`)
 - Setup pages, server editor, scheduler, categories, statistics, search, notes,
   log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
@@ -51,7 +53,12 @@ cargo run -- --rss-test
 cargo run -- --rss-download-test
 cargo run -- --search-test <query>
 cargo run -- --download-test <file.nzb>
+.\tray-verify.ps1
 ```
+
+`tray-verify.ps1` starts the built debug app, minimizes and restores it through
+the tray, closes it to the tray and exits through the tray command. Close any
+running NewsQueue first; the script posts Win32 messages to the test instance.
 
 Package a portable release:
 

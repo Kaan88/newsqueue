@@ -501,6 +501,9 @@ fn page_misc(ui: &mut Ui, s: &mut Settings) {
             ui.label("Minimize to tray");
             ui.checkbox(&mut s.minimize_to_tray, "");
             ui.end_row();
+            ui.label("Minimize to tray on close");
+            ui.checkbox(&mut s.minimize_to_tray_on_close, "");
+            ui.end_row();
             ui.label("Tray balloon hints");
             ui.checkbox(&mut s.tray_balloon, "");
             ui.end_row();

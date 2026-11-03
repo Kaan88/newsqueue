@@ -21,6 +21,7 @@ cargo run -- --screenshot shots/now.png
 - `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `cargo run -- --search-test <query>` queries the configured Newznab endpoint.
+- `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close any running NewsQueue. It checks minimize-to-tray, click-to-restore, close-to-tray and tray Exit (clean exit plus queue save).
 - `cargo fmt --check` currently fails on existing code. Run `cargo fmt` when formatting; don't claim the check passed unless you ran it.
 
 ## Where things live
@@ -36,6 +37,7 @@ cargo run -- --screenshot shots/now.png
 - `files.rs` — file join/split operations used by queue and Explorer actions.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit) and a polling channel; do not delete the tool.
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
+- `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, minimize/close-to-tray and the shared exit flag. `main.rs` cancels window close unless the tray requested exit. `--screenshot` never starts the tray.
 
 ## Gotchas
 

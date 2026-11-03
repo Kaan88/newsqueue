@@ -6,6 +6,7 @@ mod par2;
 mod rss;
 mod search;
 mod theme;
+mod tray;
 mod ui;
 mod unrar;
 
@@ -150,6 +151,7 @@ pub struct App {
     pub last_queue_save: Instant,
     pub low_space_warned: bool,
     pub frame: u64,
+    pub tray_hidden: bool,
     pub screenshot_path: Option<String>,
     pub screenshot_requested: bool,
     pub screenshot_saved: bool,
@@ -317,6 +319,7 @@ impl App {
             last_queue_save: Instant::now(),
             low_space_warned: false,
             frame: 0,
+            tray_hidden: false,
             screenshot_path,
             screenshot_requested: false,
             screenshot_saved: false,
@@ -2608,6 +2611,40 @@ impl App {
         self.toast("Added to queue");
     }
 
+    fn handle_tray(&mut self, ctx: &egui::Context) {
+        if self.screenshot_path.is_some() {
+            return;
+        }
+        let close_requested = ctx.input(|input| input.viewport().close_requested());
+        let Some(handle) = tray::main_window_handle() else {
+            return;
+        };
+        if close_requested {
+            match tray::close_action(
+                tray::exit_requested(),
+                self.settings.minimize_to_tray_on_close,
+                tray::ready(),
+            ) {
+                tray::CloseAction::HideToTray => {
+                    ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+                    tray::hide_main_window(handle);
+                    self.tray_hidden = true;
+                    self.log("Main", "Minimized to tray on close.");
+                }
+                tray::CloseAction::Exit => {}
+            }
+        }
+        if self.tray_hidden {
+            if tray::is_visible(handle) {
+                self.tray_hidden = false;
+            }
+        } else if self.settings.minimize_to_tray && tray::is_minimized(handle) {
+            tray::hide_main_window(handle);
+            self.tray_hidden = true;
+            self.log("Main", "Minimized to tray.");
+        }
+    }
+
     pub fn handle_screenshot(&mut self, ctx: &egui::Context) {
         let Some(path) = self.screenshot_path.clone() else {
             return;
@@ -2678,6 +2715,7 @@ impl Drop for App {
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.frame += 1;
+        self.handle_tray(ctx);
         self.tick();
         self.handle_keys(ctx);
         let dropped: Vec<PathBuf> = ctx.input(|input| {
@@ -3002,6 +3040,9 @@ fn main() -> eframe::Result<()> {
         }
     }
     let screenshot = parse_screenshot_arg();
+    if screenshot.is_none() {
+        tray::spawn();
+    }
     let settings = if screenshot.is_some() {
         Settings::default()
     } else {
