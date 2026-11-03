@@ -34,6 +34,9 @@ enum ExplorerAction {
     Properties(std::path::PathBuf),
     Delete(std::path::PathBuf),
     Rename(std::path::PathBuf),
+    Copy(std::path::PathBuf),
+    Cut(std::path::PathBuf),
+    Paste,
 }
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -1527,6 +1530,18 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                             .copy_text(entry.path.to_string_lossy().to_string());
                         ui.close_menu();
                     }
+                    if ui.button("Copy file").clicked() {
+                        action = Some(ExplorerAction::Copy(entry.path.clone()));
+                        ui.close_menu();
+                    }
+                    if ui.button("Cut file").clicked() {
+                        action = Some(ExplorerAction::Cut(entry.path.clone()));
+                        ui.close_menu();
+                    }
+                    if app.explorer_clipboard.is_some() && ui.button("Paste").clicked() {
+                        action = Some(ExplorerAction::Paste);
+                        ui.close_menu();
+                    }
                     ui.separator();
                     if ui.button("New folder").clicked() {
                         action = Some(ExplorerAction::NewFolder);
@@ -1561,6 +1576,9 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
         Some(ExplorerAction::Properties(path)) => app.explorer_properties(path),
         Some(ExplorerAction::Delete(path)) => app.explorer_delete(path),
         Some(ExplorerAction::Rename(path)) => app.explorer_rename(path),
+        Some(ExplorerAction::Copy(path)) => app.explorer_copy(path, false),
+        Some(ExplorerAction::Cut(path)) => app.explorer_copy(path, true),
+        Some(ExplorerAction::Paste) => app.explorer_paste(),
         None => {}
     }
 }

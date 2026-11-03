@@ -56,6 +56,12 @@ Package a portable release:
 .\package.ps1
 ```
 
+Regenerate the golden UI screenshots:
+
+```powershell
+.\screenshots.ps1
+```
+
 ## Configuration
 
 The app reads `app/newsqueue-settings.json`, `app/newsqueue-queue.json` and

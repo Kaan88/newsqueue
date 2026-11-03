@@ -207,6 +207,7 @@ pub struct App {
     pub show_explorer_rename: bool,
     pub explorer_rename_draft: String,
     pub explorer_rename_target: Option<PathBuf>,
+    pub explorer_clipboard: Option<(PathBuf, bool)>,
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
     pub monthly_transfer: [f64; 12],
@@ -365,6 +366,7 @@ impl App {
             show_explorer_rename: false,
             explorer_rename_draft: String::new(),
             explorer_rename_target: None,
+            explorer_clipboard: None,
             toast: None,
             daily_transfer: daily,
             monthly_transfer: monthly,
@@ -1035,8 +1037,79 @@ impl App {
         }
     }
 
-    pub fn explorer_open_with(&mut self, path: PathBuf) {
-        let Some(program) = rfd::FileDialog::new()
+    pub fn explorer_copy(&mut self, path: PathBuf, cut: bool) {
+        self.explorer_clipboard = Some((path.clone(), cut));
+        self.toast(if cut { "Cut" } else { "Copied" });
+        self.log(
+            "Explorer",
+            &format!("{} {}", if cut { "Cut" } else { "Copied" }, path.display()),
+        );
+    }
+
+    pub fn explorer_paste(&mut self) {
+        let Some((source, cut)) = self.explorer_clipboard.clone() else {
+            return;
+        };
+        if !source.exists() {
+            self.toast("Clipboard item no longer exists");
+            return;
+        }
+        let Some(name) = source.file_name() else {
+            return;
+        };
+        let destination = unique_destination(self.explorer_path.join(name));
+        let result = if cut {
+            std::fs::rename(&source, &destination)
+        } else if source.is_dir() {
+            copy_directory(&source, &destination)
+        } else {
+            std::fs::copy(&source, &destination).map(|_| ())
+        };
+        match result {
+            Ok(()) => {
+                if cut {
+                    self.explorer_clipboard = None;
+                }
+                self.log(
+                    "Explorer",
+                    &format!("Pasted {} to {}", source.display(), destination.display()),
+                );
+                self.toast("Pasted");
+            }
+            Err(error) => {
+                self.show_message = Some(("Explorer".into(), format!("Paste failed:\n{error}")));
+            }
+        }
+    }
+
+    pub fn explorer_drop_paths(&mut self, paths: Vec<PathBuf>) {        let mut copied = 0;
+        for source in paths {
+            if !source.exists() {
+                continue;
+            }
+            let Some(name) = source.file_name() else {
+                continue;
+            };
+            let destination = unique_destination(self.explorer_path.join(name));
+            let result = if source.is_dir() {
+                copy_directory(&source, &destination)
+            } else {
+                std::fs::copy(&source, &destination).map(|_| ())
+            };
+            match result {
+                Ok(()) => copied += 1,
+                Err(error) => self.log(
+                    "Error",
+                    &format!("Explorer drop failed for {}: {error}", source.display()),
+                ),
+            }
+        }
+        if copied > 0 {
+            self.toast(format!("Added {copied} item(s)"));
+            self.log("Explorer", &format!("Dropped {copied} item(s)"));
+        }
+    }
+    pub fn explorer_open_with(&mut self, path: PathBuf) {        let Some(program) = rfd::FileDialog::new()
             .add_filter("Programs", &["exe", "com", "bat", "cmd"])
             .pick_file()
         else {
@@ -1663,7 +1736,31 @@ impl App {
                 }
             }
             UiAction::OpenFolder => self.open_download_folder(),
-            UiAction::Play => self.toast("No media player configured"),
+            UiAction::Play => {
+                let Some(collection) = self.selected_collection() else {
+                    self.toast("Select a queue item first");
+                    return;
+                };
+                if self.settings.player_exe.trim().is_empty() {
+                    self.toast("No media player configured");
+                    return;
+                }
+                let path = collection.files.iter().find_map(|file| {
+                    let path = PathBuf::from(&collection.folder).join(&file.name);
+                    path.is_file().then_some(path)
+                });
+                let Some(path) = path else {
+                    self.toast("No downloaded file to play");
+                    return;
+                };
+                match std::process::Command::new(&self.settings.player_exe)
+                    .arg(&path)
+                    .spawn()
+                {
+                    Ok(_) => self.log("Main", &format!("Playing {}", path.display())),
+                    Err(error) => self.toast(format!("Cannot start player: {error}")),
+                }
+            }
             UiAction::Eta => {
                 if let Some(c) = self.selected_collection() {
                     let msg = if self.speed_bps > 0.0 {
@@ -2379,6 +2476,17 @@ impl eframe::App for App {
         self.frame += 1;
         self.tick();
         self.handle_keys(ctx);
+        let dropped: Vec<PathBuf> = ctx.input(|input| {
+            input
+                .raw
+                .dropped_files
+                .iter()
+                .filter_map(|file| file.path.clone())
+                .collect()
+        });
+        if !dropped.is_empty() && self.active_tab == 2 {
+            self.explorer_drop_paths(dropped);
+        }
         ui::draw(self, ctx);
         dialogs::draw(self, ctx);
         self.handle_screenshot(ctx);
@@ -2483,6 +2591,43 @@ fn shell_open(path: &Path) {
 #[cfg(not(target_os = "windows"))]
 fn shell_open(path: &Path) {
     let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+fn unique_destination(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let extension = path
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    for index in 1..10_000 {
+        let candidate = parent.join(format!("{stem} ({index}){extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    path
+}
+
+fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(destination)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let target = destination.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_directory(&entry.path(), &target)?;
+        } else {
+            std::fs::copy(entry.path(), target)?;
+        }
+    }
+    Ok(())
 }
 
 fn parse_screenshot_arg() -> Option<String> {
@@ -2708,6 +2853,30 @@ mod integration_tests {
         assert!(created.is_dir());
         app.explorer_properties(created.clone());
         assert!(app.show_message.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explorer_drop_copies_files() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-drop-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source.txt");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&destination).unwrap();
+        std::fs::write(&source, "dropped").unwrap();
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.explorer_path = destination.clone();
+        app.explorer_drop_paths(vec![source]);
+        assert_eq!(
+            std::fs::read_to_string(destination.join("source.txt")).unwrap(),
+            "dropped"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

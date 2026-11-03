@@ -6,9 +6,9 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-03)
 
-- **Phase 0 — mostly done.** 23 tests, screenshot checks, real
-  PAR2/damaged-RAR fixtures, mock NNTP server tests and the user-provided NZB
-  fixtures exist. A full golden-screenshot matrix is still missing.
+- **Phase 0 — done for the baseline.** 24 tests, mock NNTP tests, screenshot
+  checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
+  the user-provided NZB fixtures exist.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
   sidecars (`.nqpart`) preserve downloaded articles across restarts; all enabled
   servers are used; watched-folder auto-import and retry/backoff work; mock NNTP
@@ -25,14 +25,14 @@ not a source-code or artwork copy.
   test downloaded one NZB, and generic Newznab search was exercised against a
   mock endpoint. A real index URL/API key is still not configured.
 - **Phase 5 — improved.** Explorer has selection, navigation, history,
-  favourites, context menu, delete, rename, open-with and columns. Drag/drop,
-  multi-select and clipboard cut/copy/paste remain.
+  favourites, context menu, delete, rename, open-with, drag/drop copying and
+  clipboard copy/cut/paste. Multi-select remains.
 - **Phase 6 — partial.** Log retention, persistent history, category routing and
   multi-server use are implemented. Proxy, thread priorities, tray, Join/Split
   and execute/player hooks remain.
-- **Phase 7 — partial.** Original icon, window/exe resources and a portable
-  release zip (`app/package.ps1`) are done. Installer and screenshot diffs
-  remain.
+- **Phase 7 — mostly done.** Original icon, window/exe resources, a portable
+  release zip (`app/package.ps1`) and a golden screenshot matrix
+  (`app/screenshots.ps1`) are done. An installer remains.
 
 The supplied `Civilization.IV` and `Love.Under.the.Mistletoe` downloads complete
 at the transfer layer, but their PAR2 packet hashes / RAR payloads are
