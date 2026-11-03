@@ -34,6 +34,7 @@ Everything that is part of the application lives in `app/`.
 | `app/src/ui.rs` | Main window, tabs, queue table, status bar, Explorer, PAR2/RSS/Log tabs, queue actions |
 | `app/src/dialogs.rs` | 17 setup pages, server editor, stats/search/columns, password prompt, shutdown, file join/split and other modal windows |
 | `app/src/download.rs` | Real NNTP/yEnc downloader: TLS/plain, HTTP CONNECT/SOCKS5, workers, cache, resume, retries |
+| `app/src/container.rs` | Container detection from payload bytes (RAR5 volume numbers, RAR4, ZIP, 7Z, PAR2) used to name obfuscated downloads |
 | `app/src/par2.rs` | PAR2 verify/repair worker using `app/tools/par2.exe` |
 | `app/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
 | `app/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
@@ -242,7 +243,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 54 unit/integration tests currently pass.
+- 60 unit/integration tests currently pass.
 - `download.rs` has a mock NNTP server used for success, missing-article and
   article-cache tests.
 - `unrar.rs` has fixtures for plain, single-file and encrypted RAR archives.
@@ -334,6 +335,11 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   passing; the latter round-trips all 256 byte values through a mock server.
 - Missing articles are not fatal; they must mark the collection `Incomplete` and
   allow PAR2 repair.
+- Obfuscated posts can carry random names with no extension. Never trust the
+  name alone: `container::sniff` decides the extension, and RAR5 volumes are
+  renamed `<collection>.partNNN.rar` from the volume number in their header so
+  UnRAR can chain them. `unrar::normalize_obfuscated_names` repairs folders that
+  were downloaded before this existed.
 - Saved queue entries without segment IDs are discarded on load.
 - `UnRAR.exe`/`par2.exe` are vendored and required. The original DLLs are 32-bit
   and cannot be loaded by this 64-bit build.

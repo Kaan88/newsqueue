@@ -5,6 +5,7 @@
 //! progress through a small shared snapshot so the egui thread never blocks
 //! on the network.
 
+use crate::container;
 use crate::model::*;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
@@ -361,7 +362,7 @@ fn run_job(
         };
         let decoded_size = yenc_size(&body);
         expected_sizes[index] = decoded_size;
-        let name = if yenc_name.is_empty() {
+        let mut name = if yenc_name.is_empty() {
             base
         } else if Path::new(&file.name).extension().is_some() {
             // Obfuscated posts often put a random name in =ybegin. The NZB
@@ -370,6 +371,13 @@ fn run_job(
         } else {
             safe_file_name(&yenc_name, &base)
         };
+        // Obfuscated posts also drop the extension entirely, which hides an
+        // archive from PAR2/unrar. The payload itself is the reliable source.
+        if Path::new(&name).extension().is_none() {
+            if let Some(renamed) = detected_name(&job.folder, &first_data, job.files.len() == 1) {
+                name = renamed;
+            }
+        }
         let path = PathBuf::from(&job.folder).join(&name);
         paths[index] = Some(path.clone());
         if job.skip_existing
@@ -1272,6 +1280,33 @@ fn ybegin_name(line: &[u8]) -> String {
     }
 }
 
+/// Names an obfuscated download from the payload instead of the post.
+///
+/// RAR volumes carry their own volume number, so a whole set can be named
+/// `<collection>.partNNN.rar` and UnRAR can chain the volumes. Other containers
+/// only get an extension when the collection is a single file, because several
+/// unrecognised volumes sharing one name would overwrite each other.
+fn detected_name(folder: &str, first_data: &[u8], single_file: bool) -> Option<String> {
+    let container = container::sniff(first_data)?;
+    let base = collection_base(folder);
+    match container {
+        container::Container::Rar5 {
+            volume: Some(volume),
+        } => Some(container::rar_volume_name(&base, volume)),
+        _ if single_file => container::single_name(&base, container),
+        _ => None,
+    }
+}
+
+/// The collection name, used as the base name for detected containers.
+fn collection_base(folder: &str) -> String {
+    Path::new(folder)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "download".to_string())
+}
+
 fn yenc_size(body: &[u8]) -> Option<u64> {
     for line in body.split(|byte| *byte == b'\n') {
         if !line.starts_with(b"=ybegin") {
@@ -1386,9 +1421,14 @@ mod tests {
     }
 
     fn yenc_body(data: &[u8]) -> Vec<u8> {
+        yenc_body_named(data, "mock.bin")
+    }
+
+    fn yenc_body_named(data: &[u8], name: &str) -> Vec<u8> {
         let mut out = format!(
-            "=ybegin line=128 size={} name=mock.bin\n",
-            data.len()
+            "=ybegin line=128 size={} name={}\n",
+            data.len(),
+            name
         )
         .into_bytes();
         for byte in data {
@@ -1508,6 +1548,48 @@ mod tests {
         let snapshot = wait_for(&active);
         assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
         assert_eq!(fs::read(root.join("mock.bin")).unwrap(), data);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn names_an_obfuscated_rar_volume_after_its_header() {
+        // A post with no usable name or extension, carrying the first volume of
+        // a RAR5 set. The app must land on `<collection>.part001.rar`.
+        let root = std::env::temp_dir().join(format!("newsqueue-mock-dl-rar-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let mut data = b"Rar!\x1a\x07\x01\x00".to_vec();
+        data.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 16, 1, 5, 12, 3, 0, 0x0b, 1, 1]);
+        data.resize(256, 0x55);
+        let port = mock_server(vec![("seg1".into(), yenc_body_named(&data, "f4h2k9d0sj3lq8zr"))]);
+        let mut server = Server::default();
+        server.address = "127.0.0.1".into();
+        server.port = port;
+        server.ssl = false;
+        server.auth = false;
+        server.enabled = true;
+        server.connections = 2;
+        let mut job = mock_job(
+            &root,
+            vec![Segment {
+                number: 1,
+                bytes: data.len() as u64,
+                id: "seg1".into(),
+            }],
+            data.len() as u64,
+        );
+        job.files[0].name = "f4h2k9d0sj3lq8zr".into();
+        let collection = root
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .to_string();
+        let active = spawn(job, vec![server], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        let expected = root.join(format!("{collection}.part001.rar"));
+        assert!(expected.is_file(), "expected {}", expected.display());
+        assert_eq!(fs::read(&expected).unwrap(), data);
         let _ = fs::remove_dir_all(root);
     }
 

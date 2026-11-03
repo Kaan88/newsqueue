@@ -5,8 +5,10 @@
 //! (vendored in `tools/`) in a worker thread. The UI polls a channel, just
 //! like the NNTP downloader.
 
+use crate::container;
 use crate::model::{app_base, sanitize_folder, Collection, Settings};
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
@@ -123,6 +125,7 @@ pub fn poll(active: &ActiveUnrar) -> Option<Result<String, UnrarError>> {
 
 /// True when `source` contains a RAR archive that extraction can start from.
 pub fn has_archive(source: &Path, expected: &[String]) -> bool {
+    normalize_obfuscated_names(source);
     find_archive(source, expected).is_some()
 }
 
@@ -132,6 +135,7 @@ pub fn extract(
     dest: &Path,
     options: &UnrarOptions,
 ) -> Result<String, UnrarError> {
+    normalize_obfuscated_names(source);
     let archive = find_archive(source, &options.expected_files).ok_or_else(|| {
         UnrarError::Failed(format!("No RAR archive found in {}", source.display()))
     })?;
@@ -287,6 +291,76 @@ fn find_archive(source: &Path, expected: &[String]) -> Option<PathBuf> {
         }
     }
     candidates.into_iter().next()
+}
+
+/// Renames RAR volumes that arrived without an extension so UnRAR can chain
+/// them.
+///
+/// Obfuscated releases deliver `Rar!` payloads with random names such as
+/// `1xnkjchunrcod4zjpbnri`. UnRAR appends `.rar` to whatever it is given and
+/// then looks for the other volumes by name, so without a proper set name the
+/// archive can never be opened. RAR5 stores the volume number in its main
+/// header, which is enough to rebuild `<folder>.partNNN.rar`.
+fn normalize_obfuscated_names(source: &Path) {
+    let Ok(reader) = fs::read_dir(source) else {
+        return;
+    };
+    let mut volumes: Vec<(u32, PathBuf)> = Vec::new();
+    let mut single: Option<PathBuf> = None;
+    let mut already_named = false;
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_ascii_lowercase())
+            .unwrap_or_default();
+        if name.ends_with(".rar") || name.ends_with(".rev") || name.ends_with(".001") {
+            already_named = true;
+            continue;
+        }
+        let mut head = [0u8; container::SNIFF_LEN];
+        let Ok(mut file) = fs::File::open(&path) else {
+            continue;
+        };
+        let Ok(read) = file.read(&mut head) else {
+            continue;
+        };
+        match container::sniff(&head[..read]) {
+            Some(container::Container::Rar5 {
+                volume: Some(volume),
+            }) => volumes.push((volume, path)),
+            Some(container::Container::Rar5 { volume: None }) if single.is_none() => {
+                single = Some(path)
+            }
+            _ => {}
+        }
+    }
+    if already_named {
+        // A named archive is already present: leave the folder exactly as it is.
+        return;
+    }
+    let base = source
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or_else(|| "archive".to_string());
+    if !volumes.is_empty() {
+        volumes.sort_by_key(|(volume, _)| *volume);
+        for (volume, path) in volumes {
+            let target = source.join(container::rar_volume_name(&base, volume));
+            if path != target {
+                let _ = fs::rename(&path, &target);
+            }
+        }
+    } else if let Some(path) = single {
+        let target = source.join(format!("{base}.rar"));
+        if path != target {
+            let _ = fs::rename(&path, &target);
+        }
+    }
 }
 
 fn is_first_volume(name: &str) -> bool {
@@ -607,6 +681,83 @@ mod tests {
         extract(&source, &dest, &options).unwrap();
         assert!(dest.join("Renamed.Release.mkv").is_file());
         assert!(!source.join("empty").exists());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extracts_an_archive_that_arrived_without_an_extension() {
+        // Obfuscated posts deliver `Rar!` payloads with random names such as
+        // `1xnkjchunrcod4zjpbnri` and no extension at all.
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tiny.rar");
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-obfuscated-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("jada-39768c");
+        let dest = root.join("dest");
+        fs::create_dir_all(&source).unwrap();
+        fs::copy(&fixture, source.join("1xnkjchunrcod4zjpbnri")).unwrap();
+        let options = UnrarOptions {
+            overwrite: true,
+            rename_existing: true,
+            strip_root: true,
+            delete_archives: false,
+            delete_empty_folder: false,
+            auto_rename: false,
+            collection_name: String::new(),
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        };
+        assert!(has_archive(&source, &[]));
+        assert!(
+            source.join("jada-39768c.rar").is_file(),
+            "the archive should be renamed after the collection"
+        );
+        assert!(!source.join("1xnkjchunrcod4zjpbnri").exists());
+        let message = extract(&source, &dest, &options).unwrap();
+        assert!(message.contains("2 files"), "{message}");
+        assert_eq!(
+            fs::read_to_string(dest.join("readme.txt")).unwrap().trim(),
+            "tiny rar fixture"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn renames_obfuscated_rar_volumes_by_their_header_number() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-volumes-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("Some.Release");
+        fs::create_dir_all(&source).unwrap();
+        // Two volumes out of order, named with random obfuscated names.
+        for (volume, name) in [(0u8, "zzzzzzzzzzzzzzzzzzzz"), (1u8, "aaaaaaaaaaaaaaaaaaaa")] {
+            let mut header = b"Rar!\x1a\x07\x01\x00".to_vec();
+            header.extend_from_slice(&[0xaa, 0xbb, 0xcc, 0xdd, 16, 1, 5, 12, 3, volume, 0x0b]);
+            header.resize(64, 0);
+            fs::write(source.join(name), header).unwrap();
+        }
+        normalize_obfuscated_names(&source);
+        assert!(source.join("Some.Release.part001.rar").is_file());
+        assert!(source.join("Some.Release.part002.rar").is_file());
+        assert!(!source.join("zzzzzzzzzzzzzzzzzzzz").exists());
+        assert!(has_archive(&source, &[]));
         let _ = fs::remove_dir_all(root);
     }
 

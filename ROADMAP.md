@@ -15,7 +15,7 @@ contains the yEnc decode fix and the Phase 3 unrar additions; the previous
 
 | Area | State | Notes |
 |---|---|---|
-| Download engine | Done | TLS/plain NNTP, HTTP CONNECT/SOCKS5, multi-server workers, yEnc, resume sidecars, missing-article handling, article cache, retry/backoff, priorities |
+| Download engine | Done | TLS/plain NNTP, HTTP CONNECT/SOCKS5, multi-server workers, yEnc, resume sidecars, missing-article handling, article cache, retry/backoff, priorities, content-based naming for obfuscated posts |
 | PAR2 | Done for the core chain | Real verify/repair, damaged-RAR fixture, download → PAR2 → unrar |
 | Unrar | Done for the common path | Overwrite/rename, strip-root, archive/group/NZB subfolders, auto-rename, delete-empty-folder, password prompt and retry, delete/move patterns, target folder |
 | RSS | Done | Live feed returned 100 items; filters downloaded a real NZB |
@@ -25,7 +25,7 @@ contains the yEnc decode fix and the Phase 3 unrar additions; the previous
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
 | Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.0` |
-| Verification | Baseline done | 54 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Verification | Baseline done | 60 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a valid PAR2 release, a Newznab endpoint/key and a second server |
 
@@ -63,9 +63,30 @@ NZB downloaded by IDM is fine. Confirmed and fixed.
   decode bug cannot pass on length alone again.
 
 
+### Added: archives without extensions (obfuscated posts, 2026-11-04)
+
+Obfuscated releases arrive as `Rar!` payloads with random names such as
+`1xnkjchunrcod4zjpbnri` and no extension, so `find_archive` (which matched
+`.rar`/`.001`) found nothing and Unpack reported "No RAR archive found".
+
+- **Detection.** New `app/src/container.rs` sniffs the decoded payload for RAR5,
+  RAR4, ZIP, 7Z and PAR2 magic bytes and reads the RAR5 volume number from the
+  main archive header.
+- **Naming.** A download whose chosen name has no extension is renamed from its
+  content: RAR5 volumes become `<collection>.partNNN.rar` using the header
+  volume number, so UnRAR can chain them; single-file ZIP/7Z/PAR2/RAR downloads
+  get their real extension. Other multi-file formats keep the post's own name so
+  volumes cannot overwrite each other.
+- **Repair on unpack.** `unrar::normalize_obfuscated_names` runs before
+  `has_archive`/`extract`, so folders already on disk are renamed in place and
+  can be unpacked without re-downloading.
+- **Verified.** `jada-39768c` (55 RAR5 volumes, 11.4 GB mp4, random names) is
+  detected, renamed `jada-39768c.part001..part055.rar`, listed by UnRAR as
+  `RAR 5, volume 1` and passes `UnRAR t` with `All OK`.
+
 ### Phase summary
 
-- **Phase 0 - done for the baseline.** 54 tests, mock NNTP tests, screenshot
+- **Phase 0 - done for the baseline.** 60 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real damaged-RAR/PAR2 fixtures,
   an encrypted-RAR fixture and the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
