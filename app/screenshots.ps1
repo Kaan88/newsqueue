@@ -12,7 +12,7 @@ try {
         cargo run -- --screenshot "shots\golden\tab-$tab.png"
     }
     Remove-Item Env:NQ_DEMO_TAB -ErrorAction SilentlyContinue
-    foreach ($dialog in @("setup", "server", "stats", "search", "categories", "notes", "about", "columns", "pause", "shutdown")) {
+    foreach ($dialog in @("setup", "server", "stats", "search", "categories", "notes", "about", "columns", "pause", "shutdown", "unrar-password")) {
         $env:NQ_DEMO_DIALOG = $dialog
         cargo run -- --screenshot "shots\golden\dialog-$dialog.png"
     }

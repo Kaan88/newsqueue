@@ -258,6 +258,9 @@ pub struct App {
     pub rename_index: Option<usize>,
     pub show_pause_for: bool,
     pub show_shutdown: bool,
+    pub show_unrar_password: bool,
+    pub unrar_password_draft: String,
+    pub unrar_password_target: Option<u64>,
     pub show_search: bool,
     pub show_speed_limit: bool,
     pub show_filter_help: bool,
@@ -458,6 +461,9 @@ impl App {
             rename_index: None,
             show_pause_for: false,
             show_shutdown: false,
+            show_unrar_password: false,
+            unrar_password_draft: String::new(),
+            unrar_password_target: None,
             show_search: false,
             show_speed_limit: false,
             show_filter_help: false,
@@ -547,6 +553,7 @@ impl App {
             }
             Ok("stats") => app.show_stats = true,
             Ok("shutdown") => app.show_shutdown = true,
+            Ok("unrar-password") => app.show_unrar_password = true,
             Ok("search") => app.show_search = true,
             Ok("categories") => app.show_categories = true,
             Ok("notes") => app.show_notes = true,
@@ -1917,6 +1924,59 @@ impl App {
         true
     }
 
+    pub fn submit_unrar_password(&mut self) {
+        let Some(id) = self.unrar_password_target.take() else {
+            self.show_unrar_password = false;
+            return;
+        };
+        if self.unrar_password_draft.trim().is_empty() {
+            self.unrar_password_target = Some(id);
+            self.toast("Enter an unpack password");
+            return;
+        }
+        let password = self.unrar_password_draft.clone();
+        self.show_unrar_password = false;
+        let subject = self
+            .queue
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.subject.clone())
+            .unwrap_or_else(|| format!("collection {id}"));
+        if let Some(collection) = self.queue.iter_mut().find(|c| c.id == id) {
+            collection.password = password;
+            collection.status = ItemStatus::Completed;
+        }
+        self.log(
+            "Unrar",
+            &format!("Retrying unpack with the supplied password: {subject}"),
+        );
+        self.start_unrar(id);
+    }
+
+    pub fn cancel_unrar_password(&mut self) {
+        self.show_unrar_password = false;
+        let Some(id) = self.unrar_password_target.take() else {
+            return;
+        };
+        let subject = self
+            .queue
+            .iter()
+            .find(|c| c.id == id)
+            .map(|c| c.subject.clone())
+            .unwrap_or_else(|| format!("collection {id}"));
+        if let Some(collection) = self.queue.iter_mut().find(|c| c.id == id) {
+            collection.status = ItemStatus::Error;
+        }
+        self.log(
+            "Unrar",
+            &format!("Unpack cancelled: a password is required for {subject}."),
+        );
+        self.show_message = Some((
+            "Unrar password".into(),
+            format!("{subject}\n\nUnpack cancelled because no password was supplied."),
+        ));
+    }
+
     pub fn unpack_selected(&mut self) {
         let Some(sel) = self.selected else {
             self.toast("Select a queue item first");
@@ -1952,7 +2012,20 @@ impl App {
                 tray::notify("Unpack complete", &subject);
                 self.run_execute_hook(active.collection_id);
             }
-            Some(Err(error)) => {
+            Some(Err(unrar::UnrarError::PasswordRequired)) => {
+                if let Some(c) = self.queue.iter_mut().find(|c| c.id == active.collection_id) {
+                    c.status = ItemStatus::Completed;
+                }
+                self.unrar_password_target = Some(active.collection_id);
+                self.unrar_password_draft.clear();
+                self.show_unrar_password = true;
+                self.log(
+                    "Unrar",
+                    &format!("Password required for collection {}.", active.collection_id),
+                );
+                self.toast("Unpack password required");
+            }
+            Some(Err(unrar::UnrarError::Failed(error))) => {
                 if let Some(c) = self.queue.iter_mut().find(|c| c.id == active.collection_id) {
                     c.status = ItemStatus::Error;
                 }
@@ -3360,6 +3433,78 @@ mod integration_tests {
             "two"
         );
         assert!(app.queue.iter().all(|collection| collection.execute_done));
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn unrar_password_prompt_retries_and_extracts() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-prompt-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let dest = root.join("dest");
+        std::fs::create_dir_all(&source).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("encrypted.rar");
+        std::fs::copy(fixture, source.join("encrypted.rar")).unwrap();
+
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.settings.strip_root = false;
+        app.settings.auto_rename_to_collection = false;
+        app.settings.delete_archives = false;
+        app.settings.delete_empty_folder = false;
+        app.settings.create_dir_archive_name = false;
+        app.settings.create_dir_group_name = false;
+        app.settings.create_dir_nzb_name = false;
+        app.settings.pause_while_unraring = false;
+        app.queue.clear();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.id = 77;
+        collection.subject = "Password test".into();
+        collection.folder = source.to_string_lossy().to_string();
+        collection.unrar_folder = dest.to_string_lossy().to_string();
+        collection.unrar = true;
+        collection.password.clear();
+        collection.status = ItemStatus::Completed;
+        collection.files.clear();
+        app.queue = vec![collection];
+
+        assert!(app.start_unrar(77));
+        for _ in 0..300 {
+            app.poll_unrar();
+            if app.show_unrar_password {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(app.show_unrar_password, "password prompt was not shown");
+        assert_eq!(app.unrar_password_target, Some(77));
+
+        app.unrar_password_draft = "secret".into();
+        app.submit_unrar_password();
+        for _ in 0..300 {
+            app.poll_unrar();
+            if app.active_unrar.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(app.active_unrar.is_none(), "retry did not finish");
+        assert_eq!(app.queue[0].status, ItemStatus::Completed);
+        assert_eq!(
+            std::fs::read_to_string(dest.join("payload.txt"))
+                .unwrap()
+                .trim(),
+            "secret payload"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

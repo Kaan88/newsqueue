@@ -7,31 +7,47 @@ not a source-code or artwork copy.
 ## Current status (2026-11-04)
 
 Current app version: **1.0.0**, versioned independently of the AltBinz 0.48.4
-parity target.
+parity target. The published `v1.0.0` release predates the Phase 3 unrar
+additions below; those changes are complete in the working tree and need a
+post-1.0.0 release when convenient.
 
-**Core roadmap complete.** Download → PAR2 → unrar, resume/missing articles,
-multi-server workers, RSS autodownload, generic Newznab search, Explorer
-navigation/copy/paste, portable packaging and a per-user Windows installer are
-implemented and exercised. The remaining items are optional polish or need
-external data: a live Newznab index, a known-good PAR2 release and a second
-server.
+### Status at a glance
 
-- **Phase 0 — done for the baseline.** 50 tests, mock NNTP tests, screenshot
-  checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
-  the user-provided NZB fixtures exist.
+| Area | State | Notes |
+|---|---|---|
+| Download engine | Done | TLS/plain NNTP, HTTP CONNECT/SOCKS5, multi-server workers, yEnc, resume sidecars, missing-article handling, article cache, retry/backoff, priorities |
+| PAR2 | Done for the core chain | Real verify/repair, damaged-RAR fixture, download → PAR2 → unrar |
+| Unrar | Done for the common path | Overwrite/rename, strip-root, archive/group/NZB subfolders, auto-rename, delete-empty-folder, password prompt and retry, delete/move patterns, target folder |
+| RSS | Done | Live feed returned 100 items; filters downloaded a real NZB |
+| Search | Implemented, mock-tested | Generic Newznab parser/NZB add path; no live endpoint/key configured |
+| Explorer | Done for common use | Multi-select, history, context menu, rename/delete, open-with, drag/drop, clipboard, columns |
+| Tray | Done | Off-screen minimize-to-tray with taskbar entry removed, speed tooltip, download/unrar balloons, Show/Exit |
+| Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
+| Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
+| Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.0` |
+| Verification | Baseline done | 53 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Code signing | Optional | No certificate configured |
+| Live service validation | Blocked | Needs a valid PAR2 release, a Newznab endpoint/key and a second server |
+
+### Phase summary
+
+- **Phase 0 — done for the baseline.** 53 tests, mock NNTP tests, screenshot
+  checks, a golden tab/dialog screenshot set, real damaged-RAR/PAR2 fixtures,
+  an encrypted-RAR fixture and the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
   resume sidecars (`.nqpart`) preserve downloaded articles across restarts; all
   enabled servers are used; watched-folder auto-import, retry/backoff, thread
   priority, article cache and execute hooks work; mock NNTP tests cover success,
   cache reuse and missing-article completion. Live failover still needs a second
-  server.
+  server. Timeout/failover mock coverage is still on the list.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
-- **Phase 3 — core done.** Overwrite/rename, strip-root, password, delete
-  archives, move/delete patterns, target folder, pause-while-unraring, manual
-  unpack, auto-rename to collection, delete-empty-folder and group/NZB
-  subfolders work. Archive-name subfolders and a password prompt remain.
+- **Phase 3 — done for the common path.** Overwrite/rename, strip-root, password,
+  delete archives, move/delete patterns, target folder, pause-while-unraring,
+  manual unpack, auto-rename to collection, delete-empty-folder, archive/group/NZB
+  subfolders and the password prompt with retry work. Encrypted archives are
+  detected, prompted for and retried with the entered per-collection password.
 - **Phase 4 — RSS and search are implemented.** Feed URLs and filters are
   stored locally (never committed); a live feed returned 100 items, the filter
   test downloaded one NZB, and generic Newznab search was exercised against a
@@ -45,7 +61,8 @@ server.
   Native tray show/restore/Exit, off-screen minimize-to-tray with taskbar removal,
   close-to-tray, speed tooltip and download/unrar balloon hints work. Windows
   shutdown, hibernate, sleep and app-exit actions run after the queue drains with
-  a 15-second abortable countdown and a mockable backend.
+  a 15-second abortable countdown and a mockable backend. A few shortcut/polish
+  items remain optional.
 - **Phase 7 — done for private use.** Original icon, window/exe resources, a
   portable release zip (`app/package.ps1`), a golden screenshot matrix
   (`app/screenshots.ps1`) and a per-user IExpress installer
@@ -54,12 +71,12 @@ server.
 
 The supplied `Civilization.IV` and `Love.Under.the.Mistletoe` downloads complete
 at the transfer layer, but their PAR2 packet hashes / RAR payloads are
-inconsistent; the PAR2 repair path is verified with the generated damaged-RAR
-fixture instead.
+inconsistent; the PAR2 repair path is verified with generated fixtures instead.
 
-Current state: usable clone. Strong on layout, queue/status maths, NNTP, PAR2,
-unrar extraction and common Explorer browsing. Remaining work is external
-validation, optional code signing and a few peripheral settings.
+Current state: usable Windows clone. Strong on layout, queue/status maths, NNTP,
+PAR2, unrar extraction, tray/shutdown behaviour and common Explorer browsing.
+Remaining work is external validation, a post-1.0.0 release for the Phase 3
+additions, a little mock/failover coverage and optional polish.
 
 Effort: **S** ≈ one focused session, **M** ≈ 2–3, **L** ≈ 4+ and needs repeated
 live testing.
@@ -105,9 +122,10 @@ live testing.
 ## Phase 3 — unrar/post-processing parity (M)
 
 - Add remaining original options: auto-rename to collection, delete empty
-  folder, group/NZB subfolders, both delete-archive flags, delete-after-unpack
+  folder, archive/group/NZB subfolders, both delete-archive flags, delete-after-unpack
   and move-to-unrar patterns.
-- Prompt for passwords; store per-collection passwords.
+- Prompt for passwords; store per-collection passwords and retry extraction after
+  the entered password is supplied.
 - Trigger after PAR2, from the PAR2 tab, and from the queue context menu.
 - Handle cancellation, existing files, multi-volume gaps and failure cleanup.
 - **Done when:** each option has an automated or manual test and `Unpack now`
@@ -153,32 +171,48 @@ live testing.
 
 ## What is still needed
 
-### Test data
+### Blocked on test data
 
-1. The two new NZBs download successfully, but their PAR2 packet hashes and RAR
-   payloads are inconsistent on the server. A **different complete release with a
-   valid PAR2 set** is needed to validate live repair; the generated damaged-RAR
-   fixture already covers the repair logic.
-2. No second server is available. Multi-server scheduling is implemented, but a
-   live failover test needs either a second account or a small mock NNTP server.
+1. **A complete, currently available release with a valid PAR2 set.** The
+   supplied `Civilization.IV` and `Love.Under.the.Mistletoe` NZBs download at the
+   transfer layer, but their PAR2 packet hashes and RAR payloads are inconsistent
+   on the server. The repair logic is covered by generated damaged-RAR fixtures;
+   a real release is needed for live repair → unrar validation.
+2. **A second Usenet server account.** Multi-server scheduling is implemented,
+   but live failover needs a second account. Mock retry/timeout/failover tests can
+   close part of this gap without credentials.
 
-### External services
+### Blocked on external services
 
-3. The supplied RSS feed works (100 items, one NZB downloaded through a filter).
-   Its API key is stored only in the local, gitignored settings file.
-4. A Newznab/search endpoint and API key are still needed for a live global
-   search; the generic search parser and NZB-add path are implemented and
-   mock-tested.
+3. **A live Newznab endpoint and API key.** RSS is verified with the supplied
+   feed (100 items, one NZB downloaded through a filter); the API key is stored
+   only in the local gitignored settings. Generic Newznab search is implemented
+   and mock-tested, but no live index is configured.
+4. **Code-signing certificate** if signed release binaries are required. This is
+   optional for private use.
 
-### Scope decisions
+### Not blocked
 
-5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
-   binary are included with their license files.
-6. Remaining optional parity work: code signing and minor shortcut polish.
+5. **Commit the Phase 3 unrar additions.** Archive-name subfolders and the
+   encrypted-archive password prompt/retry are implemented, tested and currently
+   uncommitted. The published `v1.0.0` release predates them.
+6. **Cut a post-1.0.0 release** (for example `v1.0.1`) after committing Phase 3,
+   or defer it until the external validation above is complete.
+7. **Mock NNTP retry/timeout/failover tests.** The downloader code supports
+   retries, backoff and multiple servers; dedicated scripted mock coverage is
+   still worthwhile.
+8. **Minor shortcut polish** and any remaining peripheral settings.
+9. **Per-setting verification checklist**; the current baseline is tests,
+   screenshots and focused scripts.
 
 ## Suggested next order
 
-**Validate a different real NZB → add mock NNTP retry/failover tests → live
-Newznab search → optional code signing.**
-Download robustness and PAR2 are already in place; the remaining gaps are mostly
-peripheral or need external service details.
+1. Commit the Phase 3 unrar work and cut a post-1.0.0 release.
+2. Add mock NNTP timeout/retry/failover tests.
+3. Validate a different real NZB with a valid PAR2 set.
+4. Configure a live Newznab endpoint/key and verify search → add → download.
+5. Exercise live second-server failover with a second account.
+6. Optional: code signing, shortcut polish and a full per-setting checklist.
+
+Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.
+The remaining gaps need external data or are optional polish.

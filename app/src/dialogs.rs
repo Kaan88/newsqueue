@@ -58,6 +58,9 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if app.show_shutdown {
         shutdown_window(app, ctx);
     }
+    if app.show_unrar_password {
+        unrar_password_window(app, ctx);
+    }
     if app.show_search {
         search_window(app, ctx);
     }
@@ -1021,11 +1024,14 @@ fn page_unpack(ui: &mut Ui, s: &mut Settings) {
             ui.label("Unrar folder");
             dir_row(ui, "Path", &mut s.unrar_dir);
             ui.end_row();
-            ui.label("Create subfolder based on NZB name");
-            ui.checkbox(&mut s.create_dir_nzb_name, "");
+            ui.label("Create subfolder based on archive name");
+            ui.checkbox(&mut s.create_dir_archive_name, "");
             ui.end_row();
             ui.label("Create subfolder based on group name");
             ui.checkbox(&mut s.create_dir_group_name, "");
+            ui.end_row();
+            ui.label("Create subfolder based on NZB name");
+            ui.checkbox(&mut s.create_dir_nzb_name, "");
             ui.end_row();
             ui.label("Rename single extracted file to collection name");
             ui.checkbox(&mut s.auto_rename_to_collection, "");
@@ -1869,6 +1875,46 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
             }
         });
     app.show_pause_for = open;
+}
+
+fn unrar_password_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.show_unrar_password;
+    let mut draft = app.unrar_password_draft.clone();
+    let mut submit = false;
+    let mut cancel = false;
+    egui::Window::new("Enter password")
+        .default_pos([440.0, 270.0])
+        .default_size([360.0, 110.0])
+        .resizable(false)
+        .collapsible(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label("Password");
+            let edit = ui.add_sized(
+                [320.0, 20.0],
+                TextEdit::singleline(&mut draft).password(true),
+            );
+            if edit.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
+                submit = true;
+            }
+            ui.add_space(6.0);
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("OK").clicked() {
+                    submit = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    app.unrar_password_draft = draft;
+    if submit {
+        app.submit_unrar_password();
+        return;
+    }
+    if cancel || !open {
+        app.cancel_unrar_password();
+    }
 }
 
 fn shutdown_window(app: &mut App, ctx: &egui::Context) {

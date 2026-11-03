@@ -16,8 +16,9 @@ NewsQueue uses its own versioning: the current release is **1.0.0**.
 - Real PAR2 verification/repair through the bundled `par2.exe`, followed by
   optional unrar
 - RAR extraction through the bundled 64-bit `UnRAR.exe`, with overwrite/rename,
-  strip-root, password, delete-archive, move/delete-pattern, target-folder,
-  auto-rename-to-collection, delete-empty-folder and group/NZB subfolder options
+  strip-root, password prompting, delete-archive, move/delete-pattern,
+  target-folder, auto-rename-to-collection, delete-empty-folder and
+  archive/group/NZB subfolder options
 - Explorer tab with folder tree, file list, multi-select, back/forward/up history,
   favourites, filters, context menu, rename/delete and configurable columns
 - RSS feed fetching with filter-based autodownload

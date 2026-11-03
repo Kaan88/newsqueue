@@ -13,8 +13,25 @@ use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub struct ActiveUnrar {
     pub collection_id: u64,
-    pub rx: Receiver<Result<String, String>>,
+    pub rx: Receiver<Result<String, UnrarError>>,
 }
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum UnrarError {
+    PasswordRequired,
+    Failed(String),
+}
+
+impl std::fmt::Display for UnrarError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::PasswordRequired => formatter.write_str("Unrar password required"),
+            Self::Failed(message) => formatter.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for UnrarError {}
 
 #[derive(Clone, Debug)]
 pub struct UnrarOptions {
@@ -64,6 +81,18 @@ pub fn target_dir(settings: &Settings, collection: &Collection) -> PathBuf {
     } else {
         PathBuf::from(&collection.folder)
     };
+    if settings.create_dir_archive_name {
+        let expected: Vec<String> = collection
+            .files
+            .iter()
+            .map(|file| file.name.clone())
+            .collect();
+        if let Some(archive) = find_archive(Path::new(&collection.folder), &expected) {
+            if let Some(stem) = archive.file_stem() {
+                base = base.join(sanitize_folder(&stem.to_string_lossy()));
+            }
+        }
+    }
     if settings.create_dir_group_name && !collection.group.trim().is_empty() {
         base = base.join(sanitize_folder(&collection.group));
     }
@@ -82,11 +111,13 @@ pub fn spawn(collection_id: u64, source: PathBuf, dest: PathBuf, options: UnrarO
     ActiveUnrar { collection_id, rx }
 }
 
-pub fn poll(active: &ActiveUnrar) -> Option<Result<String, String>> {
+pub fn poll(active: &ActiveUnrar) -> Option<Result<String, UnrarError>> {
     match active.rx.try_recv() {
         Ok(value) => Some(value),
         Err(TryRecvError::Empty) => None,
-        Err(TryRecvError::Disconnected) => Some(Err("Unrar worker stopped unexpectedly".into())),
+        Err(TryRecvError::Disconnected) => Some(Err(UnrarError::Failed(
+            "Unrar worker stopped unexpectedly".into(),
+        ))),
     }
 }
 
@@ -96,13 +127,21 @@ pub fn has_archive(source: &Path, expected: &[String]) -> bool {
 }
 
 /// Extract the first archive volume found in `source` into `dest`.
-pub fn extract(source: &Path, dest: &Path, options: &UnrarOptions) -> Result<String, String> {
-    let archive = find_archive(source, &options.expected_files)
-        .ok_or_else(|| format!("No RAR archive found in {}", source.display()))?;
-    let exe = find_unrar_exe().ok_or_else(|| {
-        "UnRAR.exe not found. Put UnRAR.exe in app/tools/ or install WinRAR.".to_string()
+pub fn extract(
+    source: &Path,
+    dest: &Path,
+    options: &UnrarOptions,
+) -> Result<String, UnrarError> {
+    let archive = find_archive(source, &options.expected_files).ok_or_else(|| {
+        UnrarError::Failed(format!("No RAR archive found in {}", source.display()))
     })?;
-    fs::create_dir_all(dest).map_err(|e| format!("Cannot create unrar folder: {e}"))?;
+    let exe = find_unrar_exe().ok_or_else(|| {
+        UnrarError::Failed(
+            "UnRAR.exe not found. Put UnRAR.exe in app/tools/ or install WinRAR.".to_string(),
+        )
+    })?;
+    fs::create_dir_all(dest)
+        .map_err(|e| UnrarError::Failed(format!("Cannot create unrar folder: {e}")))?;
 
     let mut command = Command::new(&exe);
     command.arg("x").arg("-y").arg("-idq").arg("-ierr");
@@ -124,19 +163,28 @@ pub fn extract(source: &Path, dest: &Path, options: &UnrarOptions) -> Result<Str
 
     let output = command
         .output()
-        .map_err(|e| format!("Cannot run {}: {e}", exe.display()))?;
+        .map_err(|e| UnrarError::Failed(format!("Cannot run {}: {e}", exe.display())))?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     let stderr = String::from_utf8_lossy(&output.stderr);
     let code = output.status.code().unwrap_or(-1);
+    let combined = format!("{stdout}\n{stderr}");
+    let lower = combined.to_ascii_lowercase();
+    if lower.contains("incorrect password")
+        || lower.contains("enter password")
+        || lower.contains("password is incorrect")
+        || lower.contains("specified password")
+    {
+        return Err(UnrarError::PasswordRequired);
+    }
     // 0 = success, 1 = non-fatal warning. Everything else is a failure.
     if code != 0 && code != 1 {
         let detail = last_nonempty(&stderr)
             .or_else(|| last_nonempty(&stdout))
             .unwrap_or_else(|| format!("UnRAR exit code {code}"));
-        return Err(format!(
+        return Err(UnrarError::Failed(format!(
             "Unrar failed for {}: {detail}",
             archive.file_name().unwrap_or_default().to_string_lossy()
-        ));
+        )));
     }
 
     if options.strip_root {
@@ -606,6 +654,82 @@ mod tests {
                 .unwrap()
                 .trim(),
             "payload"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn archive_name_subfolder_uses_the_first_volume_stem() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tiny.rar");
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-archive-name-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        fs::create_dir_all(&source).unwrap();
+        fs::copy(fixture, source.join("my-release.rar")).unwrap();
+        let mut settings = Settings::default();
+        settings.create_dir_archive_name = true;
+        settings.create_dir_group_name = false;
+        settings.create_dir_nzb_name = false;
+        let mut collection = crate::model::sample_queue(&settings).remove(0);
+        collection.folder = source.to_string_lossy().to_string();
+        collection.unrar_folder = root.join("dest").to_string_lossy().to_string();
+        let target = target_dir(&settings, &collection);
+        assert!(target.ends_with("my-release"), "{}", target.display());
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn password_protected_archive_prompts_then_extracts_with_the_password() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("encrypted.rar");
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-password-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let dest = root.join("dest");
+        fs::create_dir_all(&source).unwrap();
+        fs::copy(fixture, source.join("encrypted.rar")).unwrap();
+        let mut options = UnrarOptions {
+            overwrite: true,
+            rename_existing: true,
+            strip_root: false,
+            delete_archives: false,
+            delete_empty_folder: false,
+            auto_rename: false,
+            collection_name: String::new(),
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        };
+        assert_eq!(
+            extract(&source, &dest, &options),
+            Err(UnrarError::PasswordRequired)
+        );
+        options.password = "secret".into();
+        extract(&source, &dest, &options).unwrap();
+        assert_eq!(
+            fs::read_to_string(dest.join("payload.txt")).unwrap().trim(),
+            "secret payload"
         );
         let _ = fs::remove_dir_all(root);
     }
