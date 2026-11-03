@@ -74,6 +74,7 @@ pub struct DownloadJob {
     pub skip_existing: bool,
     pub retry_count: u32,
     pub retry_delay: u32,
+    pub priority: u32,
     pub files: Vec<DownloadFile>,
 }
 
@@ -82,6 +83,7 @@ pub fn job_for_collection(
     skip_existing: bool,
     retry_count: u32,
     retry_delay: u32,
+    priority: u32,
 ) -> DownloadJob {
     DownloadJob {
         id: c.id,
@@ -89,6 +91,7 @@ pub fn job_for_collection(
         skip_existing,
         retry_count,
         retry_delay,
+        priority,
         files: c
             .files
             .iter()
@@ -410,6 +413,7 @@ fn run_job(
     let servers = servers.to_vec();
     let retry_count = job.retry_count;
     let retry_delay = job.retry_delay;
+    let priority = job.priority;
     let mut handles = Vec::new();
     for worker_index in 0..worker_count {
         let server = servers[worker_index % servers.len()].clone();
@@ -433,6 +437,7 @@ fn run_job(
                 per_worker_throttle,
                 retry_count,
                 retry_delay,
+                priority,
             )
         }));
     }
@@ -547,7 +552,9 @@ fn download_worker(
     throttle_bps: f64,
     retry_count: u32,
     retry_delay: u32,
+    priority: u32,
 ) {
+    set_thread_priority(priority);
     let mut connect_attempt = 0;
     let mut nntp = loop {
         match Nntp::connect(server) {
@@ -899,6 +906,29 @@ fn server_timeout() -> u64 {
     CONNECTION_TIMEOUT.max(5) as u64
 }
 
+#[cfg(target_os = "windows")]
+fn set_thread_priority(level: u32) {
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentThread() -> isize;
+        fn SetThreadPriority(thread: isize, priority: i32) -> i32;
+    }
+    let priority = match level {
+        0 => -15, // idle
+        1 => -2,  // lowest
+        2 => -1,  // below normal
+        4 => 1,   // above normal
+        5 => 2,   // highest
+        _ => 0,   // normal (original default 3)
+    };
+    unsafe {
+        SetThreadPriority(GetCurrentThread(), priority);
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn set_thread_priority(_level: u32) {}
+
 fn host_only(address: &str) -> String {
     let mut value = address.trim();
     for prefix in ["https://", "http://", "nntps://", "nntp://"] {
@@ -1053,6 +1083,157 @@ mod tests {
         assert_eq!(host_only("https://news.easynews.com"), "news.easynews.com");
         assert_eq!(host_only("news.easynews.com:563"), "news.easynews.com");
     }
+
+    fn yenc_body(data: &[u8]) -> Vec<u8> {
+        let mut out = format!(
+            "=ybegin line=128 size={} name=mock.bin\n",
+            data.len()
+        )
+        .into_bytes();
+        for byte in data {
+            let encoded = byte.wrapping_add(42);
+            if matches!(encoded, 0 | 10 | 13 | 61) {
+                out.push(b'=');
+                out.push(encoded.wrapping_add(64));
+            } else {
+                out.push(encoded);
+            }
+        }
+        out.extend_from_slice(b"\n=yend size=10\n");
+        out
+    }
+
+    fn mock_server(articles: Vec<(String, Vec<u8>)>) -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for _ in 0..4 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let Ok(mut reader) = stream.try_clone().map(BufReader::new) else {
+                    continue;
+                };
+                let _ = stream.write_all(b"200 mock ready\r\n");
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let line = line.trim();
+                    if line.starts_with("AUTHINFO") {
+                        let _ = stream.write_all(b"281 ok\r\n");
+                    } else if line == "QUIT" {
+                        break;
+                    } else if let Some(id) = line.strip_prefix("BODY <") {
+                        let id = id.trim_end_matches('>');
+                        if let Some((_, body)) = articles.iter().find(|(key, _)| key == id) {
+                            let _ = stream.write_all(b"222 0 article\r\n");
+                            let _ = stream.write_all(body);
+                            let _ = stream.write_all(b"\r\n.\r\n");
+                        } else {
+                            let _ = stream.write_all(b"430 no such article\r\n");
+                        }
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    fn mock_job(folder: &std::path::Path, segments: Vec<Segment>, bytes: u64) -> DownloadJob {
+        DownloadJob {
+            id: 1,
+            folder: folder.to_string_lossy().to_string(),
+            skip_existing: false,
+            retry_count: 0,
+            retry_delay: 1,
+            priority: 3,
+            files: vec![DownloadFile {
+                name: "mock.bin".into(),
+                bytes,
+                segments,
+            }],
+        }
+    }
+
+    fn wait_for(active: &ActiveDownload) -> DownloadSnapshot {
+        for _ in 0..300 {
+            let snapshot = active.snapshot.lock().unwrap().clone();
+            if !matches!(snapshot.stage, Stage::Connecting | Stage::Downloading) {
+                return snapshot;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        active.snapshot.lock().unwrap().clone()
+    }
+
+    #[test]
+    fn downloads_from_a_mock_nntp_server() {
+        let root = std::env::temp_dir().join(format!("newsqueue-mock-dl-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let data = b"ABCDEFGHIJ";
+        let port = mock_server(vec![("seg1".into(), yenc_body(data))]);
+        let mut server = Server::default();
+        server.address = "127.0.0.1".into();
+        server.port = port;
+        server.ssl = false;
+        server.auth = false;
+        server.enabled = true;
+        server.connections = 2;
+        let job = mock_job(
+            &root,
+            vec![Segment {
+                number: 1,
+                bytes: data.len() as u64,
+                id: "seg1".into(),
+            }],
+            data.len() as u64,
+        );
+        let active = spawn(job, vec![server], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), data);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn missing_article_marks_the_job_incomplete() {
+        let root = std::env::temp_dir().join(format!("newsqueue-mock-miss-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let data = b"ABCDEFGHIJ";
+        let port = mock_server(vec![("seg1".into(), yenc_body(data))]);
+        let mut server = Server::default();
+        server.address = "127.0.0.1".into();
+        server.port = port;
+        server.ssl = false;
+        server.auth = false;
+        server.enabled = true;
+        server.connections = 2;
+        let job = mock_job(
+            &root,
+            vec![
+                Segment {
+                    number: 1,
+                    bytes: data.len() as u64,
+                    id: "seg1".into(),
+                },
+                Segment {
+                    number: 2,
+                    bytes: data.len() as u64,
+                    id: "missing".into(),
+                },
+            ],
+            data.len() as u64,
+        );
+        let active = spawn(job, vec![server], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Incomplete, "{}", snapshot.message);
+        assert!(snapshot.missing >= 1);
+        let _ = fs::remove_dir_all(root);
+    }
 }
 
 /// Console check used by `--download-test`: exercises the same NNTP worker the
@@ -1076,6 +1257,7 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
         skip_existing: false,
         retry_count: settings.retry_count,
         retry_delay: settings.retry_delay,
+        priority: settings.download_priority,
         files: parsed
             .files
             .iter()

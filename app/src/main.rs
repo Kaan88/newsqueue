@@ -1812,6 +1812,7 @@ impl App {
                         self.settings.skip_existing,
                         self.settings.retry_count,
                         self.settings.retry_delay,
+                        self.settings.download_priority,
                     );
                     // The downloader opens each server's connection count and
                     // splits the global limit across all workers

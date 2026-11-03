@@ -6,14 +6,14 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-03)
 
-- **Phase 0 - partial.** 21 tests, screenshot checks, real PAR2/damaged-RAR
-  fixture and the user-provided NZB fixtures exist. A mock NNTP server is still
-  missing.
+- **Phase 0 — mostly done.** 23 tests, screenshot checks, real
+  PAR2/damaged-RAR fixtures, mock NNTP server tests and the user-provided NZB
+  fixtures exist. A full golden-screenshot matrix is still missing.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
   sidecars (`.nqpart`) preserve downloaded articles across restarts; all enabled
-  servers are used; watched-folder auto-import and retry/backoff work;
-  `Incomplete` feeds the PAR2 stage. Article cache/priorities and execute hooks
-  remain.
+  servers are used; watched-folder auto-import and retry/backoff work; mock NNTP
+  tests cover success and missing-article completion. Article cache/priorities
+  and execute hooks remain.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
