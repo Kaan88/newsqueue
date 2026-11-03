@@ -63,6 +63,7 @@ instead of writing a corrupt file.
 ## Documentation
 
 - `AGENTS.md` — commands, layout and gotchas for coding agents
+- `ROADMAP.md` — parity plan, remaining gaps and required test data
 - `app/MECHANICS.md` — measured behaviour and function addresses from the
   original binary
 - `app/mechanics.json` — machine-readable measured values
