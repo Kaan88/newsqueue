@@ -1,5 +1,7 @@
 # NewsQueue
 
+<img src="app/assets/newsqueue-128.png" width="96" alt="NewsQueue icon">
+
 A from-scratch Rust + egui desktop Usenet downloader modelled on the behaviour
 of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 
