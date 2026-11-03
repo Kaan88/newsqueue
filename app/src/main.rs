@@ -2044,6 +2044,8 @@ impl App {
                         self.settings.retry_count,
                         self.settings.retry_delay,
                         self.settings.download_priority,
+                        self.settings.article_cache_mb,
+                        self.settings.cache_cleanup_minutes,
                     );
                     // The downloader opens each server's connection count and
                     // splits the global limit across all workers

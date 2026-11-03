@@ -12,14 +12,15 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 29 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 31 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
-- **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
-  sidecars (`.nqpart`) preserve downloaded articles across restarts; all enabled
-  servers are used; watched-folder auto-import, retry/backoff and execute hooks
-  work; mock NNTP tests cover success and missing-article completion. Article
-  cache/priorities remain.
+- **Phase 1 — done for the core path.** Missing articles no longer abort a job;
+  resume sidecars (`.nqpart`) preserve downloaded articles across restarts; all
+  enabled servers are used; watched-folder auto-import, retry/backoff, thread
+  priority, article cache and execute hooks work; mock NNTP tests cover success,
+  cache reuse and missing-article completion. Live failover still needs a second
+  server.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.

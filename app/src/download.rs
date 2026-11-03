@@ -75,6 +75,8 @@ pub struct DownloadJob {
     pub retry_count: u32,
     pub retry_delay: u32,
     pub priority: u32,
+    pub cache_mb: u32,
+    pub cache_cleanup_minutes: u32,
     pub files: Vec<DownloadFile>,
 }
 
@@ -84,6 +86,8 @@ pub fn job_for_collection(
     retry_count: u32,
     retry_delay: u32,
     priority: u32,
+    cache_mb: u32,
+    cache_cleanup_minutes: u32,
 ) -> DownloadJob {
     DownloadJob {
         id: c.id,
@@ -92,6 +96,8 @@ pub fn job_for_collection(
         retry_count,
         retry_delay,
         priority,
+        cache_mb,
+        cache_cleanup_minutes,
         files: c
             .files
             .iter()
@@ -120,6 +126,83 @@ struct Task {
 struct SpeedMeter {
     window: Instant,
     bytes: u64,
+}
+
+struct CachedArticle {
+    body: Vec<u8>,
+    stored: Instant,
+}
+
+struct ArticleCache {
+    limit: usize,
+    ttl: Duration,
+    bytes: usize,
+    entries: HashMap<String, CachedArticle>,
+    order: VecDeque<String>,
+}
+
+impl ArticleCache {
+    fn new(limit_mb: u32, cleanup_minutes: u32) -> Self {
+        Self {
+            limit: limit_mb as usize * 1024 * 1024,
+            ttl: Duration::from_secs(cleanup_minutes.max(1) as u64 * 60),
+            bytes: 0,
+            entries: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+
+    fn get(&mut self, id: &str) -> Option<Vec<u8>> {
+        if self.limit == 0 {
+            return None;
+        }
+        self.cleanup(Instant::now());
+        let entry = self.entries.get(id)?;
+        Some(entry.body.clone())
+    }
+
+    fn insert(&mut self, id: String, body: Vec<u8>) {
+        if self.limit == 0 || body.len() > self.limit {
+            return;
+        }
+        self.cleanup(Instant::now());
+        if let Some(previous) = self.entries.remove(&id) {
+            self.bytes = self.bytes.saturating_sub(previous.body.len());
+            self.order.retain(|key| key != &id);
+        }
+        while self.bytes + body.len() > self.limit {
+            let Some(oldest) = self.order.pop_front() else {
+                break;
+            };
+            if let Some(entry) = self.entries.remove(&oldest) {
+                self.bytes = self.bytes.saturating_sub(entry.body.len());
+            }
+        }
+        self.bytes += body.len();
+        self.order.push_back(id.clone());
+        self.entries.insert(
+            id,
+            CachedArticle {
+                body,
+                stored: Instant::now(),
+            },
+        );
+    }
+
+    fn cleanup(&mut self, now: Instant) {
+        let expired: Vec<String> = self
+            .entries
+            .iter()
+            .filter(|(_, entry)| now.duration_since(entry.stored) > self.ttl)
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in expired {
+            if let Some(entry) = self.entries.remove(&id) {
+                self.bytes = self.bytes.saturating_sub(entry.body.len());
+            }
+            self.order.retain(|key| key != &id);
+        }
+    }
 }
 
 fn job_total(job: &DownloadJob) -> u64 {
@@ -220,6 +303,10 @@ fn run_job(
     // file so the real yEnc file names are known before the parallel workers
     // create the files. The fetched article is kept and reused by a worker.
     let total = job_total(job);
+    let cache = Arc::new(Mutex::new(ArticleCache::new(
+        job.cache_mb,
+        job.cache_cleanup_minutes,
+    )));
     let mut lookup = Nntp::connect(server)?;
     let mut tasks: VecDeque<Task> = VecDeque::new();
     let mut paths: Vec<Option<PathBuf>> = vec![None; job.files.len()];
@@ -246,11 +333,20 @@ fn run_job(
         segments.sort_by_key(|s| s.number);
         let fallback = format!("file{:02}.bin", index + 1);
         let base = safe_file_name(&file.name, &fallback);
-        let body = match lookup.body(&segments[0].id) {
-            Ok(body) => body,
-            Err(e) => {
-                let _ = lookup.quit();
-                return Err(e);
+        let body = if let Some(body) = cache.lock().ok().and_then(|mut cache| cache.get(&segments[0].id)) {
+            body
+        } else {
+            match lookup.body(&segments[0].id) {
+                Ok(body) => {
+                    if let Ok(mut cache) = cache.lock() {
+                        cache.insert(segments[0].id.clone(), body.clone());
+                    }
+                    body
+                }
+                Err(e) => {
+                    let _ = lookup.quit();
+                    return Err(e);
+                }
             }
         };
         let (yenc_name, first_begin, first_data) = match decode_yenc(&body) {
@@ -424,6 +520,7 @@ fn run_job(
         let pause = Arc::clone(pause);
         let stop = Arc::clone(stop);
         let snap = Arc::clone(snap);
+        let cache = cache.clone();
         handles.push(thread::spawn(move || {
             download_worker(
                 &server,
@@ -434,6 +531,7 @@ fn run_job(
                 &speed,
                 &errors,
                 &connect_errors,
+                &cache,
                 per_worker_throttle,
                 retry_count,
                 retry_delay,
@@ -549,6 +647,7 @@ fn download_worker(
     speed: &Mutex<SpeedMeter>,
     errors: &Mutex<Vec<String>>,
     connect_errors: &Mutex<Vec<String>>,
+    cache: &Arc<Mutex<ArticleCache>>,
     throttle_bps: f64,
     retry_count: u32,
     retry_delay: u32,
@@ -598,11 +697,25 @@ fn download_worker(
         let Some(mut task) = task else { break };
         let mut attempts = 0;
         let decoded = loop {
-            let attempt = match task.prefetched.take() {
-                Some(value) => Ok(value),
-                None => nntp
-                    .body(&task.id)
-                    .and_then(|body| decode_yenc(&body).map(|(_, begin, data)| (begin, data))),
+            let cached = cache
+                .lock()
+                .ok()
+                .and_then(|mut cache| cache.get(&task.id));
+            let attempt = if let Some(body) = cached {
+                decode_yenc(&body).map(|(_, begin, data)| (begin, data))
+            } else {
+                match task.prefetched.take() {
+                    Some(value) => Ok(value),
+                    None => match nntp.body(&task.id) {
+                        Ok(body) => {
+                            if let Ok(mut cache) = cache.lock() {
+                                cache.insert(task.id.clone(), body.clone());
+                            }
+                            decode_yenc(&body).map(|(_, begin, data)| (begin, data))
+                        }
+                        Err(error) => Err(error),
+                    },
+                }
             };
             match attempt {
                 Ok(value) => break Ok(value),
@@ -1104,6 +1217,14 @@ mod tests {
     }
 
     fn mock_server(articles: Vec<(String, Vec<u8>)>) -> u16 {
+        mock_server_counted(articles).0
+    }
+
+    fn mock_server_counted(
+        articles: Vec<(String, Vec<u8>)>,
+    ) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+        let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let count = counter.clone();
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
@@ -1126,6 +1247,7 @@ mod tests {
                     } else if line == "QUIT" {
                         break;
                     } else if let Some(id) = line.strip_prefix("BODY <") {
+                        count.fetch_add(1, Ordering::Relaxed);
                         let id = id.trim_end_matches('>');
                         if let Some((_, body)) = articles.iter().find(|(key, _)| key == id) {
                             let _ = stream.write_all(b"222 0 article\r\n");
@@ -1138,7 +1260,7 @@ mod tests {
                 }
             }
         });
-        port
+        (port, counter)
     }
 
     fn mock_job(folder: &std::path::Path, segments: Vec<Segment>, bytes: u64) -> DownloadJob {
@@ -1149,6 +1271,8 @@ mod tests {
             retry_count: 0,
             retry_delay: 1,
             priority: 3,
+            cache_mb: 0,
+            cache_cleanup_minutes: 30,
             files: vec![DownloadFile {
                 name: "mock.bin".into(),
                 bytes,
@@ -1195,6 +1319,68 @@ mod tests {
         let snapshot = wait_for(&active);
         assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
         assert_eq!(fs::read(root.join("mock.bin")).unwrap(), data);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn article_cache_respects_its_megabyte_limit() {
+        let mut cache = ArticleCache::new(1, 30);
+        cache.insert("first".into(), vec![0u8; 600 * 1024]);
+        cache.insert("second".into(), vec![0u8; 600 * 1024]);
+        assert!(cache.get("first").is_none());
+        assert!(cache.get("second").is_some());
+    }
+
+    #[test]
+    fn article_cache_avoids_duplicate_fetches() {
+        let root = std::env::temp_dir().join(format!("newsqueue-mock-cache-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let data = b"ABCDEFGHIJ";
+        let (port, count) = mock_server_counted(vec![("shared".into(), yenc_body(data))]);
+        let mut server = Server::default();
+        server.address = "127.0.0.1".into();
+        server.port = port;
+        server.ssl = false;
+        server.auth = false;
+        server.enabled = true;
+        server.connections = 2;
+        let job = DownloadJob {
+            id: 2,
+            folder: root.to_string_lossy().to_string(),
+            skip_existing: false,
+            retry_count: 0,
+            retry_delay: 1,
+            priority: 3,
+            cache_mb: 1,
+            cache_cleanup_minutes: 30,
+            files: vec![
+                DownloadFile {
+                    name: "one.bin".into(),
+                    bytes: data.len() as u64,
+                    segments: vec![Segment {
+                        number: 1,
+                        bytes: data.len() as u64,
+                        id: "shared".into(),
+                    }],
+                },
+                DownloadFile {
+                    name: "two.bin".into(),
+                    bytes: data.len() as u64,
+                    segments: vec![Segment {
+                        number: 1,
+                        bytes: data.len() as u64,
+                        id: "shared".into(),
+                    }],
+                },
+            ],
+        };
+        let active = spawn(job, vec![server], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("one.bin")).unwrap(), data);
+        assert_eq!(fs::read(root.join("two.bin")).unwrap(), data);
+        assert_eq!(count.load(Ordering::Relaxed), 1);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -1258,6 +1444,8 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
         retry_count: settings.retry_count,
         retry_delay: settings.retry_delay,
         priority: settings.download_priority,
+        cache_mb: settings.article_cache_mb,
+        cache_cleanup_minutes: settings.cache_cleanup_minutes,
         files: parsed
             .files
             .iter()

@@ -9,7 +9,7 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 
 - Download queue with groups/files, pause/resume, move, rename, delete, export
 - Real NNTP downloads over TLS or plain NNTP, parallel connections, yEnc decode,
-  resume sidecars, missing-article handling and multi-server workers
+  resume sidecars, missing-article handling, article cache and multi-server workers
 - Real PAR2 verification/repair through the bundled `par2.exe`, followed by
   optional unrar
 - RAR extraction through the bundled 64-bit `UnRAR.exe`, with overwrite/rename,

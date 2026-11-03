@@ -29,7 +29,7 @@ cargo run -- --screenshot shots/now.png
 - `model.rs` — persisted types (`Settings`, `Collection`, `Server`), measured constants and formatters, NZB parser, sample data. New persisted fields need defaults (`#[serde(default)]`) so existing JSON still loads.
 - `ui.rs` — main window, tabs, queue table, status bar. Queue and Explorer rows add a transparent `row_click_overlay` so clicks on labels and progress bars reach the row; preserve it when editing columns.
 - `dialogs.rs` — 17 setup pages, server editor, stats/search/columns and other modal windows.
-- `download.rs` — real NNTP/yEnc downloader. One active job at a time; all enabled servers are used and the global limit is split across workers. Resume metadata lives in `.nqpart` sidecars. Network code runs in std threads with a `Mutex<DownloadSnapshot>`; there is no async runtime.
+- `download.rs` — real NNTP/yEnc downloader. One active job at a time; all enabled servers are used and the global limit is split across workers. Resume metadata lives in `.nqpart` sidecars and article bodies are cached in memory (bounded by `article_cache_mb`). Network code runs in std threads with a `Mutex<DownloadSnapshot>`; there is no async runtime.
 - `par2.rs` — PAR2 verify/repair worker using `app/tools/par2.exe`; feeds the unrar stage.
 - `rss.rs` — RSS/Atom fetch, filter matching and NZB autodownload using `ureq` with native TLS.
 - `search.rs` — generic Newznab XML search and NZB fetch.
