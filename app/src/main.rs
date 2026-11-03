@@ -1,5 +1,6 @@
 mod dialogs;
 mod download;
+mod files;
 mod model;
 mod par2;
 mod rss;
@@ -45,6 +46,8 @@ pub enum UiAction {
     UnpackNow,
     ChangeUnrarFolder,
     SetExecute,
+    JoinSplitParts,
+    SplitSelectedFile,
     OpenFolder,
     Play,
     Eta,
@@ -213,6 +216,9 @@ pub struct App {
     pub show_execute_command: bool,
     pub execute_command_draft: String,
     pub execute_command_target: Option<usize>,
+    pub show_split_file: bool,
+    pub split_file_target: Option<PathBuf>,
+    pub split_size_mb: u32,
     pub explorer_clipboard: Option<(Vec<PathBuf>, bool)>,
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
@@ -377,6 +383,9 @@ impl App {
             show_execute_command: false,
             execute_command_draft: String::new(),
             execute_command_target: None,
+            show_split_file: false,
+            split_file_target: None,
+            split_size_mb: 100,
             explorer_clipboard: None,
             toast: None,
             daily_transfer: daily,
@@ -1054,6 +1063,36 @@ impl App {
             shell_open(parent);
             self.log("Explorer", &format!("Opened {}", parent.display()));
         }
+    }
+
+    pub fn explorer_join_selected(&mut self) {
+        let mut paths = self.explorer_selected_paths();
+        if paths.len() < 2 {
+            self.toast("Select at least two files to join");
+            return;
+        }
+        files::sort_split_paths(&mut paths);
+        let Some(output) = rfd::FileDialog::new()
+            .set_file_name("joined.bin")
+            .save_file()
+        else {
+            return;
+        };
+        match files::join_files(&paths, &output) {
+            Ok(bytes) => {
+                self.log(
+                    "Explorer",
+                    &format!("Joined {} files into {} ({} bytes)", paths.len(), output.display(), bytes),
+                );
+                self.toast("Files joined");
+            }
+            Err(error) => self.show_message = Some(("Join".into(), error)),
+        }
+    }
+
+    pub fn explorer_split_file(&mut self, path: PathBuf) {
+        self.split_file_target = Some(path);
+        self.show_split_file = true;
     }
 
     fn explorer_selected_paths(&self) -> Vec<PathBuf> {
@@ -1866,6 +1905,33 @@ impl App {
                         self.execute_command_draft = c.execute.clone();
                         self.execute_command_target = Some(sel.collection);
                         self.show_execute_command = true;
+                    }
+                }
+            }
+            UiAction::JoinSplitParts => {
+                if let Some(collection) = self.selected_collection() {
+                    let folder = PathBuf::from(&collection.folder);
+                    match files::join_split_parts(&folder) {
+                        Ok(Some(path)) => {
+                            self.log("Queue", &format!("Joined split parts to {}", path.display()));
+                            self.toast("Parts joined");
+                        }
+                        Ok(None) => self.toast("No numbered split parts found"),
+                        Err(error) => self.show_message = Some(("Join".into(), error)),
+                    }
+                }
+            }
+            UiAction::SplitSelectedFile => {
+                if let Some(collection) = self.selected_collection() {
+                    let target = collection.files.iter().find_map(|file| {
+                        let path = PathBuf::from(&collection.folder).join(&file.name);
+                        path.is_file().then_some(path)
+                    });
+                    if let Some(target) = target {
+                        self.split_file_target = Some(target);
+                        self.show_split_file = true;
+                    } else {
+                        self.toast("No downloaded file to split");
                     }
                 }
             }

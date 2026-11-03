@@ -76,6 +76,9 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if app.show_execute_command {
         execute_command_window(app, ctx);
     }
+    if app.show_split_file {
+        split_file_window(app, ctx);
+    }
     if app.show_message.is_some() {
         message_window(app, ctx);
     }
@@ -1959,6 +1962,74 @@ fn explorer_rename_window(app: &mut App, ctx: &egui::Context) {
     }
     if cancel || !open {
         app.show_explorer_rename = false;
+    }
+}
+
+fn split_file_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.show_split_file;
+    let mut size = app.split_size_mb;
+    let mut save = false;
+    let mut cancel = false;
+    let target = app.split_file_target.clone();
+    egui::Window::new("Split file")
+        .default_pos([430.0, 260.0])
+        .default_size([420.0, 130.0])
+        .resizable(false)
+        .collapsible(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            if let Some(target) = &target {
+                ui.label(target.display().to_string());
+            }
+            ui.horizontal(|ui| {
+                ui.label("Part size");
+                ui.add(
+                    egui::DragValue::new(&mut size)
+                        .range(1..=8192)
+                        .suffix(" MB"),
+                );
+            });
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Split").clicked() {
+                    save = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    app.split_size_mb = size;
+    if save {
+        if let Some(target) = target {
+            let parent = target
+                .parent()
+                .map(std::path::Path::to_path_buf)
+                .unwrap_or_default();
+            let stem = target
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_string())
+                .unwrap_or_else(|| "part".into());
+            match crate::files::split_file(
+                &target,
+                size as u64 * 1024 * 1024,
+                &parent,
+                &stem,
+            ) {
+                Ok(parts) => {
+                    app.log(
+                        "Files",
+                        &format!("Split {} into {} parts", target.display(), parts.len()),
+                    );
+                    app.toast(format!("Split into {} parts", parts.len()));
+                }
+                Err(error) => app.show_message = Some(("Split".into(), error)),
+            }
+        }
+        app.show_split_file = false;
+        return;
+    }
+    if cancel || !open {
+        app.show_split_file = false;
     }
 }
 

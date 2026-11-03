@@ -33,6 +33,7 @@ cargo run -- --screenshot shots/now.png
 - `par2.rs` — PAR2 verify/repair worker using `app/tools/par2.exe`; feeds the unrar stage.
 - `rss.rs` — RSS/Atom fetch, filter matching and NZB autodownload using `ureq` with native TLS.
 - `search.rs` — generic Newznab XML search and NZB fetch.
+- `files.rs` — file join/split operations used by queue and Explorer actions.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit) and a polling channel; do not delete the tool.
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
 

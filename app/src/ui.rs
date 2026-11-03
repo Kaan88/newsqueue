@@ -37,6 +37,8 @@ enum ExplorerAction {
     Rename(std::path::PathBuf),
     CopySelected(bool),
     Paste,
+    JoinSelected,
+    SplitFile(std::path::PathBuf),
 }
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -309,8 +311,8 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     action = Some(UiAction::Move(MoveDir::Bottom))
                 });
                 dq_sep(ui);
-                dq_button(ui, Icon::Join, "Join", || action = Some(UiAction::None));
-                dq_button(ui, Icon::Split, "Split", || action = Some(UiAction::None));
+                dq_button(ui, Icon::Join, "Join", || action = Some(UiAction::JoinSplitParts));
+                dq_button(ui, Icon::Split, "Split", || action = Some(UiAction::SplitSelectedFile));
                 dq_sep(ui);
                 dq_button(ui, Icon::Collapse, "Collapse all", || {
                     for c in &mut app.queue {
@@ -787,11 +789,11 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                         }
                     });
                     if ui.button("Join").clicked() {
-                        action = Some(UiAction::None);
+                        action = Some(UiAction::JoinSplitParts);
                         ui.close_menu();
                     }
                     if ui.button("Split").clicked() {
-                        action = Some(UiAction::None);
+                        action = Some(UiAction::SplitSelectedFile);
                         ui.close_menu();
                     }
                     if ui.button("Collapse all").clicked() {
@@ -1579,6 +1581,14 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         action = Some(ExplorerAction::Paste);
                         ui.close_menu();
                     }
+                    if selection.len() > 1 && ui.button("Join selected files...").clicked() {
+                        action = Some(ExplorerAction::JoinSelected);
+                        ui.close_menu();
+                    }
+                    if !entry.is_dir && ui.button("Split file...").clicked() {
+                        action = Some(ExplorerAction::SplitFile(entry.path.clone()));
+                        ui.close_menu();
+                    }
                     ui.separator();
                     if ui.button("New folder").clicked() {
                         action = Some(ExplorerAction::NewFolder);
@@ -1615,6 +1625,8 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
         Some(ExplorerAction::Rename(path)) => app.explorer_rename(path),
         Some(ExplorerAction::CopySelected(cut)) => app.explorer_copy_selected(cut),
         Some(ExplorerAction::Paste) => app.explorer_paste(),
+        Some(ExplorerAction::JoinSelected) => app.explorer_join_selected(),
+        Some(ExplorerAction::SplitFile(path)) => app.explorer_split_file(path),
         None => {}
     }
 }

@@ -12,7 +12,7 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 31 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 33 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -36,8 +36,8 @@ index, a known-good PAR2 release and a second server.
   (Ctrl/Shift), navigation, history, favourites, context menu, delete, rename,
   open-with, drag/drop copying, clipboard copy/cut/paste and columns.
 - **Phase 6 — partial.** Log retention, persistent history, category routing,
-  multi-server use, thread priority, player launch and execute hooks are
-  implemented. Proxy, native tray and Join/Split remain.
+  multi-server use, thread priority, player launch, execute hooks and file
+  Join/Split are implemented. Proxy and native tray remain.
 - **Phase 7 — mostly done.** Original icon, window/exe resources, a portable
   release zip (`app/package.ps1`) and a golden screenshot matrix
   (`app/screenshots.ps1`) are done. An installer remains.
@@ -161,8 +161,8 @@ live testing.
 
 5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
    binary are included with their license files.
-6. Remaining optional parity work: native tray/notifications, Join/Split and
-   proxy. Confirm which matter for daily use.
+6. Remaining optional parity work: native tray/notifications, proxy and the
+   installer/code signing. Confirm which matter for daily use.
 
 ## Suggested next order
 
