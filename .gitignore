@@ -1,0 +1,30 @@
+# Build output
+/app/target/
+
+# Runtime state and downloaded data (contains the local Usenet account)
+/app/newsqueue-settings.json
+/app/newsqueue-queue.json
+/app/download/
+/app/log/
+/app/nzb/
+/app/temp/
+
+# Harness state and reverse-engineering evidence
+/altbinz_original/
+/capture/
+/checks/
+/investigation.cany/
+/reference/
+/craft.json
+/feed.json
+/build-activity.log
+/transcript.json
+/usage.json
+/*.nzb
+!/Resident.Evil.2026.1080p.MA.WEB-DL.H264.SDR.DDP.Atmos.5.1.English.--HONE.nzb
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

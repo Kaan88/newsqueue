@@ -1,0 +1,490 @@
+//! RAR extraction for completed collections.
+//!
+//! The original loads `unrar.dll`. This build is 64-bit and the bundled
+//! AltBinz DLL is 32-bit, so extraction runs the standalone `UnRAR.exe`
+//! (vendored in `tools/`) in a worker thread. The UI polls a channel, just
+//! like the NNTP downloader.
+
+use crate::model::{app_base, sanitize_folder, Collection, Settings};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+use std::sync::mpsc::{self, Receiver, TryRecvError};
+
+pub struct ActiveUnrar {
+    pub collection_id: u64,
+    pub rx: Receiver<Result<String, String>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct UnrarOptions {
+    pub overwrite: bool,
+    pub rename_existing: bool,
+    pub strip_root: bool,
+    pub delete_archives: bool,
+    pub password: String,
+    pub move_patterns: Vec<String>,
+    pub delete_patterns: Vec<String>,
+    pub case_insensitive: bool,
+    pub expected_files: Vec<String>,
+}
+
+impl UnrarOptions {
+    pub fn from_collection(settings: &Settings, collection: &Collection) -> Self {
+        Self {
+            overwrite: settings.overwrite_existing,
+            rename_existing: settings.rename_existing,
+            strip_root: settings.strip_root,
+            delete_archives: settings.delete_archives || collection.delete_archives,
+            password: collection.password.clone(),
+            move_patterns: split_patterns(&settings.move_files_to_unrar),
+            delete_patterns: split_patterns(&settings.delete_files_after_unrar),
+            case_insensitive: settings.case_insensitive_filters,
+            expected_files: collection
+                .files
+                .iter()
+                .map(|file| file.name.clone())
+                .collect(),
+        }
+    }
+}
+
+/// Target directory for a collection's archive contents.
+pub fn target_dir(settings: &Settings, collection: &Collection) -> PathBuf {
+    let base = if !collection.unrar_folder.trim().is_empty() {
+        PathBuf::from(&collection.unrar_folder)
+    } else if settings.unrar_to_different {
+        PathBuf::from(&settings.unrar_dir)
+    } else {
+        PathBuf::from(&collection.folder)
+    };
+    if settings.create_dir_nzb_name {
+        base.join(sanitize_folder(&collection.subject))
+    } else {
+        base
+    }
+}
+
+pub fn spawn(collection_id: u64, source: PathBuf, dest: PathBuf, options: UnrarOptions) -> ActiveUnrar {
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let result = extract(&source, &dest, &options);
+        let _ = tx.send(result);
+    });
+    ActiveUnrar { collection_id, rx }
+}
+
+pub fn poll(active: &ActiveUnrar) -> Option<Result<String, String>> {
+    match active.rx.try_recv() {
+        Ok(value) => Some(value),
+        Err(TryRecvError::Empty) => None,
+        Err(TryRecvError::Disconnected) => Some(Err("Unrar worker stopped unexpectedly".into())),
+    }
+}
+
+/// True when `source` contains a RAR archive that extraction can start from.
+pub fn has_archive(source: &Path, expected: &[String]) -> bool {
+    find_archive(source, expected).is_some()
+}
+
+/// Extract the first archive volume found in `source` into `dest`.
+pub fn extract(source: &Path, dest: &Path, options: &UnrarOptions) -> Result<String, String> {
+    let archive = find_archive(source, &options.expected_files)
+        .ok_or_else(|| format!("No RAR archive found in {}", source.display()))?;
+    let exe = find_unrar_exe().ok_or_else(|| {
+        "UnRAR.exe not found. Put UnRAR.exe in app/tools/ or install WinRAR.".to_string()
+    })?;
+    fs::create_dir_all(dest).map_err(|e| format!("Cannot create unrar folder: {e}"))?;
+
+    let mut command = Command::new(&exe);
+    command.arg("x").arg("-y").arg("-idq").arg("-ierr");
+    command.arg(if options.overwrite {
+        "-o+"
+    } else if options.rename_existing {
+        "-or"
+    } else {
+        "-o-"
+    });
+    if options.password.trim().is_empty() {
+        command.arg("-p-");
+    } else {
+        command.arg(format!("-p{}", options.password));
+    }
+    command.arg(&archive);
+    let dest_arg = format!("{}\\", dest.display());
+    command.arg(&dest_arg);
+
+    let output = command
+        .output()
+        .map_err(|e| format!("Cannot run {}: {e}", exe.display()))?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let code = output.status.code().unwrap_or(-1);
+    // 0 = success, 1 = non-fatal warning. Everything else is a failure.
+    if code != 0 && code != 1 {
+        let detail = last_nonempty(&stderr)
+            .or_else(|| last_nonempty(&stdout))
+            .unwrap_or_else(|| format!("UnRAR exit code {code}"));
+        return Err(format!(
+            "Unrar failed for {}: {detail}",
+            archive.file_name().unwrap_or_default().to_string_lossy()
+        ));
+    }
+
+    if options.strip_root {
+        let _ = strip_single_root(dest);
+    }
+    if options.delete_archives {
+        delete_archive_set(&archive);
+    }
+    move_matching_files(source, dest, &options.move_patterns, options.case_insensitive);
+    delete_matching_files(source, &options.delete_patterns, options.case_insensitive);
+
+    let extracted = count_files(dest);
+    let warning = if code == 1 {
+        last_nonempty(&stderr)
+            .or_else(|| last_nonempty(&stdout))
+            .map(|line| format!(" ({line})"))
+            .unwrap_or_default()
+    } else {
+        String::new()
+    };
+    Ok(format!(
+        "Unpacked {} file{} to {}{}",
+        extracted,
+        if extracted == 1 { "" } else { "s" },
+        dest.display(),
+        warning
+    ))
+}
+
+fn split_patterns(value: &str) -> Vec<String> {
+    value
+        .split(['|', ';'])
+        .map(str::trim)
+        .filter(|pattern| !pattern.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
+fn find_unrar_exe() -> Option<PathBuf> {
+    if let Ok(value) = std::env::var("NQ_UNRAR") {
+        let path = PathBuf::from(value);
+        if path.is_file() {
+            return Some(path);
+        }
+    }
+    let base = app_base();
+    let mut candidates = vec![
+        base.join("tools").join("UnRAR.exe"),
+        base.join("unrar").join("UnRAR.exe"),
+        PathBuf::from("unrar.exe"),
+        PathBuf::from(r"C:\Program Files\WinRAR\UnRAR.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\WinRAR\UnRAR.exe"),
+    ];
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in path.split(';') {
+            candidates.push(Path::new(dir).join("UnRAR.exe"));
+            candidates.push(Path::new(dir).join("unrar.exe"));
+        }
+    }
+    candidates.into_iter().find(|path| path.is_file())
+}
+
+fn find_archive(source: &Path, expected: &[String]) -> Option<PathBuf> {
+    let mut candidates: Vec<PathBuf> = Vec::new();
+    if let Ok(reader) = fs::read_dir(source) {
+        for entry in reader.flatten() {
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().to_ascii_lowercase())
+                .unwrap_or_default();
+            if is_first_volume(&name) {
+                candidates.push(path);
+            }
+        }
+    }
+    candidates.sort_by(|a, b| {
+        let an = a.file_name().unwrap_or_default().to_string_lossy().to_string();
+        let bn = b.file_name().unwrap_or_default().to_string_lossy().to_string();
+        an.len().cmp(&bn.len()).then(an.cmp(&bn))
+    });
+    for candidate in &candidates {
+        let name = candidate
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string();
+        if expected.iter().any(|wanted| wanted.eq_ignore_ascii_case(&name)) {
+            return Some(candidate.clone());
+        }
+    }
+    candidates.into_iter().next()
+}
+
+fn is_first_volume(name: &str) -> bool {
+    if name.ends_with(".001") {
+        return true;
+    }
+    if !name.ends_with(".rar") || name.ends_with(".part2.rar") {
+        return false;
+    }
+    if let Some(index) = name.rfind(".part") {
+        let digits = &name[index + 5..name.len() - 4];
+        if !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) {
+            let trimmed = digits.trim_start_matches('0');
+            return trimmed == "1" || (digits == "1");
+        }
+    }
+    true
+}
+
+fn archive_prefix(archive: &Path) -> String {
+    let name = archive
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_ascii_lowercase();
+    if let Some(index) = name.rfind(".part") {
+        return name[..index].to_string();
+    }
+    if let Some(index) = name.rfind('.') {
+        return name[..index].to_string();
+    }
+    name
+}
+
+fn delete_archive_set(archive: &Path) {
+    let Some(parent) = archive.parent() else { return };
+    let prefix = archive_prefix(archive);
+    let prefix_dot = format!("{prefix}.");
+    let Ok(reader) = fs::read_dir(parent) else { return };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_ascii_lowercase();
+        let Some(suffix) = name.strip_prefix(&prefix_dot) else {
+            continue;
+        };
+        let is_volume = suffix == "rar"
+            || suffix == "rev"
+            || (suffix.starts_with("part") && (suffix.ends_with(".rar") || suffix.ends_with(".rev")))
+            || (suffix.len() == 3
+                && suffix.is_ascii()
+                && (suffix.chars().all(|c| c.is_ascii_digit())
+                    || ((suffix.as_bytes()[0].eq_ignore_ascii_case(&b'r')
+                        || suffix.as_bytes()[0].eq_ignore_ascii_case(&b's'))
+                        && suffix[1..].chars().all(|c| c.is_ascii_digit()))));
+        if is_volume {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn strip_single_root(dest: &Path) -> std::io::Result<()> {
+    let entries: Vec<_> = fs::read_dir(dest)?.flatten().collect();
+    if entries.len() != 1 || !entries[0].file_type()?.is_dir() {
+        return Ok(());
+    }
+    let root = entries[0].path();
+    for child in fs::read_dir(&root)?.flatten() {
+        let target = dest.join(child.file_name());
+        if !target.exists() {
+            fs::rename(child.path(), target)?;
+        }
+    }
+    let _ = fs::remove_dir(root);
+    Ok(())
+}
+
+fn move_matching_files(source: &Path, dest: &Path, patterns: &[String], ignore_case: bool) {
+    if patterns.is_empty() || source == dest {
+        return;
+    }
+    let Ok(reader) = fs::read_dir(source) else { return };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if patterns.iter().any(|pattern| glob_match(pattern, &name, ignore_case)) {
+            let target = unique_path(dest.join(&name));
+            let _ = fs::rename(path, target);
+        }
+    }
+}
+
+fn delete_matching_files(source: &Path, patterns: &[String], ignore_case: bool) {
+    if patterns.is_empty() {
+        return;
+    }
+    let Ok(reader) = fs::read_dir(source) else { return };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if !path.is_file() {
+            continue;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if patterns.iter().any(|pattern| glob_match(pattern, &name, ignore_case)) {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+fn unique_path(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .to_string();
+    let extension = path
+        .extension()
+        .map(|ext| format!(".{}", ext.to_string_lossy()))
+        .unwrap_or_default();
+    for index in 1..10_000 {
+        let candidate = parent.join(format!("{stem} ({index}){extension}"));
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    path
+}
+
+fn glob_match(pattern: &str, name: &str, ignore_case: bool) -> bool {
+    let (pattern, name) = if ignore_case {
+        (pattern.to_ascii_lowercase(), name.to_ascii_lowercase())
+    } else {
+        (pattern.to_string(), name.to_string())
+    };
+    let p: Vec<char> = pattern.chars().collect();
+    let n: Vec<char> = name.chars().collect();
+    let mut pi = 0;
+    let mut ni = 0;
+    let mut star: Option<(usize, usize)> = None;
+    while ni < n.len() {
+        if pi < p.len() && (p[pi] == '?' || p[pi] == n[ni]) {
+            pi += 1;
+            ni += 1;
+        } else if pi < p.len() && p[pi] == '*' {
+            star = Some((pi, ni));
+            pi += 1;
+        } else if let Some((sp, sn)) = star {
+            pi = sp + 1;
+            ni = sn + 1;
+            star = Some((sp, sn + 1));
+        } else {
+            return false;
+        }
+    }
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+fn last_nonempty(text: &str) -> Option<String> {
+    text.lines()
+        .rev()
+        .map(str::trim)
+        .find(|line| !line.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn count_files(path: &Path) -> usize {
+    let Ok(reader) = fs::read_dir(path) else { return 0 };
+    let mut count = 0;
+    for entry in reader.flatten() {
+        let Ok(file_type) = entry.file_type() else { continue };
+        if file_type.is_dir() {
+            count += count_files(&entry.path());
+        } else if file_type.is_file() {
+            count += 1;
+        }
+    }
+    count
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn identifies_first_rar_volumes() {
+        assert!(is_first_volume("release.rar"));
+        assert!(is_first_volume("release.part1.rar"));
+        assert!(is_first_volume("release.part01.rar"));
+        assert!(is_first_volume("release.part001.rar"));
+        assert!(is_first_volume("release.001"));
+        assert!(!is_first_volume("release.part2.rar"));
+        assert!(!is_first_volume("release.part002.rar"));
+        assert!(!is_first_volume("release.r00"));
+    }
+
+    #[test]
+    fn wildcard_matching_handles_case_and_stars() {
+        assert!(glob_match("*.nfo", "info.NFO", true));
+        assert!(glob_match("*.nfo", "info.NFO", false) == false);
+        assert!(glob_match("sample?.mkv", "sample1.mkv", true));
+        assert!(!glob_match("*.nfo", "info.txt", true));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn extracts_a_rar_and_strips_the_root_folder() {
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tiny.rar");
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-unrar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let dest = root.join("dest");
+        fs::create_dir_all(&source).unwrap();
+        fs::copy(&fixture, source.join("tiny.rar")).unwrap();
+        let options = UnrarOptions {
+            overwrite: true,
+            rename_existing: true,
+            strip_root: true,
+            delete_archives: false,
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        };
+        let message = extract(&source, &dest, &options).unwrap();
+        assert!(message.contains("2 files"), "{message}");
+        assert_eq!(
+            fs::read_to_string(dest.join("readme.txt")).unwrap().trim(),
+            "tiny rar fixture"
+        );
+        assert_eq!(
+            fs::read_to_string(dest.join("Sub").join("data.bin"))
+                .unwrap()
+                .trim(),
+            "payload"
+        );
+        let _ = fs::remove_dir_all(root);
+    }
+}

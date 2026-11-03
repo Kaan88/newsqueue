@@ -1,0 +1,1988 @@
+mod dialogs;
+mod download;
+mod model;
+mod theme;
+mod ui;
+mod unrar;
+
+use chrono::{Local, Timelike};
+use eframe::egui;
+use model::*;
+use std::collections::VecDeque;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::Ordering;
+use std::time::{Duration, Instant};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Selection {
+    pub collection: usize,
+    pub file: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum MoveDir {
+    Top,
+    Up,
+    Down,
+    Bottom,
+}
+
+#[derive(Clone, Debug)]
+pub enum UiAction {
+    Select(Option<Selection>),
+    ToggleExpand(usize),
+    PauseSelected(bool),
+    DeleteSelected,
+    Move(MoveDir),
+    ChangeFolder,
+    Export,
+    SetCategory,
+    ToggleUnrar(bool),
+    UnpackNow,
+    ChangeUnrarFolder,
+    OpenFolder,
+    Play,
+    Eta,
+    Rename,
+    CollapseAll,
+    ExpandAll,
+    None,
+}
+
+#[derive(Clone, Debug)]
+pub struct HistoryItem {
+    pub name: String,
+    pub date: String,
+    pub size: String,
+}
+
+#[derive(Clone, Debug)]
+pub struct SearchResult {
+    pub subject: String,
+    pub size_mb: f64,
+    pub age: f64,
+    pub group: String,
+    pub poster: String,
+    pub percent: u32,
+}
+
+pub struct App {
+    pub settings: Settings,
+    pub setup_draft: Settings,
+    pub queue: Vec<Collection>,
+    pub par2: Vec<Par2Set>,
+    pub rss: Vec<RssItem>,
+    pub logs: VecDeque<LogEntry>,
+    pub threads: Vec<ThreadRow>,
+    pub history: Vec<HistoryItem>,
+    pub search_results: Vec<SearchResult>,
+    pub selected: Option<Selection>,
+    pub selected_par2: Option<usize>,
+    pub active_tab: usize,
+    pub connected: bool,
+    pub paused: bool,
+    pub pause_until: Option<Instant>,
+    pub pause_minutes: u32,
+    pub resume_ids: Vec<u64>,
+    pub speed_limit_tag: Option<u8>,
+    pub speed_ceiling_mbps: f64,
+    pub auto_speed: bool,
+    pub auto_speed_ticks: u32,
+    pub speed_samples: [f64; SPEED_SAMPLE_COUNT],
+    pub speed_sample_index: usize,
+    pub pending_speed_bps: f64,
+    pub pending_bytes: f64,
+    pub speed_bps: f64,
+    pub speed_history: VecDeque<f32>,
+    pub transfered_session: u64,
+    pub session_start: Instant,
+    pub startups: u64,
+    pub last_tick: Instant,
+    pub last_sample: Instant,
+    pub last_minute_stats: Instant,
+    pub last_hour_stats: Instant,
+    pub last_save: Instant,
+    pub last_queue_save: Instant,
+    pub low_space_warned: bool,
+    pub frame: u64,
+    pub screenshot_path: Option<String>,
+    pub screenshot_requested: bool,
+    pub screenshot_saved: bool,
+    pub show_setup: bool,
+    pub setup_page: usize,
+    pub show_server_edit: bool,
+    pub editing_server: Option<usize>,
+    pub setup_server_selected: Option<usize>,
+    pub server_draft: Server,
+    pub server_edit_error: String,
+    pub show_categories: bool,
+    pub category_draft: Vec<Category>,
+    pub show_stats: bool,
+    pub stats_tab: usize,
+    pub show_about: bool,
+    pub show_notes: bool,
+    pub notes_draft: String,
+    pub show_columns: bool,
+    pub column_visible_draft: [bool; 12],
+    pub column_width_draft: [f32; 12],
+    pub show_rename: bool,
+    pub rename_draft: String,
+    pub rename_index: Option<usize>,
+    pub show_pause_for: bool,
+    pub show_shutdown: bool,
+    pub show_search: bool,
+    pub show_speed_limit: bool,
+    pub show_filter_help: bool,
+    pub show_message: Option<(String, String)>,
+    pub search_query: String,
+    pub search_engines: [bool; 5],
+    pub search_status: String,
+    pub filter: String,
+    pub log_filter: String,
+    pub rss_filter: String,
+    pub rss_timer: bool,
+    pub show_threads: bool,
+    pub thread_height: f32,
+    pub status_mode_speed: u8,
+    pub status_mode_queue: u8,
+    pub status_mode_transfered: u8,
+    pub scheduler_hold: bool,
+    pub scheduler_last_hold: bool,
+    pub shutdown_armed: bool,
+    pub shutdown_countdown: Option<Instant>,
+    pub repair_until: Option<(usize, Instant)>,
+    pub explorer_path: PathBuf,
+    pub explorer_path_edit: String,
+    pub explorer_selected: Option<PathBuf>,
+    pub explorer_history: Vec<PathBuf>,
+    pub explorer_forward: Vec<PathBuf>,
+    pub explorer_filter: String,
+    pub toast: Option<(String, Instant)>,
+    pub daily_transfer: [f64; 24],
+    pub monthly_transfer: [f64; 12],
+    pub startup_done: bool,
+    pub last_log_day: String,
+    pub active_dl: Option<download::ActiveDownload>,
+    pub active_unrar: Option<unrar::ActiveUnrar>,
+    pub pending_unrar: VecDeque<u64>,
+    pub resume_after_unrar: bool,
+}
+
+impl App {
+    pub fn new(settings: Settings, screenshot_path: Option<String>) -> Self {
+        ensure_dirs(&settings);
+        let queue = if screenshot_path.is_none() {
+            let mut saved = load_queue_state().unwrap_or_default();
+            // Older saves contain demonstration entries with no article ids.
+            saved.retain(|c| c.has_segments());
+            saved
+        } else {
+            sample_queue(&settings)
+        };
+        let threads = build_threads(false, &queue, &settings, false, 0);
+        let mut daily = [0.0f64; 24];
+        for (i, v) in daily.iter_mut().enumerate() {
+            *v = ((i as f64 * 0.73).sin().abs() * 240.0 + (i as f64 * 0.31).cos().abs() * 80.0)
+                .round();
+        }
+        let monthly = [
+            3_240.0, 2_980.0, 4_120.0, 3_760.0, 4_880.0, 5_120.0, 4_460.0, 4_910.0, 5_380.0,
+            5_010.0, 4_720.0, 5_640.0,
+        ];
+        let explorer_path = PathBuf::from(&settings.download_dir);
+        let explorer_path_text = explorer_path.to_string_lossy().to_string();
+        let _ = std::fs::create_dir_all(&explorer_path);
+        let thread_height = settings.thread_list_height;
+        let show_threads = settings.thread_list_visible;
+        let status_mode_speed = settings.speed_bytes_mode;
+        let status_mode_queue = settings.queue_bytes_mode;
+        let status_mode_transfered = settings.transfered_bytes_mode;
+        let speed_limit_tag = settings.startup_speed_limit;
+        let speed_ceiling_mbps = settings.max_speed_mbps;
+        let auto_speed = settings.max_speed_kbps <= 0.0;
+        let notes_draft = settings.notes.clone();
+        let column_visible_draft = settings.column_visible;
+        let column_width_draft = settings.column_widths;
+        let setup_draft = settings.clone();
+        let category_draft = settings.categories.clone();
+        let mut app = Self {
+            settings,
+            setup_draft,
+            queue,
+            par2: sample_par2(),
+            rss: sample_rss(),
+            logs: sample_log(),
+            threads,
+            history: vec![
+                HistoryItem {
+                    name: "Quiet Harbor Sessions".into(),
+                    date: "2026-11-02 19:42".into(),
+                    size: "2.41 GB".into(),
+                },
+                HistoryItem {
+                    name: "Field Notes Collection".into(),
+                    date: "2026-11-01 08:15".into(),
+                    size: "918.2 MB".into(),
+                },
+                HistoryItem {
+                    name: "Toolkit Archive 2024".into(),
+                    date: "2026-10-29 22:05".into(),
+                    size: "4.12 GB".into(),
+                },
+            ],
+            search_results: Vec::new(),
+            selected: None,
+            selected_par2: None,
+            active_tab: 0,
+            connected: false,
+            paused: false,
+            pause_until: None,
+            pause_minutes: 0,
+            resume_ids: Vec::new(),
+            speed_limit_tag,
+            speed_ceiling_mbps,
+            auto_speed,
+            auto_speed_ticks: 0,
+            speed_samples: [0.0; SPEED_SAMPLE_COUNT],
+            speed_sample_index: 0,
+            pending_speed_bps: 0.0,
+            pending_bytes: 0.0,
+            speed_bps: 0.0,
+            speed_history: VecDeque::from(vec![0.0; 120]),
+            transfered_session: 0,
+            session_start: Instant::now(),
+            startups: 1,
+            last_tick: Instant::now(),
+            last_sample: Instant::now(),
+            last_minute_stats: Instant::now(),
+            last_hour_stats: Instant::now(),
+            last_save: Instant::now(),
+            last_queue_save: Instant::now(),
+            low_space_warned: false,
+            frame: 0,
+            screenshot_path,
+            screenshot_requested: false,
+            screenshot_saved: false,
+            show_setup: false,
+            setup_page: 0,
+            show_server_edit: false,
+            editing_server: None,
+            setup_server_selected: None,
+            server_draft: Server::default(),
+            server_edit_error: String::new(),
+            show_categories: false,
+            category_draft,
+            show_stats: false,
+            stats_tab: 0,
+            show_about: false,
+            show_notes: false,
+            notes_draft,
+            show_columns: false,
+            column_visible_draft,
+            column_width_draft,
+            show_rename: false,
+            rename_draft: String::new(),
+            rename_index: None,
+            show_pause_for: false,
+            show_shutdown: false,
+            show_search: false,
+            show_speed_limit: false,
+            show_filter_help: false,
+            show_message: None,
+            search_query: String::new(),
+            search_engines: [true, true, true, false, false],
+            search_status: "No results".into(),
+            filter: String::new(),
+            log_filter: String::new(),
+            rss_filter: String::new(),
+            rss_timer: false,
+            show_threads,
+            thread_height,
+            status_mode_speed,
+            status_mode_queue,
+            status_mode_transfered,
+            scheduler_hold: false,
+            scheduler_last_hold: false,
+            shutdown_armed: false,
+            shutdown_countdown: None,
+            repair_until: None,
+            explorer_path,
+            explorer_path_edit: explorer_path_text,
+            explorer_selected: None,
+            explorer_history: Vec::new(),
+            explorer_forward: Vec::new(),
+            explorer_filter: String::new(),
+            toast: None,
+            daily_transfer: daily,
+            monthly_transfer: monthly,
+            startup_done: false,
+            last_log_day: String::new(),
+            active_dl: None,
+            active_unrar: None,
+            pending_unrar: VecDeque::new(),
+            resume_after_unrar: false,
+        };
+        match std::env::var("NQ_DEMO_DIALOG").as_deref() {
+            Ok("setup") => {
+                app.setup_draft = app.settings.clone();
+                app.show_setup = true;
+            }
+            Ok("server") => {
+                app.setup_draft = app.settings.clone();
+                app.show_setup = true;
+                app.setup_page = 13;
+                app.server_draft = app.settings.servers[0].clone();
+                app.editing_server = Some(0);
+                app.show_server_edit = true;
+            }
+            Ok("stats") => app.show_stats = true,
+            Ok("search") => app.show_search = true,
+            Ok("categories") => app.show_categories = true,
+            Ok("notes") => app.show_notes = true,
+            Ok("about") => app.show_about = true,
+            Ok("columns") => app.show_columns = true,
+            Ok("pause") => app.show_pause_for = true,
+            _ => {}
+        }
+        if let Ok(tab) = std::env::var("NQ_DEMO_TAB") {
+            app.active_tab = match tab.as_str() {
+                "par2" => 1,
+                "explorer" => 2,
+                "log" => 3,
+                "rss" => 4,
+                _ => 0,
+            };
+        }
+        if let Ok(path) = std::env::var("NQ_DEMO_EXPLORER") {
+            let path = PathBuf::from(path);
+            if path.is_dir() {
+                app.explorer_path = path;
+                app.explorer_path_edit = app.explorer_path.to_string_lossy().to_string();
+            }
+        }
+        if std::env::var("NQ_DEMO_CONNECT").is_ok() {
+            app.connect();
+        }
+        if app.screenshot_path.is_none() {
+            for entry in app.logs.clone() {
+                app.write_log_file(&entry);
+            }
+        }
+        if let Ok(page) = std::env::var("NQ_DEMO_SETUP_PAGE") {
+            if let Ok(page) = page.parse::<usize>() {
+                app.setup_draft = app.settings.clone();
+                app.setup_page = page.min(16);
+                app.show_setup = true;
+            }
+        }
+        app
+    }
+
+    pub fn log(&mut self, level: &str, message: &str) {
+        let entry = LogEntry {
+            time: now_time(),
+            level: level.to_string(),
+            message: message.to_string(),
+        };
+        self.logs.push_back(entry.clone());
+        while self.logs.len() > self.settings.max_log_lines.max(1) {
+            self.logs.pop_front();
+        }
+        self.write_log_file(&entry);
+    }
+
+    fn write_log_file(&self, entry: &LogEntry) {
+        if self.screenshot_path.is_some()
+            || !self.settings.log_enabled
+            || !self.settings.log_to_file
+        {
+            return;
+        }
+        let dir = app_base().join("log");
+        let _ = std::fs::create_dir_all(&dir);
+        let name = Local::now().format("%Y%m%d.log").to_string();
+        let line = format!(
+            "[{}] [{}] {}\r\n",
+            Local::now().format("%m/%d/%Y %I:%M:%S %p"),
+            entry.level,
+            entry.message
+        );
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(dir.join(name))
+        {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+
+    pub fn toast(&mut self, text: impl Into<String>) {
+        self.toast = Some((text.into(), Instant::now()));
+    }
+
+    pub fn active_collection(&self) -> Option<usize> {
+        active_download(&self.queue)
+    }
+
+    /// Global bandwidth limit in bytes per second. `None` means "No limit"
+    /// and is 0 (unthrottled), matching function 0x817178.
+    pub fn speed_limit_bps(&self) -> f64 {
+        match self.speed_limit_tag {
+            Some(tag) => speed_limit_bps(tag, self.speed_ceiling_mbps),
+            None => 0.0,
+        }
+    }
+
+    /// Function 0x835e38 applies the global limit divided by the number of
+    /// active connections to each connection.
+    pub fn per_connection_speed(&self, connections: u32) -> f64 {
+        per_connection_limit(self.speed_limit_bps(), connections)
+    }
+
+    pub fn total_queue_size(&self) -> u64 {
+        queue_total_bytes(&self.queue)
+    }
+
+    pub fn queue_remaining(&self) -> f64 {
+        queue_remaining_bytes(&self.queue)
+    }
+
+    pub fn connect(&mut self) {
+        if self.settings.enabled_servers().is_empty() {
+            self.show_message = Some((
+                "Information".into(),
+                "You don't have enabled servers. Go into setup and enable at least one server."
+                    .into(),
+            ));
+            self.log(
+                "Main",
+                "You don't have enabled servers. Go into setup and enable at least one server.",
+            );
+            return;
+        }
+        self.connected = true;
+        self.paused = false;
+        self.pause_until = None;
+        // Anything that was running when the connection dropped, or that was
+        // added while the connection was down, must be queued again so the
+        // first tick can start it. Individually paused entries stay paused.
+        let resume: Vec<u64> = self.resume_ids.drain(..).collect();
+        for id in resume {
+            if let Some(c) = self.queue.iter_mut().find(|c| c.id == id) {
+                if c.status == ItemStatus::Paused {
+                    c.status = ItemStatus::Queued;
+                }
+            }
+        }
+        for c in &mut self.queue {
+            if c.status == ItemStatus::Downloading {
+                c.status = ItemStatus::Queued;
+            }
+        }
+        self.threads = build_threads(true, &self.queue, &self.settings, false, 0);
+        let names = self
+            .settings
+            .enabled_servers()
+            .iter()
+            .map(|s| format!("{}:{}", s.address, s.port))
+            .collect::<Vec<_>>()
+            .join(", ");
+        self.log("Connection", &format!("Connected to {names}."));
+        self.toast("Connected");
+    }
+
+    pub fn disconnect(&mut self) {
+        self.connected = false;
+        self.paused = false;
+        self.active_dl = None;
+        for c in &mut self.queue {
+            if c.status == ItemStatus::Downloading {
+                c.status = ItemStatus::Paused;
+                // Remember it so a later Connect resumes it automatically.
+                if !self.resume_ids.contains(&c.id) {
+                    self.resume_ids.push(c.id);
+                }
+            }
+        }
+        self.threads.clear();
+        self.speed_bps = 0.0;
+        self.log("Connection", "Disconnected.");
+        self.toast("Disconnected");
+    }
+
+    pub fn toggle_connect(&mut self) {
+        if self.connected {
+            self.disconnect();
+        } else {
+            self.connect();
+        }
+    }
+
+    pub fn toggle_pause(&mut self) {
+        if self.paused {
+            self.resume_paused_ids();
+            self.paused = false;
+            self.pause_until = None;
+            self.pause_minutes = 0;
+            self.log("Main", "Downloading resumed.");
+            self.toast("Resumed");
+        } else {
+            self.paused = true;
+            for c in &mut self.queue {
+                if c.status == ItemStatus::Downloading {
+                    c.status = ItemStatus::Paused;
+                    if !self.resume_ids.contains(&c.id) {
+                        self.resume_ids.push(c.id);
+                    }
+                }
+            }
+            self.log("Main", "Downloading paused.");
+            self.toast("Paused");
+        }
+    }
+
+    /// Restore every entry that the global pause put on hold. The item that
+    /// already owns a worker is marked Downloading so that worker resumes;
+    /// the rest go back to Queued so the scheduler starts them in turn.
+    fn resume_paused_ids(&mut self) {
+        let active_id = self.active_dl.as_ref().map(|a| a.id);
+        for id in self.resume_ids.drain(..).collect::<Vec<_>>() {
+            if let Some(c) = self.queue.iter_mut().find(|c| c.id == id) {
+                if c.status == ItemStatus::Paused {
+                    c.status = if active_id == Some(id) {
+                        ItemStatus::Downloading
+                    } else {
+                        ItemStatus::Queued
+                    };
+                }
+            }
+        }
+    }
+
+    pub fn pause_for(&mut self, minutes: u32) {
+        if minutes == 0 {
+            self.paused = false;
+            self.pause_until = None;
+            self.log("Main", "Pause timer disabled.");
+            return;
+        }
+        if !self.paused {
+            self.toggle_pause();
+        }
+        self.pause_minutes = minutes;
+        self.pause_until = Some(Instant::now() + Duration::from_secs(minutes as u64 * 60));
+        self.log("Main", &format!("Paused for {minutes} minutes."));
+        self.toast(format!("Paused for {minutes} min"));
+    }
+
+    pub fn set_speed_limit(&mut self, tag: Option<u8>) {
+        self.speed_limit_tag = tag;
+        match tag {
+            Some(t) => {
+                let pct = t * 10;
+                let bps = speed_limit_bps(t, self.speed_ceiling_mbps);
+                self.log(
+                    "Connection",
+                    &format!(
+                        "Speed limit set to {pct}% ({}).",
+                        format_speed(bps, self.status_mode_speed)
+                    ),
+                );
+                self.toast(format!("Speed limit {pct}%"));
+            }
+            None => {
+                self.log("Connection", "Speed limit removed (no limit).");
+                self.toast("No limit");
+            }
+        }
+    }
+
+    pub fn pause_selected(&mut self, pause: bool) {
+        let Some(sel) = self.selected else { return };
+        let active_id = self.active_dl.as_ref().map(|a| a.id);
+        let mut changed: Option<(String, bool)> = None;
+        if let Some(c) = self.queue.get_mut(sel.collection) {
+            if pause {
+                if c.status != ItemStatus::Completed {
+                    c.status = ItemStatus::Paused;
+                    changed = Some((c.subject.clone(), true));
+                }
+            } else if c.status == ItemStatus::Paused {
+                // Only the item that already has a worker should be marked
+                // Downloading; anything else goes back to Queued or it would
+                // never be picked up by the starter.
+                let id = c.id;
+                c.status = if active_id == Some(id) {
+                    ItemStatus::Downloading
+                } else {
+                    ItemStatus::Queued
+                };
+                changed = Some((c.subject.clone(), false));
+            }
+        }
+        if let Some((subject, paused)) = changed {
+            self.log(
+                "Queue",
+                &format!("{}: {subject}", if paused { "Paused" } else { "Unpaused" }),
+            );
+        }
+    }
+
+    pub fn delete_selected(&mut self) {
+        let Some(sel) = self.selected else { return };
+        if sel.collection < self.queue.len() {
+            let c = self.queue.remove(sel.collection);
+            self.log("Queue", &format!("Deleted: {}", c.subject));
+            self.selected = None;
+        }
+    }
+
+    pub fn move_selected(&mut self, dir: MoveDir) {
+        let Some(sel) = self.selected else { return };
+        let i = sel.collection;
+        if i >= self.queue.len() {
+            return;
+        }
+        let j = match dir {
+            MoveDir::Top => 0,
+            MoveDir::Up => i.saturating_sub(1),
+            MoveDir::Down => (i + 1).min(self.queue.len() - 1),
+            MoveDir::Bottom => self.queue.len() - 1,
+        };
+        if i != j {
+            let item = self.queue.remove(i);
+            self.queue.insert(j, item);
+            self.selected = Some(Selection {
+                collection: j,
+                file: None,
+            });
+        }
+    }
+
+    pub fn cleanup(&mut self) {
+        let before = self.queue.len();
+        self.queue.retain(|c| c.status != ItemStatus::Completed);
+        let removed = before - self.queue.len();
+        self.par2.retain(|p| p.status != "OK");
+        self.log(
+            "Main",
+            &format!("Cleanup removed {removed} completed queue entries."),
+        );
+        self.toast(format!("Cleanup: {removed} removed"));
+    }
+
+    pub fn toggle_expand(&mut self, index: usize) {
+        if let Some(c) = self.queue.get_mut(index) {
+            c.expanded = !c.expanded;
+        }
+    }
+
+    pub fn selected_collection(&self) -> Option<&Collection> {
+        self.selected.and_then(|s| self.queue.get(s.collection))
+    }
+
+    pub fn export_selected(&mut self) {
+        let Some(c) = self.selected_collection().cloned() else {
+            self.toast("Select a collection first");
+            return;
+        };
+        if let Some(path) = rfd::FileDialog::new()
+            .add_filter("NZB files", &["nzb"])
+            .set_file_name(format!("{}.nzb", sanitize_folder(&c.subject)))
+            .save_file()
+        {
+            let mut xml = String::new();
+            xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<nzb xmlns=\"http://www.newzbin.com/DTD/2003/nzb\">\n");
+            for f in &c.files {
+                xml.push_str(&format!(
+                    "  <file subject=\"{}\" poster=\"{}\" date=\"0\">\n    <groups><group>{}</group></groups>\n    <segments><segment bytes=\"{}\" number=\"1\">export</segment></segments>\n  </file>\n",
+                    xml_escape(&f.name),
+                    xml_escape(&c.poster),
+                    xml_escape(&c.group),
+                    f.bytes
+                ));
+            }
+            xml.push_str("</nzb>\n");
+            if std::fs::write(&path, xml).is_ok() {
+                self.log("Main", &format!("Exported NZB to {}", path.display()));
+                self.toast("NZB exported");
+            }
+        }
+    }
+
+    pub fn import_nzb(&mut self) {
+        let Some(path) = rfd::FileDialog::new()
+            .add_filter("NZB files", &["nzb", "NZB"])
+            .pick_file()
+        else {
+            return;
+        };
+        match parse_nzb(&path) {
+            Ok(nzb) => {
+                let files: Vec<QueueFile> = nzb
+                    .files
+                    .iter()
+                    .map(|f| QueueFile {
+                        name: f.name.clone(),
+                        bytes: f.bytes,
+                        downloaded: 0.0,
+                        parts: f.parts,
+                        segments: f.segments.clone(),
+                    })
+                    .collect();
+                let id = self.queue.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+                let paused = self.paused;
+                let collection = Collection {
+                    id,
+                    subject: nzb.name.clone(),
+                    total_bytes: nzb.total_bytes.max(1),
+                    downloaded: 0.0,
+                    parts: nzb.parts,
+                    age_days: nzb.age_days,
+                    group: if nzb.group.is_empty() {
+                        "alt.binaries.misc".into()
+                    } else {
+                        nzb.group.clone()
+                    },
+                    poster: if nzb.poster.is_empty() {
+                        "unknown".into()
+                    } else {
+                        nzb.poster.clone()
+                    },
+                    status: if paused {
+                        ItemStatus::Paused
+                    } else {
+                        ItemStatus::Queued
+                    },
+                    folder: PathBuf::from(&self.settings.download_dir)
+                        .join(sanitize_folder(&nzb.name))
+                        .to_string_lossy()
+                        .to_string(),
+                    unrar_folder: String::new(),
+                    unrar: true,
+                    execute: String::new(),
+                    expanded: true,
+                    files,
+                    posted_on: nzb.posted_on.clone(),
+                    delete_archives: false,
+                    category: "Default".into(),
+                    password: String::new(),
+                    source: path.to_string_lossy().to_string(),
+                };
+                let subject = collection.subject.clone();
+                if paused && !self.resume_ids.contains(&id) {
+                    // A globally paused import must resume with the global
+                    // Unpause, otherwise it would sit at Paused forever.
+                    self.resume_ids.push(id);
+                }
+                self.queue.push(collection);
+                self.log("Queue", &format!("Imported NZB: {subject}"));
+                self.toast("NZB imported");
+                if self.settings.delete_nzb_after_import {
+                    let _ = std::fs::remove_file(&path);
+                }
+            }
+            Err(e) => {
+                self.show_message = Some(("Error".into(), format!("Could not import NZB:\n{e}")));
+                self.log("Error", &format!("NZB import failed: {e}"));
+            }
+        }
+    }
+
+    pub fn open_download_folder(&mut self) {
+        let path = PathBuf::from(&self.settings.download_dir);
+        let _ = std::fs::create_dir_all(&path);
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer").arg(path).spawn();
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+        }
+        self.toast("Opening download folder");
+    }
+
+    pub fn open_unrar_folder(&mut self) {
+        let path = PathBuf::from(&self.settings.unrar_dir);
+        let _ = std::fs::create_dir_all(&path);
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("explorer").arg(path).spawn();
+        }
+        self.toast("Opening unrar folder");
+    }
+
+    pub fn explorer_navigate(&mut self, path: PathBuf) {
+        if path == self.explorer_path {
+            return;
+        }
+        if !path.is_dir() {
+            self.toast("Folder does not exist");
+            return;
+        }
+        self.explorer_history.push(self.explorer_path.clone());
+        self.explorer_forward.clear();
+        self.explorer_path = path;
+        self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
+        self.explorer_selected = None;
+    }
+
+    pub fn explorer_back(&mut self) {
+        if let Some(previous) = self.explorer_history.pop() {
+            let current = std::mem::replace(&mut self.explorer_path, previous);
+            self.explorer_forward.push(current);
+            self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
+            self.explorer_selected = None;
+        }
+    }
+
+    pub fn explorer_forward(&mut self) {
+        if let Some(next) = self.explorer_forward.pop() {
+            let current = std::mem::replace(&mut self.explorer_path, next);
+            self.explorer_history.push(current);
+            self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
+            self.explorer_selected = None;
+        }
+    }
+
+    pub fn explorer_up(&mut self) {
+        if let Some(parent) = self.explorer_path.parent().map(Path::to_path_buf) {
+            self.explorer_navigate(parent);
+        }
+    }
+
+    pub fn explorer_open_entry(&mut self, path: PathBuf, is_dir: bool) {
+        if is_dir {
+            self.explorer_navigate(path);
+        } else {
+            shell_open(&path);
+            self.log("Explorer", &format!("Opened {}", path.display()));
+        }
+    }
+
+    pub fn explorer_open_containing(&mut self, path: PathBuf) {
+        if let Some(parent) = path.parent() {
+            shell_open(parent);
+            self.log("Explorer", &format!("Opened {}", parent.display()));
+        }
+    }
+
+    pub fn explorer_new_folder(&mut self) {
+        let mut name = "New folder".to_string();
+        let mut index = 1;
+        while self.explorer_path.join(&name).exists() {
+            name = format!("New folder ({index})");
+            index += 1;
+        }
+        let path = self.explorer_path.join(&name);
+        match std::fs::create_dir(&path) {
+            Ok(()) => {
+                self.explorer_selected = Some(path.clone());
+                self.log("Explorer", &format!("Created {}", path.display()));
+                self.toast("Folder created");
+            }
+            Err(error) => {
+                self.show_message = Some(("Explorer".into(), format!("Could not create folder:\n{error}")));
+            }
+        }
+    }
+
+    pub fn explorer_properties(&mut self, path: PathBuf) {
+        let metadata = std::fs::metadata(&path);
+        let mut lines = vec![path.display().to_string()];
+        match metadata {
+            Ok(meta) => {
+                if meta.is_dir() {
+                    lines.push("Type: Folder".into());
+                } else {
+                    lines.push(format!("Size: {} bytes", meta.len()));
+                    lines.push("Type: File".into());
+                }
+                if let Ok(modified) = meta.modified() {
+                    let modified = chrono::DateTime::<chrono::Local>::from(modified);
+                    lines.push(format!("Modified: {}", modified.format("%Y-%m-%d %H:%M")));
+                }
+                if meta.permissions().readonly() {
+                    lines.push("Attributes: Read-only".into());
+                }
+            }
+            Err(error) => lines.push(format!("Cannot read metadata: {error}")),
+        }
+        self.show_message = Some(("Properties".into(), lines.join("\n")));
+    }
+
+    /// Start unpacking a completed collection. Returns true when a worker was
+    /// started or the request was queued; false when there is nothing to unpack.
+    pub fn start_unrar(&mut self, id: u64) -> bool {
+        if self.active_unrar.is_some() {
+            if !self.pending_unrar.contains(&id) {
+                self.pending_unrar.push_back(id);
+            }
+            return true;
+        }
+        let Some(index) = self.queue.iter().position(|c| c.id == id) else {
+            return false;
+        };
+        let collection = self.queue[index].clone();
+        if !matches!(
+            collection.status,
+            ItemStatus::Completed | ItemStatus::Incomplete | ItemStatus::Error
+        ) {
+            return false;
+        }
+        let source = PathBuf::from(&collection.folder);
+        let options = unrar::UnrarOptions::from_collection(&self.settings, &collection);
+        if !unrar::has_archive(&source, &options.expected_files) {
+            self.log("Unrar", &format!("Nothing to unrar for {}", collection.subject));
+            self.toast("No RAR archive found");
+            return false;
+        }
+        let dest = unrar::target_dir(&self.settings, &collection);
+        self.queue[index].status = ItemStatus::Unpacking;
+        if self.settings.pause_while_unraring && self.connected && !self.paused {
+            self.toggle_pause();
+            self.resume_after_unrar = true;
+        }
+        self.log(
+            "Unrar",
+            &format!("Unpack started: {} -> {}", collection.subject, dest.display()),
+        );
+        self.toast("Unpacking...");
+        self.active_unrar = Some(unrar::spawn(id, source, dest, options));
+        true
+    }
+
+    pub fn unpack_selected(&mut self) {
+        let Some(sel) = self.selected else {
+            self.toast("Select a queue item first");
+            return;
+        };
+        if let Some(c) = self.queue.get(sel.collection) {
+            let id = c.id;
+            self.start_unrar(id);
+        }
+    }
+
+    fn poll_unrar(&mut self) {
+        let Some(active) = self.active_unrar.take() else {
+            if let Some(id) = self.pending_unrar.pop_front() {
+                self.start_unrar(id);
+            }
+            return;
+        };
+        match unrar::poll(&active) {
+            None => self.active_unrar = Some(active),
+            Some(Ok(message)) => {
+                if let Some(c) = self.queue.iter_mut().find(|c| c.id == active.collection_id) {
+                    c.status = ItemStatus::Completed;
+                }
+                self.log("Unrar", &message);
+                self.toast("Unpack complete");
+            }
+            Some(Err(error)) => {
+                if let Some(c) = self.queue.iter_mut().find(|c| c.id == active.collection_id) {
+                    c.status = ItemStatus::Error;
+                }
+                self.log("Error", &error);
+                self.show_message = Some(("Unrar error".into(), error));
+            }
+        }
+        if self.resume_after_unrar {
+            self.resume_after_unrar = false;
+            if self.paused {
+                self.toggle_pause();
+            }
+        }
+        if self.active_unrar.is_none() {
+            if let Some(id) = self.pending_unrar.pop_front() {
+                self.start_unrar(id);
+            }
+        }
+    }
+
+    pub fn apply_ui_action(&mut self, action: UiAction) {
+        match action {
+            UiAction::Select(s) => self.selected = s,
+            UiAction::ToggleExpand(i) => self.toggle_expand(i),
+            UiAction::PauseSelected(p) => self.pause_selected(p),
+            UiAction::DeleteSelected => self.delete_selected(),
+            UiAction::Move(d) => self.move_selected(d),
+            UiAction::ChangeFolder => {
+                let mut changed = None;
+                if let Some(sel) = self.selected {
+                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        if let Some(c) = self.queue.get_mut(sel.collection) {
+                            c.folder = path.to_string_lossy().to_string();
+                            changed = Some(c.subject.clone());
+                        }
+                    }
+                }
+                if let Some(subject) = changed {
+                    self.log("Queue", &format!("Download folder changed for {subject}"));
+                }
+            }
+            UiAction::Export => self.export_selected(),
+            UiAction::SetCategory => {
+                if let Some(sel) = self.selected {
+                    if let Some(c) = self.queue.get_mut(sel.collection) {
+                        c.category = "Default".into();
+                    }
+                }
+                self.toast("Category set to Default");
+            }
+            UiAction::ToggleUnrar(v) => {
+                if let Some(sel) = self.selected {
+                    let mut start = false;
+                    if let Some(c) = self.queue.get_mut(sel.collection) {
+                        c.unrar = v;
+                        start = v && c.status == ItemStatus::Completed;
+                    }
+                    if start {
+                        if let Some(c) = self.queue.get(sel.collection) {
+                            let id = c.id;
+                            self.start_unrar(id);
+                        }
+                    }
+                }
+            }
+            UiAction::UnpackNow => self.unpack_selected(),
+            UiAction::ChangeUnrarFolder => {
+                if let Some(sel) = self.selected {
+                    if let Some(path) = rfd::FileDialog::new().pick_folder() {
+                        if let Some(c) = self.queue.get_mut(sel.collection) {
+                            c.unrar_folder = path.to_string_lossy().to_string();
+                            let subject = c.subject.clone();
+                            self.log("Queue", &format!("Unrar folder changed for {subject}"));
+                        }
+                    }
+                }
+            }
+            UiAction::OpenFolder => self.open_download_folder(),
+            UiAction::Play => self.toast("No media player configured"),
+            UiAction::Eta => {
+                if let Some(c) = self.selected_collection() {
+                    let msg = if self.speed_bps > 0.0 {
+                        format!(
+                            "{}: ETA {}",
+                            c.subject,
+                            format_eta(c.remaining() / self.speed_bps)
+                        )
+                    } else {
+                        format!("{}: ETA Unknown", c.subject)
+                    };
+                    self.toast(msg);
+                }
+            }
+            UiAction::Rename => {
+                if let Some(sel) = self.selected {
+                    let subject = self.queue.get(sel.collection).map(|c| c.subject.clone());
+                    if let Some(subject) = subject {
+                        self.rename_draft = subject;
+                        self.rename_index = Some(sel.collection);
+                        self.show_rename = true;
+                    }
+                }
+            }
+            UiAction::CollapseAll => {
+                for c in &mut self.queue {
+                    c.expanded = false;
+                }
+            }
+            UiAction::ExpandAll => {
+                for c in &mut self.queue {
+                    c.expanded = true;
+                }
+            }
+            UiAction::None => {}
+        }
+    }
+
+    pub fn tick(&mut self) {
+        let now = Instant::now();
+        let dt = (now - self.last_tick).as_secs_f64().clamp(0.0, 0.5);
+        self.last_tick = now;
+        self.poll_unrar();
+
+        // Keep the limit reference in step with Setup. A maximum of 0 means
+        // Auto (language hint `[0-10000] 0-Auto`), so the measured ceiling is
+        // allowed to grow during the calibration window.
+        self.auto_speed = self.settings.max_speed_kbps <= 0.0;
+        if !self.auto_speed
+            && (self.speed_ceiling_mbps - self.settings.max_speed_mbps).abs() > 1e-9
+        {
+            self.speed_ceiling_mbps = self.settings.max_speed_mbps;
+        }
+
+        if let Some(until) = self.pause_until {
+            if now >= until {
+                self.paused = false;
+                self.pause_until = None;
+                self.pause_minutes = 0;
+                self.resume_paused_ids();
+                self.log("Main", "Pause timer expired; downloading resumed.");
+            }
+        }
+
+        self.scheduler_hold = self.connected && !scheduler_allows(&self.settings) && !self.paused;
+        if self.scheduler_hold && !self.scheduler_last_hold {
+            self.log("Scheduler", "Scheduler window is off; downloading held.");
+        } else if !self.scheduler_hold && self.scheduler_last_hold {
+            self.log("Scheduler", "Scheduler window is on; downloading allowed.");
+        }
+        self.scheduler_last_hold = self.scheduler_hold;
+
+        let free_mb = free_gb(&self.settings.download_dir) * 1024.0;
+        if self.connected && free_mb < self.settings.low_free_space_mb as f64 {
+            if !self.low_space_warned {
+                self.low_space_warned = true;
+                self.log(
+                    "Error",
+                    "Error! Free space on destination drive is under configured value. Downloading will be paused.",
+                );
+                self.log("Main", "Downloading paused.");
+                if !self.paused {
+                    self.toggle_pause();
+                } else {
+                    self.paused = true;
+                }
+            }
+        } else {
+            self.low_space_warned = false;
+        }
+
+        let can_download = self.connected
+            && !self.paused
+            && !self.scheduler_hold
+            && !self.settings.enabled_servers().is_empty();
+
+        if let Some(active) = &self.active_dl {
+            let collection_active = self
+                .queue
+                .iter()
+                .find(|c| c.id == active.id)
+                .map(|c| c.status == ItemStatus::Downloading)
+                .unwrap_or(false);
+            active
+                .pause
+                .store(!can_download || !collection_active, Ordering::Relaxed);
+        }
+
+        if let Some(active) = &self.active_dl {
+            if !self.queue.iter().any(|c| c.id == active.id) {
+                active.stop.store(true, Ordering::Relaxed);
+                self.active_dl = None;
+            }
+        }
+
+        let mut speed_this_frame = 0.0;
+        if can_download && self.active_dl.is_none() {
+            if let Some(i) = self
+                .queue
+                .iter()
+                .position(|c| c.status == ItemStatus::Queued && c.has_segments())
+            {
+                if let Some(server) = self.settings.enabled_servers().first().map(|s| (*s).clone()) {
+                    let job =
+                        download::job_for_collection(&self.queue[i], self.settings.skip_existing);
+                    // The downloader opens the server's connection count and
+                    // splits the global limit across those connections
+                    // (function 0x835e38 divides by the active count).
+                    let throttle = self.speed_limit_bps();
+                    self.queue[i].status = ItemStatus::Downloading;
+                    let subject = self.queue[i].subject.clone();
+                    self.log("Queue", &format!("Starting: {subject}"));
+                    self.active_dl = Some(download::spawn(job, server, throttle));
+                }
+            }
+        }
+
+        let snapshot = self
+            .active_dl
+            .as_ref()
+            .and_then(|a| a.snapshot.lock().ok().map(|s| s.clone()));
+        if let Some(snapshot) = snapshot {
+            let mut clear = false;
+            let mut delta = 0.0;
+            let mut completed: Option<(String, u64)> = None;
+            let mut completed_id: Option<u64> = None;
+            let mut failed: Option<(String, String)> = None;
+            if let Some(c) = self.queue.iter_mut().find(|c| c.id == snapshot.id) {
+                let previous = c.downloaded;
+                if snapshot.stage == download::Stage::Completed {
+                    c.downloaded = c.total_bytes as f64;
+                    for f in &mut c.files {
+                        f.downloaded = f.bytes as f64;
+                    }
+                    c.status = ItemStatus::Completed;
+                } else {
+                    c.downloaded = snapshot.bytes as f64;
+                    for (index, f) in c.files.iter_mut().enumerate() {
+                        if let Some(progress) = snapshot.file_progress.get(index) {
+                            f.downloaded = (*progress as f64).min(f.bytes as f64);
+                        } else if index < snapshot.file_index {
+                            f.downloaded = f.bytes as f64;
+                        }
+                    }
+                }
+                delta = (c.downloaded - previous).max(0.0);
+                if can_download && snapshot.stage == download::Stage::Downloading {
+                    speed_this_frame = snapshot.speed_bps;
+                }
+                match snapshot.stage {
+                    download::Stage::Completed => {
+                        completed = Some((c.subject.clone(), c.total_bytes));
+                        completed_id = Some(c.id);
+                        clear = true;
+                    }
+                    download::Stage::Error => {
+                        c.status = ItemStatus::Error;
+                        failed = Some((c.subject.clone(), snapshot.message.clone()));
+                        clear = true;
+                    }
+                    download::Stage::Stopped => {
+                        if c.status == ItemStatus::Downloading {
+                            c.status = ItemStatus::Paused;
+                        }
+                        clear = true;
+                    }
+                    _ => {}
+                }
+            } else {
+                clear = true;
+            }
+            self.transfered_session = self.transfered_session.saturating_add(delta as u64);
+            self.pending_bytes += delta;
+            if let Some((subject, total)) = completed {
+                self.log("Main", &format!("Download complete: {subject}"));
+                self.history.insert(
+                    0,
+                    HistoryItem {
+                        name: subject,
+                        date: now_datetime(),
+                        size: format_size_short(total),
+                    },
+                );
+                if self.history.len() > 50 {
+                    self.history.pop();
+                }
+            }
+            if let Some((subject, message)) = failed {
+                self.log(
+                    "Error",
+                    &format!("Download failed for {subject}: {message}"),
+                );
+                self.show_message = Some((
+                    "Download error".into(),
+                    format!("{subject}\n\n{message}"),
+                ));
+            }
+            if clear {
+                self.active_dl = None;
+            }
+            if let Some(id) = completed_id {
+                if self.settings.auto_unrar
+                    && self
+                        .queue
+                        .iter()
+                        .find(|c| c.id == id)
+                        .map(|c| c.unrar)
+                        .unwrap_or(false)
+                {
+                    self.start_unrar(id);
+                }
+            }
+        }
+        self.pending_speed_bps = speed_this_frame;
+
+        // Function 0x8345d4: once a second, keep the last four samples and
+        // display their average. Function 0x833ffc resets the counters at
+        // 1000 ms, 60000 ms and 3600000 ms.
+        if now.duration_since(self.last_sample) >= Duration::from_secs(1) {
+            self.last_sample = now;
+            let previous_speed = self.speed_bps;
+            let slot = self.speed_sample_index % SPEED_SAMPLE_COUNT;
+            self.speed_samples[slot] = self.pending_speed_bps;
+            self.speed_sample_index = self.speed_sample_index.wrapping_add(1);
+            // The original fills the whole ring with the first non-zero
+            // sample after a zero reading so the average is not diluted.
+            if previous_speed <= 0.0 && self.pending_speed_bps > 0.0 {
+                self.speed_samples = [self.pending_speed_bps; SPEED_SAMPLE_COUNT];
+            }
+            let average = self.speed_samples.iter().sum::<f64>() / SPEED_SAMPLE_COUNT as f64;
+            self.speed_bps = average;
+            self.speed_history.push_back(average as f32);
+            while self.speed_history.len() > 120 {
+                self.speed_history.pop_front();
+            }
+            // When the maximum speed is configured as 0 (Auto), the observed
+            // Mbit/s raises the ceiling for at most 60 one-second ticks.
+            if self.auto_speed && self.auto_speed_ticks < AUTO_SPEED_WINDOW_TICKS {
+                let observed_mbps = average / BPS_PER_MBPS;
+                if observed_mbps > self.speed_ceiling_mbps {
+                    self.speed_ceiling_mbps = observed_mbps;
+                }
+                self.auto_speed_ticks += 1;
+            }
+            let hour = Local::now().hour() as usize;
+            let bytes_this_second = std::mem::take(&mut self.pending_bytes);
+            self.daily_transfer[hour] += bytes_this_second / MB;
+        }
+
+        if now.duration_since(self.last_minute_stats) >= Duration::from_millis(MINUTE_STATS_MS) {
+            self.last_minute_stats = now;
+            if self.connected && self.settings.detailed_log {
+                self.log(
+                    "Stats",
+                    &format!(
+                        "Minute statistics: {} this session.",
+                        format_bytes_auto(self.transfered_session as f64)
+                    ),
+                );
+            }
+        }
+        if now.duration_since(self.last_hour_stats) >= Duration::from_millis(HOUR_STATS_MS) {
+            self.last_hour_stats = now;
+            if self.connected && self.settings.detailed_log {
+                self.log(
+                    "Stats",
+                    &format!(
+                        "Hourly statistics: {} this session.",
+                        format_bytes_auto(self.transfered_session as f64)
+                    ),
+                );
+            }
+        }
+
+        if let Some((idx, until)) = self.repair_until {
+            let mut finished_name: Option<String> = None;
+            if let Some(p) = self.par2.get_mut(idx) {
+                if p.progress < 1.0 {
+                    p.progress = (p.progress + dt as f32 * 0.12).min(1.0);
+                    if now >= until || p.progress >= 1.0 {
+                        p.progress = 1.0;
+                        p.status = if p.info == "All files OK" {
+                            "OK".into()
+                        } else {
+                            "Repaired".into()
+                        };
+                        p.info = "Repair complete".into();
+                        finished_name = Some(p.name.clone());
+                    }
+                }
+            }
+            if let Some(name) = finished_name {
+                self.log("PAR2", &format!("Repair finished: {name}"));
+            }
+            if now >= until {
+                self.repair_until = None;
+            }
+        }
+
+        if self.connected {
+            let active_workers = self
+                .active_dl
+                .as_ref()
+                .and_then(|a| a.snapshot.lock().ok().map(|s| s.workers))
+                .unwrap_or(0);
+            self.threads = build_threads(
+                true,
+                &self.queue,
+                &self.settings,
+                self.paused || self.scheduler_hold,
+                active_workers,
+            );
+        } else if !self.threads.is_empty() {
+            self.threads.clear();
+        }
+
+        if self.shutdown_armed && self.shutdown_countdown.is_none() {
+            let all_done = self
+                .queue
+                .iter()
+                .all(|c| matches!(c.status, ItemStatus::Completed | ItemStatus::Error));
+            if all_done {
+                self.shutdown_countdown = Some(now + Duration::from_secs(15));
+                self.log("Shutdown", "All tasks finished. Shutdown scheduled.");
+            }
+        }
+        if let Some(until) = self.shutdown_countdown {
+            if now >= until {
+                self.shutdown_countdown = None;
+                self.shutdown_armed = false;
+                self.show_message = Some((
+                    "Shutdown".into(),
+                    "NewsQueue would shut down the computer now.\nThis demo does not power off your machine.".into(),
+                ));
+                self.log(
+                    "Shutdown",
+                    "Shutdown point reached (simulated; computer left running).",
+                );
+            }
+        }
+
+        if let Some((text, at)) = &self.toast {
+            if now.duration_since(*at) > Duration::from_secs(3) {
+                self.toast = None;
+            } else {
+                let _ = text;
+            }
+        }
+
+        if now.duration_since(self.last_save) > Duration::from_secs(30) {
+            self.last_save = now;
+            self.settings.save();
+        }
+        if now.duration_since(self.last_queue_save)
+            > Duration::from_secs(self.settings.autosave_minutes.max(1) as u64 * 60)
+        {
+            self.last_queue_save = now;
+            save_queue_state(&self.queue);
+        }
+    }
+
+    pub fn handle_keys(&mut self, ctx: &egui::Context) {
+        let (f1, f2, f3, f9, ctrl_f, ctrl_p, ctrl_d, del, ctrl_up, ctrl_down, ctrl_e, escape) = ctx
+            .input(|i| {
+                (
+                    i.key_pressed(egui::Key::F1),
+                    i.key_pressed(egui::Key::F2),
+                    i.key_pressed(egui::Key::F3),
+                    i.key_pressed(egui::Key::F9),
+                    i.modifiers.command && i.key_pressed(egui::Key::F),
+                    i.modifiers.command && i.key_pressed(egui::Key::P),
+                    i.modifiers.command && i.key_pressed(egui::Key::D),
+                    i.key_pressed(egui::Key::Delete),
+                    i.modifiers.command && i.key_pressed(egui::Key::ArrowUp),
+                    i.modifiers.command && i.key_pressed(egui::Key::ArrowDown),
+                    i.modifiers.command && i.key_pressed(egui::Key::E),
+                    i.key_pressed(egui::Key::Escape),
+                )
+            });
+        if f1 {
+            self.toggle_pause();
+        }
+        if f2 {
+            self.active_tab = self.active_tab.saturating_sub(1);
+        }
+        if f3 {
+            self.active_tab = (self.active_tab + 1).min(4);
+        }
+        if f9 {
+            self.show_threads = !self.show_threads;
+            self.settings.thread_list_visible = self.show_threads;
+        }
+        if ctrl_f {
+            self.show_search = true;
+        }
+        if ctrl_p {
+            self.pause_selected(true);
+        }
+        if ctrl_d {
+            self.pause_selected(false);
+        }
+        if del && !self.show_setup && !self.show_search {
+            self.delete_selected();
+        }
+        if ctrl_up {
+            self.move_selected(MoveDir::Up);
+        }
+        if ctrl_down {
+            self.move_selected(MoveDir::Down);
+        }
+        if ctrl_e {
+            self.export_selected();
+        }
+        if escape {
+            if self.show_message.is_some() {
+                self.show_message = None;
+            } else if self.show_speed_limit {
+                self.show_speed_limit = false;
+            } else if self.show_pause_for {
+                self.show_pause_for = false;
+            } else if self.show_columns {
+                self.show_columns = false;
+            } else if self.show_rename {
+                self.show_rename = false;
+            } else if self.show_notes {
+                self.show_notes = false;
+            } else if self.show_about {
+                self.show_about = false;
+            } else if self.show_stats {
+                self.show_stats = false;
+            } else if self.show_search {
+                self.show_search = false;
+            } else if self.show_categories {
+                self.show_categories = false;
+            } else if self.show_server_edit {
+                self.show_server_edit = false;
+            } else if self.show_setup {
+                self.show_setup = false;
+            }
+        }
+    }
+
+    pub fn search(&mut self) {
+        let q = self.search_query.trim().to_string();
+        if q.is_empty() {
+            self.search_status = "No results".into();
+            self.search_results.clear();
+            return;
+        }
+        let seeds = [
+            (
+                "Aurora.Field.Recordings.2025",
+                12_288.0,
+                12.4,
+                "alt.binaries.movies",
+                "northstar",
+            ),
+            (
+                "Harbor.Lights.1080p",
+                10_240.0,
+                3.1,
+                "alt.binaries.tv",
+                "lumen",
+            ),
+            (
+                "Workshop.Tools.Archive.2024",
+                11_305.32,
+                60.0,
+                "alt.binaries.apps",
+                "archivebot",
+            ),
+            (
+                "Quiet.Harbor.Sessions",
+                2_460.0,
+                8.8,
+                "alt.binaries.music",
+                "tidepool",
+            ),
+            (
+                "Field.Notes.Collection",
+                918.2,
+                21.0,
+                "alt.binaries.ebooks",
+                "paperback",
+            ),
+            (
+                "Signal.Processing.Pack",
+                4_112.0,
+                5.3,
+                "alt.binaries.apps",
+                "waves",
+            ),
+        ];
+        self.search_results = seeds
+            .iter()
+            .enumerate()
+            .map(|(i, (subject, size, age, group, poster))| SearchResult {
+                subject: if i == 0 {
+                    format!("{q}.Collection.2025")
+                } else if i == 1 {
+                    format!("{q}.1080p")
+                } else {
+                    (*subject).to_string()
+                },
+                size_mb: *size,
+                age: *age,
+                group: (*group).to_string(),
+                poster: (*poster).to_string(),
+                percent: 100 - (i as u32 * 7),
+            })
+            .collect();
+        self.search_status = format!("{} results", self.search_results.len());
+        self.log("Search", &format!("Global search for: {q}"));
+    }
+
+    pub fn add_search_result(&mut self, index: usize) {
+        let Some(r) = self.search_results.get(index).cloned() else {
+            return;
+        };
+        let id = self.queue.iter().map(|c| c.id).max().unwrap_or(0) + 1;
+        let total = (r.size_mb * MB) as u64;
+        let c = Collection {
+            id,
+            subject: r.subject.clone(),
+            total_bytes: total.max(1),
+            downloaded: 0.0,
+            parts: 10,
+            age_days: r.age,
+            group: r.group.clone(),
+            poster: r.poster.clone(),
+            status: ItemStatus::Queued,
+            folder: PathBuf::from(&self.settings.download_dir)
+                .join(sanitize_folder(&r.subject))
+                .to_string_lossy()
+                .to_string(),
+            unrar_folder: String::new(),
+            unrar: true,
+            execute: String::new(),
+            expanded: false,
+            files: vec![QueueFile {
+                name: format!("{}.rar", sanitize_folder(&r.subject)),
+                bytes: total.max(1),
+                downloaded: 0.0,
+                parts: 10,
+                segments: Vec::new(),
+            }],
+            posted_on: now_datetime(),
+            delete_archives: false,
+            category: "Default".into(),
+            password: String::new(),
+            source: "global search".into(),
+        };
+        self.queue.push(c);
+        self.log("Queue", &format!("Added from search: {}", r.subject));
+        self.toast("Added to queue");
+    }
+
+    pub fn handle_screenshot(&mut self, ctx: &egui::Context) {
+        let Some(path) = self.screenshot_path.clone() else {
+            return;
+        };
+        if self.frame >= 120 && !self.screenshot_requested {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
+            self.screenshot_requested = true;
+        }
+        if self.screenshot_requested && !self.screenshot_saved {
+            if self.frame > 240 {
+                eprintln!("Timed out waiting for the screenshot event");
+                std::process::exit(1);
+            }
+            let mut image: Option<std::sync::Arc<egui::ColorImage>> = None;
+            ctx.input(|i| {
+                for event in &i.events {
+                    if let egui::Event::Screenshot { image: img, .. } = event {
+                        image = Some(img.clone());
+                    }
+                }
+            });
+            if let Some(img) = image {
+                let w = img.width() as u32;
+                let h = img.height() as u32;
+                let mut buf = Vec::with_capacity((w * h * 4) as usize);
+                for px in &img.pixels {
+                    let [r, g, b, a] = px.to_array();
+                    buf.extend_from_slice(&[r, g, b, a]);
+                }
+                if let Some(parent) = std::path::Path::new(&path).parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match image::RgbaImage::from_raw(w, h, buf) {
+                    Some(img) => match img.save(&path) {
+                        Ok(_) => {
+                            println!("Screenshot saved to {path}");
+                            self.screenshot_saved = true;
+                            std::process::exit(0);
+                        }
+                        Err(e) => {
+                            eprintln!("Could not save screenshot: {e}");
+                            std::process::exit(1);
+                        }
+                    },
+                    None => {
+                        eprintln!("Could not build screenshot image");
+                        std::process::exit(1);
+                    }
+                }
+            }
+        }
+    }
+}
+
+impl Drop for App {
+    fn drop(&mut self) {
+        if self.screenshot_path.is_none() {
+            self.settings.save();
+            save_queue_state(&self.queue);
+        }
+    }
+}
+
+impl eframe::App for App {
+    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        self.frame += 1;
+        self.tick();
+        self.handle_keys(ctx);
+        ui::draw(self, ctx);
+        dialogs::draw(self, ctx);
+        self.handle_screenshot(ctx);
+
+        if self.screenshot_path.is_some() {
+            ctx.request_repaint();
+        } else if self.connected && !self.paused {
+            ctx.request_repaint_after(Duration::from_millis(33));
+        } else {
+            ctx.request_repaint_after(Duration::from_millis(250));
+        }
+    }
+}
+
+fn build_threads(
+    connected: bool,
+    queue: &[Collection],
+    settings: &Settings,
+    paused: bool,
+    active_workers: usize,
+) -> Vec<ThreadRow> {
+    if !connected {
+        return Vec::new();
+    }
+    let mut rows = Vec::new();
+    let active = active_download(queue);
+    let active_subject = active
+        .and_then(|i| queue.get(i))
+        .map(|c| c.subject.clone())
+        .unwrap_or_else(|| "Waiting for work".into());
+    let mut n: u32 = 1;
+    for server in settings.enabled_servers() {
+        for _ in 0..server.connections {
+            let (action, desc, status) = if paused {
+                (
+                    "Paused",
+                    "Downloading paused".to_string(),
+                    "Paused".to_string(),
+                )
+            } else if active.is_some() && n as usize <= active_workers {
+                (
+                    "Article",
+                    format!("Retrieving article for {active_subject}"),
+                    "Downloading".to_string(),
+                )
+            } else {
+                ("Idle", "Waiting for work".to_string(), "Idle".to_string())
+            };
+            rows.push(ThreadRow {
+                number: n,
+                action: action.into(),
+                description: desc,
+                status,
+                server: format!("{}:{}", server.address, server.port),
+            });
+            n += 1;
+        }
+    }
+    rows
+}
+
+fn xml_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// Open a file or folder with the Windows shell, matching a double-click in
+/// Explorer. Uses ShellExecuteW so commas and quotes in paths are safe.
+#[cfg(target_os = "windows")]
+fn shell_open(path: &Path) {
+    use std::os::windows::ffi::OsStrExt;
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    #[link(name = "shell32")]
+    extern "system" {
+        fn ShellExecuteW(
+            hwnd: *mut std::ffi::c_void,
+            operation: *const u16,
+            file: *const u16,
+            parameters: *const u16,
+            directory: *const u16,
+            show: i32,
+        ) -> isize;
+    }
+    unsafe {
+        ShellExecuteW(
+            std::ptr::null_mut(),
+            std::ptr::null(),
+            wide.as_ptr(),
+            std::ptr::null(),
+            std::ptr::null(),
+            1,
+        );
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn shell_open(path: &Path) {
+    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
+}
+
+fn parse_screenshot_arg() -> Option<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if args[i] == "--screenshot" {
+            return args.get(i + 1).cloned();
+        }
+        if let Some(v) = args[i].strip_prefix("--screenshot=") {
+            return Some(v.to_string());
+        }
+        i += 1;
+    }
+    None
+}
+
+fn main() -> eframe::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if let Some(position) = args.iter().position(|a| a == "--unrar-test") {
+        let source = args
+            .get(position + 1)
+            .cloned()
+            .unwrap_or_else(|| ".".into());
+        let dest = args
+            .get(position + 2)
+            .cloned()
+            .unwrap_or_else(|| "unrar-test-output".into());
+        let options = unrar::UnrarOptions {
+            overwrite: true,
+            rename_existing: true,
+            strip_root: true,
+            delete_archives: false,
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        };
+        match unrar::extract(Path::new(&source), Path::new(&dest), &options) {
+            Ok(message) => {
+                println!("{message}");
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("unrar test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Some(position) = args.iter().position(|a| a == "--download-test") {
+        let path = args
+            .get(position + 1)
+            .cloned()
+            .unwrap_or_else(|| "dancing-4c5722.nzb".into());
+        match download::run_download_test(&path) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                eprintln!("download test failed: {e}");
+                std::process::exit(1);
+            }
+        }
+    }
+    let screenshot = parse_screenshot_arg();
+    let settings = if screenshot.is_some() {
+        Settings::default()
+    } else {
+        Settings::load()
+    };
+    ensure_dirs(&settings);
+    let native_options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([SAVED_WIDTH, SAVED_HEIGHT])
+            .with_min_inner_size([940.0, 620.0])
+            .with_title(format!("{APP_NAME} {VERSION}.0")),
+        centered: true,
+        ..Default::default()
+    };
+    eframe::run_native(
+        &format!("{APP_NAME} {VERSION}.0"),
+        native_options,
+        Box::new(move |cc| {
+            theme::install(&cc.egui_ctx);
+            Ok(Box::new(App::new(settings, screenshot)))
+        }),
+    )
+}
+
+#[cfg(test)]
+mod integration_tests {
+    use super::*;
+
+    #[test]
+    fn explorer_navigation_creates_and_reports_folders() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-explorer-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.explorer_navigate(first.clone());
+        assert_eq!(app.explorer_path, first);
+        app.explorer_navigate(second.clone());
+        assert_eq!(app.explorer_path, second);
+        app.explorer_back();
+        assert_eq!(app.explorer_path, first);
+        app.explorer_forward();
+        assert_eq!(app.explorer_path, second);
+        app.explorer_new_folder();
+        let created = app.explorer_selected.clone().unwrap();
+        assert!(created.is_dir());
+        app.explorer_properties(created.clone());
+        assert!(app.show_message.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn completed_collection_can_be_unpacked() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-app-unrar-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let dest = root.join("dest");
+        std::fs::create_dir_all(&source).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tiny.rar");
+        std::fs::copy(fixture, source.join("tiny.rar")).unwrap();
+
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.settings.unrar_to_different = true;
+        app.settings.unrar_dir = dest.to_string_lossy().to_string();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.id = 99;
+        collection.subject = "Tiny test".into();
+        collection.folder = source.to_string_lossy().to_string();
+        collection.unrar = true;
+        collection.unrar_folder.clear();
+        collection.files.clear();
+        collection.status = ItemStatus::Completed;
+        app.queue = vec![collection];
+
+        assert!(app.start_unrar(99));
+        for _ in 0..200 {
+            app.poll_unrar();
+            if app.active_unrar.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(app.active_unrar.is_none(), "unrar did not finish");
+        assert_eq!(app.queue[0].status, ItemStatus::Completed);
+        assert_eq!(
+            std::fs::read_to_string(dest.join("readme.txt"))
+                .unwrap()
+                .trim(),
+            "tiny rar fixture"
+        );
+        let _ = std::fs::remove_dir_all(root);
+    }
+}
