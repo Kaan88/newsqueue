@@ -6,13 +6,13 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-03)
 
-- **Phase 0 — partial.** 19 tests, screenshot checks, real PAR2/damaged-RAR
+- **Phase 0 - partial.** 20 tests, screenshot checks, real PAR2/damaged-RAR
   fixture and the user-provided NZB fixtures exist. A mock NNTP server is still
   missing.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
   sidecars (`.nqpart`) preserve downloaded articles across restarts; all enabled
-  servers are used; `Incomplete` feeds the PAR2 stage. Retry/backoff, article
-  cache/priorities and execute hooks remain.
+  servers are used; watched-folder auto-import works; `Incomplete` feeds the PAR2
+  stage. Retry/backoff, article cache/priorities and execute hooks remain.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
@@ -23,7 +23,7 @@ not a source-code or artwork copy.
   stored locally (never committed); a live feed returned 100 items and the
   filter test downloaded one NZB. Newznab/global search remains sample-only.
 - **Phase 5 — improved.** Explorer has selection, navigation, history,
-  favourites, context menu, delete, rename and columns. Drag/drop, open-with,
+  favourites, context menu, delete, rename, open-with and columns. Drag/drop,
   multi-select and clipboard cut/copy/paste remain.
 - **Phase 6 — partial.** Log retention, persistent history, category routing and
   multi-server use are implemented. Proxy, thread priorities, tray, Join/Split

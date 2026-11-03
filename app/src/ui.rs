@@ -29,6 +29,7 @@ struct ExplorerEntry {
 
 enum ExplorerAction {
     OpenParent(std::path::PathBuf),
+    OpenWith(std::path::PathBuf),
     NewFolder,
     Properties(std::path::PathBuf),
     Delete(std::path::PathBuf),
@@ -1517,6 +1518,10 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         action = Some(ExplorerAction::OpenParent(entry.path.clone()));
                         ui.close_menu();
                     }
+                    if ui.button("Open with...").clicked() {
+                        action = Some(ExplorerAction::OpenWith(entry.path.clone()));
+                        ui.close_menu();
+                    }
                     if ui.button("Copy path").clicked() {
                         ui.ctx()
                             .copy_text(entry.path.to_string_lossy().to_string());
@@ -1551,6 +1556,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
     }
     match action {
         Some(ExplorerAction::OpenParent(path)) => app.explorer_open_containing(path),
+        Some(ExplorerAction::OpenWith(path)) => app.explorer_open_with(path),
         Some(ExplorerAction::NewFolder) => app.explorer_new_folder(),
         Some(ExplorerAction::Properties(path)) => app.explorer_properties(path),
         Some(ExplorerAction::Delete(path)) => app.explorer_delete(path),

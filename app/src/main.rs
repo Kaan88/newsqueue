@@ -184,6 +184,7 @@ pub struct App {
     pub show_rss_feeds: bool,
     pub rss_rx: Option<std::sync::mpsc::Receiver<Result<rss::FetchResult, String>>>,
     pub rss_last_refresh: Instant,
+    pub last_auto_import: Instant,
     pub show_threads: bool,
     pub thread_height: f32,
     pub status_mode_speed: u8,
@@ -340,6 +341,7 @@ impl App {
             show_rss_feeds: false,
             rss_rx: None,
             rss_last_refresh: Instant::now(),
+            last_auto_import: Instant::now(),
             show_threads,
             thread_height,
             status_mode_speed,
@@ -848,8 +850,8 @@ impl App {
             self.resume_ids.push(id);
         }
         self.queue.push(collection);
-        self.log("RSS", &format!("Added from RSS: {subject}"));
-        self.toast("RSS item added");
+        self.log("Queue", &format!("Added: {subject}"));
+        self.toast("Added to queue");
         id
     }
 
@@ -1029,6 +1031,27 @@ impl App {
         }
     }
 
+    pub fn explorer_open_with(&mut self, path: PathBuf) {
+        let Some(program) = rfd::FileDialog::new()
+            .add_filter("Programs", &["exe", "com", "bat", "cmd"])
+            .pick_file()
+        else {
+            return;
+        };
+        match std::process::Command::new(&program).arg(&path).spawn() {
+            Ok(_) => self.log(
+                "Explorer",
+                &format!("Opened {} with {}", path.display(), program.display()),
+            ),
+            Err(error) => {
+                self.show_message = Some((
+                    "Explorer".into(),
+                    format!("Could not open file:\n{error}"),
+                ));
+            }
+        }
+    }
+
     pub fn explorer_rename(&mut self, path: PathBuf) {
         self.explorer_rename_draft = path
             .file_name()
@@ -1183,6 +1206,46 @@ impl App {
             Err(std::sync::mpsc::TryRecvError::Empty) => self.rss_rx = Some(rx),
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 self.log("Error", "RSS worker stopped unexpectedly.");
+            }
+        }
+    }
+
+    fn auto_import_nzbs(&mut self) {
+        let folder = PathBuf::from(&self.settings.auto_import_folder);
+        if folder.as_os_str().is_empty() {
+            return;
+        }
+        let Ok(reader) = std::fs::read_dir(&folder) else {
+            return;
+        };
+        let mut paths: Vec<PathBuf> = reader
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.is_file()
+                    && path
+                        .extension()
+                        .and_then(|extension| extension.to_str())
+                        .map(|extension| extension.eq_ignore_ascii_case("nzb"))
+                        .unwrap_or(false)
+            })
+            .collect();
+        paths.sort();
+        for path in paths {
+            let source = path.to_string_lossy().to_string();
+            if self.queue.iter().any(|collection| collection.source == source) {
+                continue;
+            }
+            match parse_nzb(&path) {
+                Ok(nzb) => {
+                    self.add_nzb_from_parsed(nzb, source, self.settings.auto_import_paused);
+                    if self.settings.delete_nzb_after_import {
+                        let _ = std::fs::remove_file(&path);
+                    }
+                }
+                Err(error) => {
+                    self.log("Error", &format!("Auto-import failed for {}: {error}", path.display()));
+                }
             }
         }
     }
@@ -1614,6 +1677,10 @@ impl App {
                 >= Duration::from_secs(self.settings.rss_refresh_minutes.max(1) as u64 * 60)
         {
             self.refresh_rss();
+        }
+        if now.duration_since(self.last_auto_import) >= Duration::from_secs(30) {
+            self.last_auto_import = now;
+            self.auto_import_nzbs();
         }
 
         // Keep the limit reference in step with Setup. A maximum of 0 means
@@ -2533,6 +2600,34 @@ mod integration_tests {
         assert!(created.is_dir());
         app.explorer_properties(created.clone());
         assert!(app.show_message.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn auto_imports_nzbs_from_the_watch_folder() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-auto-import-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        std::fs::create_dir_all(&root).unwrap();
+        let xml = r#"<?xml version="1.0"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+<file subject="&quot;watch-test.rar&quot; yEnc (1/1)" poster="tester" date="1700000000">
+<groups><group>alt.binaries.test</group></groups>
+<segments><segment bytes="10" number="1">watch@example</segment></segments>
+</file>
+</nzb>"#;
+        std::fs::write(root.join("watch.nzb"), xml).unwrap();
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        app.settings.auto_import_folder = root.to_string_lossy().to_string();
+        app.auto_import_nzbs();
+        assert_eq!(app.queue.len(), 1);
+        assert_eq!(app.queue[0].subject, "watch");
         let _ = std::fs::remove_dir_all(root);
     }
 
