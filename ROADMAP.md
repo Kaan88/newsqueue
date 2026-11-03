@@ -4,13 +4,14 @@ Goal: **behavioural parity** with AltBinz 0.48.4 — same workflow, settings and
 results, implemented from the measured evidence in `app/MECHANICS.md`. This is
 not a source-code or artwork copy.
 
-## Current status (2026-11-03)
+## Current status (2026-11-04)
 
 **Core roadmap complete.** Download → PAR2 → unrar, resume/missing articles,
 multi-server workers, RSS autodownload, generic Newznab search, Explorer
-navigation/copy/paste and portable packaging are implemented and exercised.
-The remaining items are optional polish or need external data: a live Newznab
-index, a known-good PAR2 release and a second server.
+navigation/copy/paste, portable packaging and a per-user Windows installer are
+implemented and exercised. The remaining items are optional polish or need
+external data: a live Newznab index, a known-good PAR2 release and a second
+server.
 
 - **Phase 0 — done for the baseline.** 40 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
@@ -40,9 +41,11 @@ index, a known-good PAR2 release and a second server.
   execute hooks, file Join/Split and HTTP/SOCKS5 proxy support are implemented.
   Native tray show/restore/Exit, minimize-to-tray and close-to-tray work; tray
   balloon notifications and speed-in-tray remain.
-- **Phase 7 — mostly done.** Original icon, window/exe resources, a portable
-  release zip (`app/package.ps1`) and a golden screenshot matrix
-  (`app/screenshots.ps1`) are done. An installer remains.
+- **Phase 7 — done for private use.** Original icon, window/exe resources, a
+  portable release zip (`app/package.ps1`), a golden screenshot matrix
+  (`app/screenshots.ps1`) and a per-user IExpress installer
+  (`app/build-installer.ps1`, tested by `app/installer-test.ps1`) are done.
+  Code signing remains optional.
 
 The supplied `Civilization.IV` and `Love.Under.the.Mistletoe` downloads complete
 at the transfer layer, but their PAR2 packet hashes / RAR payloads are
@@ -138,7 +141,8 @@ live testing.
 
 - Screenshot diffs for every tab/dialog; fix layout drift.
 - Error dialogs and recovery paths matching the original where practical.
-- Portable release zip, installer, code signing (if desired), release build.
+- Portable release zip, per-user installer and release build are done; code
+  signing remains optional.
 - **Done when:** the parity checklist is green on a clean Windows machine.
 
 ## What is still needed
@@ -165,11 +169,12 @@ live testing.
 5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
    binary are included with their license files.
 6. Remaining optional parity work: tray balloon notifications, Windows shutdown
-   and the installer/code signing. Confirm which matter for daily use.
+   and code signing. Confirm which matter for daily use.
 
 ## Suggested next order
 
-**Validate a different real NZB → add mock NNTP retry/failover tests → build the
-installer → live Newznab search → tray notifications and Windows shutdown.**
+**Validate a different real NZB → add mock NNTP retry/failover tests → live
+Newznab search → tray notifications and Windows shutdown → optional code
+signing.**
 Download robustness and PAR2 are already in place; the remaining gaps are mostly
 peripheral or need external service details.

@@ -22,6 +22,8 @@ cargo run -- --screenshot shots/now.png
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `cargo run -- --search-test <query>` queries the configured Newznab endpoint.
 - `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close any running NewsQueue. It checks minimize-to-tray, click-to-restore, close-to-tray and tray Exit (clean exit plus queue save).
+- `.\build-installer.ps1` runs `package.ps1`, stages in `%TEMP%`, builds `dist\NewsQueue-0.48.4-Setup.exe` with IExpress and writes its SHA256.
+- `.\installer-test.ps1` installs the built setup into a temp folder, checks files/registry/shortcuts, launches the installed exe and uninstalls. It refuses to run if any NewsQueue install, shortcut or process exists.
 - `cargo fmt --check` currently fails on existing code. Run `cargo fmt` when formatting; don't claim the check passed unless you ran it.
 
 ## Where things live
@@ -38,9 +40,13 @@ cargo run -- --screenshot shots/now.png
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit) and a polling channel; do not delete the tool.
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
 - `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, minimize/close-to-tray and the shared exit flag. `main.rs` cancels window close unless the tray requested exit. `--screenshot` never starts the tray.
+- `package.ps1` / `build-installer.ps1` — portable release zip and IExpress setup exe. `installer/install.ps1` copies the payload, creates shortcuts and the HKCU uninstall entry; `installer/uninstall.ps1` removes them and schedules deletion of the install folder.
+- `installer-test.ps1` — end-to-end install/uninstall check against the built setup; uses temp paths and a clean state.
 
 ## Gotchas
 
+- The installer is per-user: it writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\NewsQueue`, Start Menu/Desktop shortcuts and `%LOCALAPPDATA%\Programs\NewsQueue` by default. `NQ_INSTALL_DIR`, `NQ_SILENT` and `NQ_NO_DESKTOP` override these for testing. IExpress cannot build from a path containing spaces, so `build-installer.ps1` stages under `%TEMP%`.
+- `app/dist` is generated release output (`package.ps1` / `build-installer.ps1`) and is ignored by git.
 - Normal runs persist to `app/newsqueue-settings.json`, `app/newsqueue-queue.json`, `app/newsqueue-history.json` and `app/newsqueue-stats.json` (autosave every 30 s / `autosave_minutes`, and on exit). Don't hand-edit them while the app is running. Saved queue entries without segment IDs are discarded on load; sample/demo data appears only in screenshot mode.
 - `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source. `*.nqpart` files are resume sidecars; keep them until a download finishes.
 - Test Usenet account, RSS API keys and Newznab API keys are configured only in the local, gitignored `app/newsqueue-settings.json`. Never copy them into source, docs, logs, commits or replies.

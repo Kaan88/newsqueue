@@ -24,6 +24,8 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 - File join/split actions in the queue and Explorer
 - Native Windows notification-area icon with show/restore, Exit, minimize-to-tray
   and close-to-tray (verified by `app/tray-verify.ps1`)
+- Per-user Windows installer with Start Menu/Desktop shortcuts, Add/Remove
+  Programs entry and uninstaller (`app/build-installer.ps1`)
 - Setup pages, server editor, scheduler, categories, real persisted statistics,
   search, notes, log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
@@ -64,6 +66,23 @@ Package a portable release:
 
 ```powershell
 .\package.ps1
+```
+
+Build the per-user installer:
+
+```powershell
+.\build-installer.ps1
+```
+
+This writes `app/dist/NewsQueue-0.48.4-Setup.exe` and a `.sha256` checksum. The
+installer copies the app and tools to `%LOCALAPPDATA%\Programs\NewsQueue`,
+creates Start Menu and Desktop shortcuts, registers Add/Remove Programs, and
+includes an uninstaller. It does not need administrator rights.
+
+Verify install and uninstall end to end (requires no existing NewsQueue install):
+
+```powershell
+.\installer-test.ps1
 ```
 
 Regenerate the golden UI screenshots:
