@@ -1925,6 +1925,9 @@ fn explorer_rename_window(app: &mut App, ctx: &egui::Context) {
                             if app.explorer_selected.as_ref() == Some(&target) {
                                 app.explorer_selected = Some(new_path.clone());
                             }
+                            if app.explorer_selected_set.remove(&target) {
+                                app.explorer_selected_set.insert(new_path.clone());
+                            }
                             app.log(
                                 "Explorer",
                                 &format!("Renamed {} to {}", target.display(), new_path.display()),

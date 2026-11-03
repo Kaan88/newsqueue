@@ -3,6 +3,7 @@ use eframe::egui::{
     Vec2,
 };
 use egui_extras::{Column, TableBuilder};
+use std::collections::HashSet;
 
 use crate::model::*;
 use crate::theme::{self, Icon};
@@ -32,10 +33,9 @@ enum ExplorerAction {
     OpenWith(std::path::PathBuf),
     NewFolder,
     Properties(std::path::PathBuf),
-    Delete(std::path::PathBuf),
+    DeleteSelected,
     Rename(std::path::PathBuf),
-    Copy(std::path::PathBuf),
-    Cut(std::path::PathBuf),
+    CopySelected(bool),
     Paste,
 }
 
@@ -1208,6 +1208,8 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                 let r = theme::small_button(ui, Icon::Refresh, false);
                 if r.clicked() {
                     app.explorer_selected = None;
+                    app.explorer_selected_set.clear();
+                    app.explorer_anchor = None;
                     app.toast("Folder refreshed");
                 }
                 r.on_hover_text("Refresh");
@@ -1385,10 +1387,24 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
 
     let entries = read_explorer(&app.explorer_path, &app.explorer_filter);
     let widths = app.settings.explorer_column_widths;
-    let selected = app.explorer_selected.clone();
-    let mut new_selected: Option<std::path::PathBuf> = None;
+    let mut selection = app.explorer_selected_set.clone();
+    if selection.is_empty() {
+        if let Some(path) = &app.explorer_selected {
+            selection.insert(path.clone());
+        }
+    }
+    let mut primary = app.explorer_selected.clone();
+    let mut anchor = app.explorer_anchor;
     let mut open_entry: Option<(std::path::PathBuf, bool)> = None;
     let mut action: Option<ExplorerAction> = None;
+    let (ctrl_down, shift_down) = ui.input(|input| {
+        (
+            input.modifiers.command || input.modifiers.ctrl,
+            input.modifiers.shift,
+        )
+    });
+    let entry_paths: Vec<std::path::PathBuf> =
+        entries.iter().map(|entry| entry.path.clone()).collect();
 
     let mut table = TableBuilder::new(ui)
         .striped(true)
@@ -1433,7 +1449,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
             body.rows(21.0, entries.len(), |mut row| {
                 let index = row.index();
                 let entry = &entries[index];
-                row.set_selected(selected.as_deref() == Some(entry.path.as_path()));
+                row.set_selected(selection.contains(entry.path.as_path()));
                 // Labels consume clicks; a transparent overlay makes the whole
                 // row clickable, including the Name/Type/Size text.
                 let mut row_click: Option<egui::Response> = None;
@@ -1506,8 +1522,25 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                     });
                 }
                 let response = row_click.unwrap_or_else(|| row.response());
-                if response.clicked() || response.secondary_clicked() {
-                    new_selected = Some(entry.path.clone());
+                if response.clicked() {
+                    let (updated, clicked, new_anchor) = update_explorer_selection(
+                        &entry_paths,
+                        index,
+                        ctrl_down,
+                        shift_down,
+                        anchor,
+                        selection.clone(),
+                    );
+                    selection = updated;
+                    primary = Some(clicked);
+                    anchor = new_anchor;
+                }
+                if response.secondary_clicked() {
+                    if !selection.contains(entry.path.as_path()) {
+                        selection.clear();
+                        selection.insert(entry.path.clone());
+                    }
+                    primary = Some(entry.path.clone());
                 }
                 if response.double_clicked() {
                     open_entry = Some((entry.path.clone(), entry.is_dir));
@@ -1531,11 +1564,11 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         ui.close_menu();
                     }
                     if ui.button("Copy file").clicked() {
-                        action = Some(ExplorerAction::Copy(entry.path.clone()));
+                        action = Some(ExplorerAction::CopySelected(false));
                         ui.close_menu();
                     }
                     if ui.button("Cut file").clicked() {
-                        action = Some(ExplorerAction::Cut(entry.path.clone()));
+                        action = Some(ExplorerAction::CopySelected(true));
                         ui.close_menu();
                     }
                     if app.explorer_clipboard.is_some() && ui.button("Paste").clicked() {
@@ -1556,28 +1589,27 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         ui.close_menu();
                     }
                     if ui.button("Delete").clicked() {
-                        action = Some(ExplorerAction::Delete(entry.path.clone()));
+                        action = Some(ExplorerAction::DeleteSelected);
                         ui.close_menu();
                     }
                 });
             });
         });
 
-    if let Some(path) = new_selected {
-        app.explorer_selected = Some(path);
-    }
     if let Some((path, is_dir)) = open_entry {
         app.explorer_open_entry(path, is_dir);
     }
+    app.explorer_selected_set = selection;
+    app.explorer_selected = primary;
+    app.explorer_anchor = anchor;
     match action {
         Some(ExplorerAction::OpenParent(path)) => app.explorer_open_containing(path),
         Some(ExplorerAction::OpenWith(path)) => app.explorer_open_with(path),
         Some(ExplorerAction::NewFolder) => app.explorer_new_folder(),
         Some(ExplorerAction::Properties(path)) => app.explorer_properties(path),
-        Some(ExplorerAction::Delete(path)) => app.explorer_delete(path),
+        Some(ExplorerAction::DeleteSelected) => app.explorer_delete_selected(),
         Some(ExplorerAction::Rename(path)) => app.explorer_rename(path),
-        Some(ExplorerAction::Copy(path)) => app.explorer_copy(path, false),
-        Some(ExplorerAction::Cut(path)) => app.explorer_copy(path, true),
+        Some(ExplorerAction::CopySelected(cut)) => app.explorer_copy_selected(cut),
         Some(ExplorerAction::Paste) => app.explorer_paste(),
         None => {}
     }
@@ -1588,6 +1620,37 @@ fn explorer_column_name(index: usize) -> &'static str {
         .get(index)
         .copied()
         .unwrap_or("Path")
+}
+
+fn update_explorer_selection(
+    paths: &[std::path::PathBuf],
+    clicked: usize,
+    ctrl: bool,
+    shift: bool,
+    anchor: Option<usize>,
+    mut selection: HashSet<std::path::PathBuf>,
+) -> (HashSet<std::path::PathBuf>, std::path::PathBuf, Option<usize>) {
+    let primary = paths[clicked].clone();
+    if shift {
+        if let Some(anchor) = anchor {
+            let start = anchor.min(clicked);
+            let end = anchor.max(clicked);
+            selection.clear();
+            for path in &paths[start..=end] {
+                selection.insert(path.clone());
+            }
+            return (selection, primary, Some(anchor));
+        }
+    }
+    if ctrl {
+        if !selection.remove(&primary) {
+            selection.insert(primary.clone());
+        }
+        return (selection, primary, Some(clicked));
+    }
+    selection.clear();
+    selection.insert(primary.clone());
+    (selection, primary, Some(clicked))
 }
 
 fn read_explorer(path: &std::path::Path, filter: &str) -> Vec<ExplorerEntry> {
@@ -2107,4 +2170,41 @@ fn draw_speed_graph(ui: &Ui, rect: egui::Rect, app: &App) {
         points,
         Stroke::new(1.2_f32, theme::GREEN_DARK),
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn explorer_selection_supports_click_ctrl_and_shift() {
+        let paths = vec![
+            PathBuf::from("a"),
+            PathBuf::from("b"),
+            PathBuf::from("c"),
+            PathBuf::from("d"),
+        ];
+        let empty = HashSet::new();
+        let (selection, primary, anchor) =
+            update_explorer_selection(&paths, 1, false, false, None, empty);
+        assert_eq!(selection.len(), 1);
+        assert_eq!(primary, PathBuf::from("b"));
+        assert_eq!(anchor, Some(1));
+
+        let (selection, _, _) =
+            update_explorer_selection(&paths, 2, true, false, anchor, selection);
+        assert_eq!(selection.len(), 2);
+        assert!(selection.contains(&PathBuf::from("c")));
+
+        let (selection, _, _) =
+            update_explorer_selection(&paths, 2, true, false, anchor, selection);
+        assert_eq!(selection.len(), 1);
+
+        let (selection, primary, anchor) =
+            update_explorer_selection(&paths, 3, false, true, Some(0), selection);
+        assert_eq!(selection.len(), 4);
+        assert_eq!(primary, PathBuf::from("d"));
+        assert_eq!(anchor, Some(0));
+    }
 }

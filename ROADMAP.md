@@ -12,7 +12,7 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 26 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 28 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
@@ -31,9 +31,9 @@ index, a known-good PAR2 release and a second server.
   stored locally (never committed); a live feed returned 100 items, the filter
   test downloaded one NZB, and generic Newznab search was exercised against a
   mock endpoint. A real index URL/API key is still not configured.
-- **Phase 5 — improved.** Explorer has selection, navigation, history,
-  favourites, context menu, delete, rename, open-with, drag/drop copying and
-  clipboard copy/cut/paste. Multi-select remains.
+- **Phase 5 — done for common use.** Explorer has multi-select
+  (Ctrl/Shift), navigation, history, favourites, context menu, delete, rename,
+  open-with, drag/drop copying, clipboard copy/cut/paste and columns.
 - **Phase 6 — partial.** Log retention, persistent history, category routing and
   multi-server use are implemented. Proxy, thread priorities, tray, Join/Split
   and execute/player hooks remain.
@@ -47,8 +47,8 @@ inconsistent; the PAR2 repair path is verified with the generated damaged-RAR
 fixture instead.
 
 Current state: usable clone. Strong on layout, queue/status maths, NNTP, PAR2,
-unrar extraction and common Explorer browsing. Weak on real search, tray,
-drag/drop and a few peripheral settings.
+unrar extraction and common Explorer browsing. Weak on native tray, execute
+hooks and a few peripheral settings.
 
 Effort: **S** ≈ one focused session, **M** ≈ 2–3, **L** ≈ 4+ and needs repeated
 live testing.
@@ -152,20 +152,21 @@ live testing.
 
 3. The supplied RSS feed works (100 items, one NZB downloaded through a filter).
    Its API key is stored only in the local, gitignored settings file.
-4. A Newznab/search endpoint and API key are still needed for real global search;
-   the current Search window remains seeded.
+4. A Newznab/search endpoint and API key are still needed for a live global
+   search; the generic search parser and NZB-add path are implemented and
+   mock-tested.
 
 ### Scope decisions
 
 5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
    binary are included with their license files.
-6. Remaining optional parity work: native tray/notifications, drag/drop and
-   open-with in Explorer, Join/Split, execute/player hooks, proxy and thread
-   priorities. Confirm which of these matter for daily use.
+6. Remaining optional parity work: native tray/notifications, Join/Split,
+   execute/player hooks, proxy and thread priorities. Confirm which matter for
+   daily use.
 
 ## Suggested next order
 
 **Validate a different real NZB → add mock NNTP retry/failover tests → finish
-Explorer drag/drop and open-with → Newznab search → tray/execute polish.**
+Explorer shell polish → live Newznab search → tray/execute polish.**
 Download robustness and PAR2 are already in place; the remaining gaps are mostly
 peripheral or need external service details.

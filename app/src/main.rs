@@ -12,7 +12,7 @@ use chrono::{Local, Timelike};
 use eframe::egui;
 use model::*;
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -201,13 +201,15 @@ pub struct App {
     pub explorer_path: PathBuf,
     pub explorer_path_edit: String,
     pub explorer_selected: Option<PathBuf>,
+    pub explorer_selected_set: HashSet<PathBuf>,
+    pub explorer_anchor: Option<usize>,
     pub explorer_history: Vec<PathBuf>,
     pub explorer_forward: Vec<PathBuf>,
     pub explorer_filter: String,
     pub show_explorer_rename: bool,
     pub explorer_rename_draft: String,
     pub explorer_rename_target: Option<PathBuf>,
-    pub explorer_clipboard: Option<(PathBuf, bool)>,
+    pub explorer_clipboard: Option<(Vec<PathBuf>, bool)>,
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
     pub monthly_transfer: [f64; 12],
@@ -360,6 +362,8 @@ impl App {
             explorer_path,
             explorer_path_edit: explorer_path_text,
             explorer_selected: None,
+            explorer_selected_set: HashSet::new(),
+            explorer_anchor: None,
             explorer_history: Vec::new(),
             explorer_forward: Vec::new(),
             explorer_filter: String::new(),
@@ -995,6 +999,8 @@ impl App {
         self.explorer_path = path;
         self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
         self.explorer_selected = None;
+        self.explorer_selected_set.clear();
+        self.explorer_anchor = None;
     }
 
     pub fn explorer_back(&mut self) {
@@ -1003,6 +1009,8 @@ impl App {
             self.explorer_forward.push(current);
             self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
             self.explorer_selected = None;
+            self.explorer_selected_set.clear();
+            self.explorer_anchor = None;
         }
     }
 
@@ -1012,6 +1020,8 @@ impl App {
             self.explorer_history.push(current);
             self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
             self.explorer_selected = None;
+            self.explorer_selected_set.clear();
+            self.explorer_anchor = None;
         }
     }
 
@@ -1037,48 +1047,78 @@ impl App {
         }
     }
 
-    pub fn explorer_copy(&mut self, path: PathBuf, cut: bool) {
-        self.explorer_clipboard = Some((path.clone(), cut));
-        self.toast(if cut { "Cut" } else { "Copied" });
+    fn explorer_selected_paths(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = self.explorer_selected_set.iter().cloned().collect();
+        if paths.is_empty() {
+            if let Some(path) = &self.explorer_selected {
+                paths.push(path.clone());
+            }
+        }
+        paths.sort();
+        paths
+    }
+
+    pub fn explorer_copy_selected(&mut self, cut: bool) {
+        let paths = self.explorer_selected_paths();
+        if paths.is_empty() {
+            self.toast("Select an item first");
+            return;
+        }
+        let count = paths.len();
+        self.explorer_clipboard = Some((paths, cut));
+        self.toast(if cut {
+            format!("Cut {count} item(s)")
+        } else {
+            format!("Copied {count} item(s)")
+        });
         self.log(
             "Explorer",
-            &format!("{} {}", if cut { "Cut" } else { "Copied" }, path.display()),
+            &format!("{} {count} item(s)", if cut { "Cut" } else { "Copied" }),
         );
     }
 
     pub fn explorer_paste(&mut self) {
-        let Some((source, cut)) = self.explorer_clipboard.clone() else {
+        let Some((sources, cut)) = self.explorer_clipboard.clone() else {
             return;
         };
-        if !source.exists() {
-            self.toast("Clipboard item no longer exists");
-            return;
+        let mut pasted = Vec::new();
+        let mut failures = Vec::new();
+        for source in sources {
+            if !source.exists() {
+                failures.push(format!("{} no longer exists", source.display()));
+                continue;
+            }
+            let Some(name) = source.file_name() else {
+                continue;
+            };
+            let destination = unique_destination(self.explorer_path.join(name));
+            if destination == source {
+                continue;
+            }
+            let result = if cut {
+                std::fs::rename(&source, &destination)
+            } else if source.is_dir() {
+                copy_directory(&source, &destination)
+            } else {
+                std::fs::copy(&source, &destination).map(|_| ())
+            };
+            match result {
+                Ok(()) => pasted.push(destination),
+                Err(error) => failures.push(format!("{}: {error}", source.display())),
+            }
         }
-        let Some(name) = source.file_name() else {
-            return;
-        };
-        let destination = unique_destination(self.explorer_path.join(name));
-        let result = if cut {
-            std::fs::rename(&source, &destination)
-        } else if source.is_dir() {
-            copy_directory(&source, &destination)
-        } else {
-            std::fs::copy(&source, &destination).map(|_| ())
-        };
-        match result {
-            Ok(()) => {
-                if cut {
-                    self.explorer_clipboard = None;
-                }
-                self.log(
-                    "Explorer",
-                    &format!("Pasted {} to {}", source.display(), destination.display()),
-                );
-                self.toast("Pasted");
-            }
-            Err(error) => {
-                self.show_message = Some(("Explorer".into(), format!("Paste failed:\n{error}")));
-            }
+        if cut {
+            self.explorer_clipboard = None;
+        }
+        if !pasted.is_empty() {
+            self.explorer_selected_set = pasted.iter().cloned().collect();
+            self.explorer_selected = pasted.first().cloned();
+            self.explorer_anchor = None;
+            self.log("Explorer", &format!("Pasted {} item(s)", pasted.len()));
+            self.toast(format!("Pasted {} item(s)", pasted.len()));
+        }
+        if !failures.is_empty() {
+            self.show_message = Some(("Explorer".into(), format!("Paste failed:\n{}", failures.join("\n"))));
         }
     }
 
@@ -1149,6 +1189,9 @@ impl App {
         match std::fs::create_dir(&path) {
             Ok(()) => {
                 self.explorer_selected = Some(path.clone());
+                self.explorer_selected_set.clear();
+                self.explorer_selected_set.insert(path.clone());
+                self.explorer_anchor = None;
                 self.log("Explorer", &format!("Created {}", path.display()));
                 self.toast("Folder created");
             }
@@ -1182,39 +1225,53 @@ impl App {
         self.show_message = Some(("Properties".into(), lines.join("\n")));
     }
 
-    pub fn explorer_delete(&mut self, path: PathBuf) {
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.display().to_string());
+    pub fn explorer_delete_selected(&mut self) {
+        let paths = self.explorer_selected_paths();
+        if paths.is_empty() {
+            return;
+        }
+        let description = if paths.len() == 1 {
+            format!(
+                "Delete {}?",
+                paths[0]
+                    .file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_else(|| paths[0].display().to_string())
+            )
+        } else {
+            format!("Delete {} selected items?", paths.len())
+        };
         let answer = rfd::MessageDialog::new()
             .set_title("Delete")
-            .set_description(format!("Delete {name}?"))
+            .set_description(description)
             .set_buttons(rfd::MessageButtons::YesNo)
             .show();
         if !matches!(answer, rfd::MessageDialogResult::Yes) {
             return;
         }
-        let metadata = std::fs::symlink_metadata(&path);
-        let result = match metadata {
-            Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(&path),
-            Ok(_) => std::fs::remove_file(&path),
-            Err(error) => Err(error),
-        };
-        match result {
-            Ok(()) => {
-                if self.explorer_selected.as_ref() == Some(&path) {
-                    self.explorer_selected = None;
-                }
-                self.log("Explorer", &format!("Deleted {}", path.display()));
-                self.toast("Deleted");
+        let mut deleted = 0;
+        let mut failures = Vec::new();
+        for path in &paths {
+            let result = match std::fs::symlink_metadata(path) {
+                Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
+                Ok(_) => std::fs::remove_file(path),
+                Err(error) => Err(error),
+            };
+            match result {
+                Ok(()) => deleted += 1,
+                Err(error) => failures.push(format!("{}: {error}", path.display())),
             }
-            Err(error) => {
-                self.show_message = Some((
-                    "Explorer".into(),
-                    format!("Could not delete {}:\n{error}", path.display()),
-                ));
-            }
+        }
+        self.explorer_selected = None;
+        self.explorer_selected_set.clear();
+        self.explorer_anchor = None;
+        self.log("Explorer", &format!("Deleted {deleted} item(s)"));
+        self.toast(format!("Deleted {deleted} item(s)"));
+        if !failures.is_empty() {
+            self.show_message = Some((
+                "Explorer".into(),
+                format!("Some items could not be deleted:\n{}", failures.join("\n")),
+            ));
         }
     }
 
@@ -2856,6 +2913,42 @@ mod integration_tests {
         assert!(created.is_dir());
         app.explorer_properties(created.clone());
         assert!(app.show_message.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn explorer_multi_copy_pastes_all_selected_files() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-multi-copy-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let destination = root.join("destination");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&destination).unwrap();
+        let first = source.join("one.txt");
+        let second = source.join("two.txt");
+        std::fs::write(&first, "one").unwrap();
+        std::fs::write(&second, "two").unwrap();
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.explorer_path = source;
+        app.explorer_selected_set.insert(first);
+        app.explorer_selected_set.insert(second);
+        app.explorer_copy_selected(false);
+        app.explorer_path = destination.clone();
+        app.explorer_paste();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("one.txt")).unwrap(),
+            "one"
+        );
+        assert_eq!(
+            std::fs::read_to_string(destination.join("two.txt")).unwrap(),
+            "two"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 
