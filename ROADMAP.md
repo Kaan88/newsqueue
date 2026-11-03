@@ -12,14 +12,14 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 28 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 29 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — mostly done.** Missing articles no longer abort a job; resume
   sidecars (`.nqpart`) preserve downloaded articles across restarts; all enabled
-  servers are used; watched-folder auto-import and retry/backoff work; mock NNTP
-  tests cover success and missing-article completion. Article cache/priorities
-  and execute hooks remain.
+  servers are used; watched-folder auto-import, retry/backoff and execute hooks
+  work; mock NNTP tests cover success and missing-article completion. Article
+  cache/priorities remain.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
@@ -34,9 +34,9 @@ index, a known-good PAR2 release and a second server.
 - **Phase 5 — done for common use.** Explorer has multi-select
   (Ctrl/Shift), navigation, history, favourites, context menu, delete, rename,
   open-with, drag/drop copying, clipboard copy/cut/paste and columns.
-- **Phase 6 — partial.** Log retention, persistent history, category routing and
-  multi-server use are implemented. Proxy, thread priorities, tray, Join/Split
-  and execute/player hooks remain.
+- **Phase 6 — partial.** Log retention, persistent history, category routing,
+  multi-server use, thread priority, player launch and execute hooks are
+  implemented. Proxy, native tray and Join/Split remain.
 - **Phase 7 — mostly done.** Original icon, window/exe resources, a portable
   release zip (`app/package.ps1`) and a golden screenshot matrix
   (`app/screenshots.ps1`) are done. An installer remains.
@@ -160,9 +160,8 @@ live testing.
 
 5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
    binary are included with their license files.
-6. Remaining optional parity work: native tray/notifications, Join/Split,
-   execute/player hooks, proxy and thread priorities. Confirm which matter for
-   daily use.
+6. Remaining optional parity work: native tray/notifications, Join/Split and
+   proxy. Confirm which matter for daily use.
 
 ## Suggested next order
 

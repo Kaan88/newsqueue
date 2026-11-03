@@ -73,6 +73,9 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if app.show_explorer_rename {
         explorer_rename_window(app, ctx);
     }
+    if app.show_execute_command {
+        execute_command_window(app, ctx);
+    }
     if app.show_message.is_some() {
         message_window(app, ctx);
     }
@@ -699,6 +702,16 @@ fn page_nzb_play(ui: &mut Ui, s: &mut Settings) {
             ui.end_row();
             ui.label("Delete rars after extracting");
             ui.checkbox(&mut s.delete_rars_after_extract, "");
+            ui.end_row();
+            ui.label("Default execute command");
+            ui.add_sized(
+                [320.0, 20.0],
+                TextEdit::singleline(&mut s.default_execute)
+                    .hint_text("Runs after download/PAR2/unrar; {folder}, {name}, {file}"),
+            );
+            ui.end_row();
+            ui.label("Hide execute window");
+            ui.checkbox(&mut s.hide_execute_window, "");
             ui.end_row();
         });
 }
@@ -1946,6 +1959,53 @@ fn explorer_rename_window(app: &mut App, ctx: &egui::Context) {
     }
     if cancel || !open {
         app.show_explorer_rename = false;
+    }
+}
+
+fn execute_command_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.show_execute_command;
+    let mut draft = app.execute_command_draft.clone();
+    let mut save = false;
+    let mut cancel = false;
+    egui::Window::new("Execute command")
+        .default_pos([390.0, 240.0])
+        .default_size([520.0, 150.0])
+        .resizable(false)
+        .collapsible(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label("Runs after download/PAR2/unrar");
+            ui.add_sized(
+                [480.0, 20.0],
+                TextEdit::singleline(&mut draft).hint_text("Example: player.exe {file}"),
+            );
+            ui.label(
+                RichText::new("Placeholders: {folder}, {name}, {file}")
+                    .size(9.0)
+                    .color(theme::TEXT_MUTED),
+            );
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Save").clicked() {
+                    save = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    app.execute_command_draft = draft.clone();
+    if save {
+        if let Some(index) = app.execute_command_target {
+            if let Some(collection) = app.queue.get_mut(index) {
+                collection.execute = draft;
+                collection.execute_done = false;
+            }
+        }
+        app.show_execute_command = false;
+        return;
+    }
+    if cancel || !open {
+        app.show_execute_command = false;
     }
 }
 

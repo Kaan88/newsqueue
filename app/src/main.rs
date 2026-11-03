@@ -44,6 +44,7 @@ pub enum UiAction {
     ToggleUnrar(bool),
     UnpackNow,
     ChangeUnrarFolder,
+    SetExecute,
     OpenFolder,
     Play,
     Eta,
@@ -209,6 +210,9 @@ pub struct App {
     pub show_explorer_rename: bool,
     pub explorer_rename_draft: String,
     pub explorer_rename_target: Option<PathBuf>,
+    pub show_execute_command: bool,
+    pub execute_command_draft: String,
+    pub execute_command_target: Option<usize>,
     pub explorer_clipboard: Option<(Vec<PathBuf>, bool)>,
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
@@ -370,6 +374,9 @@ impl App {
             show_explorer_rename: false,
             explorer_rename_draft: String::new(),
             explorer_rename_target: None,
+            show_execute_command: false,
+            execute_command_draft: String::new(),
+            execute_command_target: None,
             explorer_clipboard: None,
             toast: None,
             daily_transfer: daily,
@@ -847,6 +854,7 @@ impl App {
             unrar_folder,
             unrar,
             execute: String::new(),
+            execute_done: false,
             expanded: true,
             files,
             posted_on: nzb.posted_on.clone(),
@@ -934,6 +942,7 @@ impl App {
                     unrar_folder,
                     unrar,
                     execute: String::new(),
+                    execute_done: false,
                     expanded: true,
                     files,
                     posted_on: nzb.posted_on.clone(),
@@ -1418,6 +1427,59 @@ impl App {
         }
     }
 
+    pub fn run_execute_hook(&mut self, id: u64) {
+        let Some(index) = self.queue.iter().position(|collection| collection.id == id) else {
+            return;
+        };
+        if self.queue[index].execute_done {
+            return;
+        }
+        let command = if self.queue[index].execute.trim().is_empty() {
+            self.settings.default_execute.clone()
+        } else {
+            self.queue[index].execute.clone()
+        };
+        if command.trim().is_empty() {
+            self.queue[index].execute_done = true;
+            return;
+        }
+        let folder = self.queue[index].folder.clone();
+        let subject = self.queue[index].subject.clone();
+        let first_file = self.queue[index].files.iter().find_map(|file| {
+            let path = PathBuf::from(&folder).join(&file.name);
+            path.is_file().then(|| path.to_string_lossy().to_string())
+        });
+        let command = command
+            .replace("{folder}", &folder)
+            .replace("{name}", &subject)
+            .replace("{file}", first_file.as_deref().unwrap_or(""));
+        let mut process = if cfg!(target_os = "windows") {
+            let mut process = std::process::Command::new("cmd");
+            process.args(["/C", &command]);
+            process
+        } else {
+            let mut process = std::process::Command::new("sh");
+            process.args(["-c", &command]);
+            process
+        };
+        process.current_dir(&folder);
+        #[cfg(target_os = "windows")]
+        if self.settings.hide_execute_window {
+            use std::os::windows::process::CommandExt;
+            process.creation_flags(0x0800_0000);
+        }
+        match process.spawn() {
+            Ok(_) => {
+                self.queue[index].execute_done = true;
+                self.log("Execute", &format!("Started for {subject}: {command}"));
+            }
+            Err(error) => {
+                self.log("Error", &format!("Execute failed for {subject}: {error}"));
+                self.show_message = Some(("Execute".into(), format!("Could not start command:\n{error}")));
+            }
+        }
+    }
+
     /// Start a PAR2 check for a completed collection. Returns true when a
     /// worker was started.
     pub fn start_par2(&mut self, id: u64) -> bool {
@@ -1568,8 +1630,11 @@ impl App {
                         .map(|collection| collection.unrar)
                         .unwrap_or(false);
                 if auto_unrar {
-                    self.start_unrar(active.collection_id);
+                    if self.start_unrar(active.collection_id) {
+                        return;
+                    }
                 }
+                self.run_execute_hook(active.collection_id);
             }
             Some(Err(error)) => {
                 if let Some(collection) = self
@@ -1618,9 +1683,11 @@ impl App {
                 .find(|collection| collection.id == id)
                 .map(|collection| collection.unrar)
                 .unwrap_or(false)
+            && self.start_unrar(id)
         {
-            self.start_unrar(id);
+            return;
         }
+        self.run_execute_hook(id);
     }
 
     /// Start unpacking a completed collection. Returns true when a worker was
@@ -1690,6 +1757,7 @@ impl App {
                 }
                 self.log("Unrar", &message);
                 self.toast("Unpack complete");
+                self.run_execute_hook(active.collection_id);
             }
             Some(Err(error)) => {
                 if let Some(c) = self.queue.iter_mut().find(|c| c.id == active.collection_id) {
@@ -1789,6 +1857,15 @@ impl App {
                             let subject = c.subject.clone();
                             self.log("Queue", &format!("Unrar folder changed for {subject}"));
                         }
+                    }
+                }
+            }
+            UiAction::SetExecute => {
+                if let Some(sel) = self.selected {
+                    if let Some(c) = self.queue.get(sel.collection) {
+                        self.execute_command_draft = c.execute.clone();
+                        self.execute_command_target = Some(sel.collection);
+                        self.show_execute_command = true;
                     }
                 }
             }
@@ -2442,6 +2519,7 @@ impl App {
             unrar_folder: String::new(),
             unrar: true,
             execute: String::new(),
+            execute_done: false,
             expanded: false,
             files: vec![QueueFile {
                 name: format!("{}.rar", sanitize_folder(&r.subject)),
@@ -2913,6 +2991,56 @@ mod integration_tests {
         assert!(created.is_dir());
         app.explorer_properties(created.clone());
         assert!(app.show_message.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn execute_hooks_use_per_collection_and_default_commands() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-execute-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let first = root.join("first");
+        let second = root.join("second");
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&second).unwrap();
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        let mut per_collection = sample_queue(&app.settings).remove(0);
+        per_collection.id = 201;
+        per_collection.folder = first.to_string_lossy().to_string();
+        per_collection.execute = "cmd /C echo one>marker.txt".into();
+        per_collection.execute_done = false;
+        let mut defaulted = sample_queue(&app.settings).remove(0);
+        defaulted.id = 202;
+        defaulted.folder = second.to_string_lossy().to_string();
+        defaulted.execute.clear();
+        defaulted.execute_done = false;
+        app.queue = vec![per_collection, defaulted];
+        app.settings.default_execute = "cmd /C echo two>marker.txt".into();
+
+        app.run_execute_hook(201);
+        app.run_execute_hook(202);
+        for _ in 0..100 {
+            if first.join("marker.txt").exists() && second.join("marker.txt").exists() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert_eq!(
+            std::fs::read_to_string(first.join("marker.txt")).unwrap().trim(),
+            "one"
+        );
+        assert_eq!(
+            std::fs::read_to_string(second.join("marker.txt")).unwrap().trim(),
+            "two"
+        );
+        assert!(app.queue.iter().all(|collection| collection.execute_done));
         let _ = std::fs::remove_dir_all(root);
     }
 

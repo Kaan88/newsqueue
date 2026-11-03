@@ -353,7 +353,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     action = Some(UiAction::Play)
                 });
                 dq_button(ui, Icon::Key, "Change execute command", || {
-                    action = Some(UiAction::None)
+                    action = Some(UiAction::SetExecute)
                 });
                 dq_button(ui, Icon::Eta, "ETA on selected", || {
                     action = Some(UiAction::Eta)
@@ -834,6 +834,10 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     }
                     if ui.button("Change unrar folder").clicked() {
                         action = Some(UiAction::ChangeUnrarFolder);
+                        ui.close_menu();
+                    }
+                    if ui.button("Change execute command").clicked() {
+                        action = Some(UiAction::SetExecute);
                         ui.close_menu();
                     }
                     if ui.button("Set password").clicked() {
