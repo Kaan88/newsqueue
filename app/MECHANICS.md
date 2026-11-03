@@ -286,7 +286,7 @@ the same.
 
 ## Explorer tab
 
-The original Explorer form is `TExplorerform` (DFM rva `0x60e77c`):
+The original Explorer form is `TExplorerform` (DFM at `0x60e77c`):
 
 | Part | Measured layout |
 |---|---|
@@ -350,9 +350,10 @@ form:
   Simple vector glyphs in the measured palette are used instead (estimated
   visual placeholder).
 - The 561 KB main form's runtime-created tab contents are only partly present in
-  the DFM; the Download queue and PAR2 trees are present, while the Explorer,
-  Log, RSS and search tabs are created in code. Their column names and controls
-  were taken from the language table (observed) and laid out to match the
-  measured main-window proportions (estimated layout).
+  the DFM; the Download queue and PAR2 trees are present, while the Log, RSS and
+  search tabs are created in code. The Explorer tab's separate `TExplorerform`
+  DFM is measured above. Their column names and controls were taken from the
+  language table (observed) and laid out to match the measured main-window
+  proportions (estimated layout).
 - Sample queue names, article counts and progress values are demonstration data,
   not application constants.
