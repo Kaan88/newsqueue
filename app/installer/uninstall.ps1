@@ -3,6 +3,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$version = '0.1.0'
 $silentUninstall = $Silent -or ($env:NQ_SILENT -eq '1')
 $installDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($installDir.Length -gt 3) {
@@ -11,7 +12,7 @@ if ($installDir.Length -gt 3) {
 $shell = New-Object -ComObject WScript.Shell
 
 if (-not $silentUninstall) {
-    $answer = $shell.Popup('Remove NewsQueue 0.48.4 and its files?', 0, 'Uninstall NewsQueue', 4 + 32)
+    $answer = $shell.Popup("Remove NewsQueue $version and its files?", 0, 'Uninstall NewsQueue', 4 + 32)
     if ($answer -ne 6) {
         exit 0
     }

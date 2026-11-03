@@ -514,7 +514,7 @@ impl App {
             let history_count = app.history.len();
             app.log(
                 "Main",
-                &format!("{APP_NAME} {VERSION}.0 ({BUILD_DATE}) started."),
+                &format!("{APP_NAME} {VERSION} ({BUILD_DATE}) started."),
             );
             app.log("Main", "OS Windows");
             app.log(
@@ -1919,8 +1919,15 @@ impl App {
                 if let Some(c) = self.queue.iter_mut().find(|c| c.id == active.collection_id) {
                     c.status = ItemStatus::Completed;
                 }
+                let subject = self
+                    .queue
+                    .iter()
+                    .find(|c| c.id == active.collection_id)
+                    .map(|c| c.subject.clone())
+                    .unwrap_or_default();
                 self.log("Unrar", &message);
                 self.toast("Unpack complete");
+                tray::notify("Unpack complete", &subject);
                 self.run_execute_hook(active.collection_id);
             }
             Some(Err(error)) => {
@@ -2128,6 +2135,7 @@ impl App {
         let now = Instant::now();
         let dt = (now - self.last_tick).as_secs_f64().clamp(0.0, 0.5);
         self.last_tick = now;
+        tray::set_options(self.settings.speed_in_tray, self.settings.tray_balloon);
         self.poll_unrar();
         self.poll_par2();
         self.poll_rss();
@@ -2321,6 +2329,11 @@ impl App {
             }
             if let Some((subject, total)) = completed {
                 self.log("Main", &format!("Download complete: {subject}"));
+                if count_collection {
+                    tray::notify("Download complete", &subject);
+                } else {
+                    tray::notify("Download incomplete", &subject);
+                }
                 self.history.insert(
                     0,
                     HistoryItem {
@@ -2368,6 +2381,7 @@ impl App {
             }
             let average = self.speed_samples.iter().sum::<f64>() / SPEED_SAMPLE_COUNT as f64;
             self.speed_bps = average;
+            tray::set_speed(average, self.settings.speed_bytes_mode);
             self.speed_history.push_back(average as f32);
             while self.speed_history.len() > 120 {
                 self.speed_history.pop_front();
@@ -3126,12 +3140,12 @@ fn main() -> eframe::Result<()> {
             .with_inner_size([SAVED_WIDTH, SAVED_HEIGHT])
             .with_min_inner_size([940.0, 620.0])
             .with_icon(load_window_icon())
-            .with_title(format!("{APP_NAME} {VERSION}.0")),
+            .with_title(format!("{APP_NAME} {VERSION}")),
         centered: true,
         ..Default::default()
     };
     eframe::run_native(
-        &format!("{APP_NAME} {VERSION}.0"),
+        &format!("{APP_NAME} {VERSION}"),
         native_options,
         Box::new(move |cc| {
             theme::install(&cc.egui_ctx);

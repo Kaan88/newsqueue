@@ -3,8 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "NewsQueue";
-pub const VERSION: &str = "0.48.4";
-pub const BUILD_DATE: &str = "2024-10-07";
+pub const VERSION: &str = "0.1.0";
+pub const BUILD_DATE: &str = "2026-11-04";
 pub const MAX_SPEED_KBPS: f64 = 55.0;
 pub const MAX_SPEED_MBPS: f64 = 0.44;
 #[allow(dead_code)]
@@ -1365,7 +1365,7 @@ pub fn sample_log() -> VecDeque<LogEntry> {
     out.push_back(LogEntry {
         time: now_time(),
         level: "Main".into(),
-        message: format!("{APP_NAME} {VERSION}.0 ({BUILD_DATE}) started."),
+        message: format!("{APP_NAME} {VERSION} ({BUILD_DATE}) started."),
     });
     out.push_back(LogEntry {
         time: now_time(),

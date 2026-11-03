@@ -1,10 +1,11 @@
 # Build a self-contained portable NewsQueue folder under app/dist/.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
+$version = '0.1.0'
 Push-Location $root
 try {
     cargo build --release
-    $dist = Join-Path $root "dist\NewsQueue-0.48.4"
+    $dist = Join-Path $root "dist\NewsQueue-$version"
     Remove-Item $dist -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $dist | Out-Null
     Copy-Item "target\release\newsqueue.exe" $dist
@@ -12,9 +13,9 @@ try {
     Copy-Item "assets\newsqueue-256.png" $dist
     Copy-Item "..\README.md" $dist
     Copy-Item "..\ROADMAP.md" $dist
-    Compress-Archive -Path $dist -DestinationPath (Join-Path $root "dist\NewsQueue-0.48.4.zip") -Force
+    Compress-Archive -Path $dist -DestinationPath (Join-Path $root "dist\NewsQueue-$version.zip") -Force
     Write-Output "Wrote $dist"
-    Write-Output "Wrote $root\dist\NewsQueue-0.48.4.zip"
+    Write-Output "Wrote $root\dist\NewsQueue-$version.zip"
 } finally {
     Pop-Location
 }

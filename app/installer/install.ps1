@@ -4,6 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+$version = '0.1.0'
 $silentInstall = $Silent -or ($env:NQ_SILENT -eq '1')
 $packageDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $shell = New-Object -ComObject WScript.Shell
@@ -25,7 +26,7 @@ try {
         $InstallDir = $InstallDir.TrimEnd('\')
     }
 
-    $zip = Join-Path $packageDir 'NewsQueue-0.48.4.zip'
+    $zip = Join-Path $packageDir "NewsQueue-$version.zip"
     $uninstallSource = Join-Path $packageDir 'uninstall.ps1'
     if (-not (Test-Path -LiteralPath $zip)) {
         Fail "Package is missing: $zip"
@@ -46,7 +47,7 @@ try {
     New-Item -ItemType Directory -Force -Path $staging | Out-Null
     try {
         Expand-Archive -LiteralPath $zip -DestinationPath $staging -Force
-        $inner = Join-Path $staging 'NewsQueue-0.48.4'
+        $inner = Join-Path $staging "NewsQueue-$version"
         if (-not (Test-Path -LiteralPath $inner)) {
             $innerDir = Get-ChildItem -LiteralPath $staging -Directory | Select-Object -First 1
             $inner = if ($null -ne $innerDir) { $innerDir.FullName } else { $null }
@@ -105,8 +106,8 @@ try {
     }
     New-Item -Path $uninstallKey -Force | Out-Null
     $size = (Get-ChildItem -LiteralPath $InstallDir -Recurse -File | Measure-Object -Property Length -Sum).Sum
-    New-ItemProperty -Path $uninstallKey -Name 'DisplayName' -Value 'NewsQueue 0.48.4' -PropertyType String -Force | Out-Null
-    New-ItemProperty -Path $uninstallKey -Name 'DisplayVersion' -Value '0.48.4' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $uninstallKey -Name 'DisplayName' -Value "NewsQueue $version" -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $uninstallKey -Name 'DisplayVersion' -Value $version -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name 'Publisher' -Value 'NewsQueue' -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name 'InstallLocation' -Value $InstallDir -PropertyType String -Force | Out-Null
     New-ItemProperty -Path $uninstallKey -Name 'DisplayIcon' -Value "$exe,0" -PropertyType String -Force | Out-Null
@@ -118,7 +119,7 @@ try {
     New-ItemProperty -Path $uninstallKey -Name 'NoRepair' -Value 1 -PropertyType DWord -Force | Out-Null
 
     if (-not $silentInstall) {
-        [void]$shell.Popup("NewsQueue 0.48.4 was installed to`n$InstallDir", 0, 'NewsQueue Setup', 64)
+        [void]$shell.Popup("NewsQueue $version was installed to`n$InstallDir", 0, 'NewsQueue Setup', 64)
     }
     exit 0
 } catch {
