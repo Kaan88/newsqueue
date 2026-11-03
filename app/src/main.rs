@@ -1863,6 +1863,19 @@ fn parse_screenshot_arg() -> Option<String> {
     None
 }
 
+fn load_window_icon() -> egui::IconData {
+    let bytes = include_bytes!("../assets/newsqueue-256.png");
+    let image = image::load_from_memory(bytes)
+        .expect("embedded app icon is not a valid PNG")
+        .into_rgba8();
+    let (width, height) = image.dimensions();
+    egui::IconData {
+        rgba: image.into_raw(),
+        width,
+        height,
+    }
+}
+
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     if let Some(position) = args.iter().position(|a| a == "--unrar-test") {
@@ -1920,6 +1933,7 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([SAVED_WIDTH, SAVED_HEIGHT])
             .with_min_inner_size([940.0, 620.0])
+            .with_icon(load_window_icon())
             .with_title(format!("{APP_NAME} {VERSION}.0")),
         centered: true,
         ..Default::default()

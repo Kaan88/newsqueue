@@ -15,5 +15,8 @@ chrono = "0.4"
 fs2 = "0.4"
 native-tls = "0.2"
 
+[build-dependencies]
+embed-resource = "2.5"
+
 [profile.release]
 opt-level = 2
