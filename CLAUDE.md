@@ -19,10 +19,9 @@ versioning.
 - UI: eframe/egui 0.29, custom light theme
 - Network: std threads, blocking sockets, no async runtime
 
-The `v1.0.0` release was published before the last Phase 3 unrar additions
-(archive-name subfolders and the encrypted-archive password prompt). Those
-changes may still be uncommitted or awaiting a post-1.0.0 release. Check
-`git status` and `git log` before assuming the release contains them.
+The published `v1.0.0` release is rebuilt rather than patched: it was deleted and
+recreated on 2026-11-04 because every download made before the yEnc escape fix
+was corrupt. Its assets keep their build-output file names.
 
 ## 2. Repository layout
 
@@ -243,7 +242,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 53 unit/integration tests currently pass.
+- 54 unit/integration tests currently pass.
 - `download.rs` has a mock NNTP server used for success, missing-article and
   article-cache tests.
 - `unrar.rs` has fixtures for plain, single-file and encrypted RAR archives.
@@ -300,6 +299,10 @@ user agents, scripts, installer, README, ROADMAP, AGENTS), rebuild the portable
 zip and installer, run `installer-test.ps1`, and attach the setup, checksum and
 zip to the GitHub release. Never include settings, API keys or downloaded NZBs.
 
+Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
+`NewsQueue-<version>-Setup.exe`, `NewsQueue-<version>-Setup.exe.sha256`) with no
+`#label` on the asset. Do not rename artifacts on upload.
+
 ## 9. Visual/UI conventions
 
 - Measured identity: Microsoft Sans Serif-like UI at roughly 11 px (8.25 pt),
@@ -322,6 +325,13 @@ zip to the GitHub release. Never include settings, API keys or downloaded NZBs.
 - Do not add an async runtime. The network and worker code is deliberately
   blocking std threads with channels and mutexes.
 - Do not truncate partial downloads without checking `.nqpart` metadata.
+- yEnc escapes twice: a byte is stored as `(b + 42)` and, when that value is
+  NUL/LF/CR/`=`, additionally as `'='` plus `(value + 64)`. Decoding an escaped
+  byte therefore subtracts 106, not 64. `decode_yenc` in `download.rs` had this
+  wrong until 2026-11-04, which silently corrupted every byte whose encoded form
+  needed escaping (~1.6% of a random payload, invisible to length checks). Keep
+  `decodes_yenc_escapes` and `downloads_binary_articles_with_yenc_escapes`
+  passing; the latter round-trips all 256 byte values through a mock server.
 - Missing articles are not fatal; they must mark the collection `Incomplete` and
   allow PAR2 repair.
 - Saved queue entries without segment IDs are discarded on load.
@@ -346,8 +356,6 @@ tray, off-screen behaviour, shutdown, portable packaging and installer.
 
 Not done / pending:
 
-- Commit the Phase 3 unrar additions if they are still uncommitted.
-- Cut a post-1.0.0 release if desired.
 - Add dedicated mock NNTP timeout/retry/failover tests.
 - Optional code signing, shortcut polish and a per-setting checklist.
 
@@ -357,10 +365,11 @@ Blocked on user-supplied data:
 - A live Newznab endpoint and API key.
 - A second Usenet server account for live failover.
 
-The supplied `Civilization.IV` and `Love.Under.the.Mistletoe` transfers complete
-at the transfer layer but their PAR2/RAR data is inconsistent. Do not treat them
-as valid repair fixtures. The generated damaged-RAR and encrypted-RAR fixtures
-are the reliable verification path.
+The `Civilization.IV` and `Love.Under.the.Mistletoe` transfers that used to look
+inconsistent were most likely the yEnc escape bug fixed on 2026-11-04 (see the
+gotchas in section 10); re-test them before calling the server data bad. The
+generated damaged-RAR and encrypted-RAR fixtures remain the reliable repair
+verification path.
 
 ## 12. Where to start for common changes
 

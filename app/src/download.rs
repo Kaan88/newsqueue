@@ -1341,7 +1341,10 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
             if i + 1 >= encoded.len() {
                 return Err("Broken yEnc escape sequence".into());
             }
-            out.push(encoded[i + 1].wrapping_sub(64));
+            // The encoder adds the 42 offset first and only then the 64 escape
+            // offset, so an escaped byte needs both subtracted: 227 encodes to
+            // 0x0D, is sent as "=M", and must decode back to 0xE3.
+            out.push(encoded[i + 1].wrapping_sub(64).wrapping_sub(42));
             i += 2;
         } else {
             out.push(c.wrapping_sub(42));
@@ -1357,13 +1360,15 @@ mod tests {
 
     #[test]
     fn decodes_yenc_escapes() {
-        // 19 encodes to '=' so it is sent as "=S"; 214 encodes to NUL so it is
-        // sent as "=" plus (214 + 64) & 0xff; 0 encodes to '*'.
-        let body = b"=ybegin line=128 size=3 name=test.bin\n=S*=\x16\n=yend size=3\n";
+        // yEnc adds the 42 offset to every byte, and then another 64 prefix plus
+        // '=' when that result would be NUL, LF, CR or '='. So 19 -> '=' -> "=}",
+        // 214 -> 0x00 -> "=@", 227 -> 0x0D -> "=M", 224 -> 0x0A -> "=J", and
+        // 0 -> '*'.
+        let body = b"=ybegin line=128 size=5 name=test.bin\n=}=@=M=J*\n=yend size=5\n";
         let (name, begin, data) = decode_yenc(body).unwrap();
         assert_eq!(name, "test.bin");
         assert_eq!(begin, None);
-        assert_eq!(data, vec![19, 0, 214]);
+        assert_eq!(data, vec![19, 214, 227, 224, 0]);
     }
 
     #[test]
@@ -1483,6 +1488,39 @@ mod tests {
         fs::create_dir_all(&root).unwrap();
         let data = b"ABCDEFGHIJ";
         let port = mock_server(vec![("seg1".into(), yenc_body(data))]);
+        let mut server = Server::default();
+        server.address = "127.0.0.1".into();
+        server.port = port;
+        server.ssl = false;
+        server.auth = false;
+        server.enabled = true;
+        server.connections = 2;
+        let job = mock_job(
+            &root,
+            vec![Segment {
+                number: 1,
+                bytes: data.len() as u64,
+                id: "seg1".into(),
+            }],
+            data.len() as u64,
+        );
+        let active = spawn(job, vec![server], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), data);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn downloads_binary_articles_with_yenc_escapes() {
+        // Every byte value has to survive the round trip, including the four
+        // that yEnc escapes (0x00, 0x0A, 0x0D, 0x3D) and the four bytes whose
+        // encoded form needs escaping (19, 214, 224, 227).
+        let root = std::env::temp_dir().join(format!("newsqueue-mock-dl-bin-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let data: Vec<u8> = (0..=255u8).collect();
+        let port = mock_server(vec![("seg1".into(), yenc_body(&data))]);
         let mut server = Server::default();
         server.address = "127.0.0.1".into();
         server.port = port;

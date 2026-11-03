@@ -7,9 +7,9 @@ not a source-code or artwork copy.
 ## Current status (2026-11-04)
 
 Current app version: **1.0.0**, versioned independently of the AltBinz 0.48.4
-parity target. The published `v1.0.0` release predates the Phase 3 unrar
-additions below; those changes are complete in the working tree and need a
-post-1.0.0 release when convenient.
+parity target. The `v1.0.0` release was deleted and rebuilt on 2026-11-04 so it
+contains the yEnc decode fix and the Phase 3 unrar additions; the previous
+`v1.0.0` binaries corrupted every download.
 
 ### Status at a glance
 
@@ -25,13 +25,47 @@ post-1.0.0 release when convenient.
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
 | Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.0` |
-| Verification | Baseline done | 53 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Verification | Baseline done | 54 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a valid PAR2 release, a Newznab endpoint/key and a second server |
 
+### Fixed: every download was byte-corrupted (2026-11-04)
+
+Reported by the user: RARs downloaded by NewsQueue fail extraction while the same
+NZB downloaded by IDM is fine. Confirmed and fixed.
+
+- **Cause.** `decode_yenc` (`app/src/download.rs`) decoded an escaped byte as
+  `byte - 64` instead of `byte - 64 - 42`. yEnc stores `(b + 42)` and escapes
+  that value as `'='` plus `(value + 64)`, so the unescape step must subtract
+  106. Every byte whose encoded form needed escaping — roughly 1.6% of a random
+  payload — was written 42 too high, so archives passed their length and
+  progress checks but failed CRC/extraction. The bug has existed since the first
+  commit (`b81a2c9`), so **no NewsQueue download before this fix can be trusted**,
+  including anything from the `v1.0.0` release.
+- **Evidence.** `how-f4247f.nzb` output vs the same NZB downloaded by the
+  original AltBinz: first difference at offset 10 of `part1.rar`, `0x0D` instead
+  of `0xE3`; 8,223,382 differing bytes in `part1.rar`, and all of them satisfy
+  `corrupt == (valid + 42) mod 256` for a value in the escaped set. Nothing else
+  differed, which rules out holes, truncation, dot-unstuffing and yEnc part
+  offsets.
+- **Fix.** Subtract both offsets in `decode_yenc`, plus regression tests:
+  `decodes_yenc_escapes` (`=}`, `=@`, `=M`, `=J` and a plain `*`) and
+  `downloads_binary_articles_with_yenc_escapes`, which round-trips all 256 byte
+  values through the mock NNTP server. The existing mock download test only used
+  the ASCII bytes `A`–`J`, whose encoded forms are never escaped, which is why
+  the bug survived the suite.
+- **Verification.** The fixed build re-downloaded `how-f4247f.nzb` and all six
+  volumes are SHA256-identical to the good reference copy (`part1`–`part5`
+  524,288,000 bytes, `part6` 376,364,335 bytes, `ALL MATCH`). `UnRAR t` over the
+  set reports `All OK`, exit 0. Before the fix the same NZB produced archives
+  that unpacked to garbage.
+- **Still to do.** Add a checksum-on-complete or `=yend size` cross-check so a
+  decode bug cannot pass on length alone again.
+
+
 ### Phase summary
 
-- **Phase 0 — done for the baseline.** 53 tests, mock NNTP tests, screenshot
+- **Phase 0 - done for the baseline.** 54 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real damaged-RAR/PAR2 fixtures,
   an encrypted-RAR fixture and the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -69,14 +103,16 @@ post-1.0.0 release when convenient.
   (`app/build-installer.ps1`, tested by `app/installer-test.ps1`) are done.
   Code signing remains optional.
 
-The supplied `Civilization.IV` and `Love.Under.the.Mistletoe` downloads complete
-at the transfer layer, but their PAR2 packet hashes / RAR payloads are
-inconsistent; the PAR2 repair path is verified with generated fixtures instead.
+The earlier `Civilization.IV` and `Love.Under.the.Mistletoe` downloads that looked
+"inconsistent" at the PAR2/RAR level were almost certainly the same yEnc escape
+bug: a length-correct stream that no archive or PAR2 set can validate. They are
+worth re-testing now that the decoder is fixed; the PAR2 repair path itself is
+already verified with generated fixtures.
 
 Current state: usable Windows clone. Strong on layout, queue/status maths, NNTP,
 PAR2, unrar extraction, tray/shutdown behaviour and common Explorer browsing.
-Remaining work is external validation, a post-1.0.0 release for the Phase 3
-additions, a little mock/failover coverage and optional polish.
+Remaining work is external validation, a little mock/failover coverage and
+optional polish.
 
 Effort: **S** ≈ one focused session, **M** ≈ 2–3, **L** ≈ 4+ and needs repeated
 live testing.
@@ -173,11 +209,12 @@ live testing.
 
 ### Blocked on test data
 
-1. **A complete, currently available release with a valid PAR2 set.** The
-   supplied `Civilization.IV` and `Love.Under.the.Mistletoe` NZBs download at the
-   transfer layer, but their PAR2 packet hashes and RAR payloads are inconsistent
-   on the server. The repair logic is covered by generated damaged-RAR fixtures;
-   a real release is needed for live repair → unrar validation.
+1. **A complete, currently available release with a valid PAR2 set.** Now that
+   the yEnc decoder is fixed, re-try the supplied `Civilization.IV` and
+   `Love.Under.the.Mistletoe` NZBs: their old failures were most likely the same
+   escape bug. A release whose PAR2 set validates is still needed for live
+   repair → unrar validation; the repair logic itself is covered by generated
+   damaged-RAR fixtures.
 2. **A second Usenet server account.** Multi-server scheduling is implemented,
    but live failover needs a second account. Mock retry/timeout/failover tests can
    close part of this gap without credentials.
@@ -193,26 +230,25 @@ live testing.
 
 ### Not blocked
 
-5. **Commit the Phase 3 unrar additions.** Archive-name subfolders and the
-   encrypted-archive password prompt/retry are implemented, tested and currently
-   uncommitted. The published `v1.0.0` release predates them.
-6. **Cut a post-1.0.0 release** (for example `v1.0.1`) after committing Phase 3,
-   or defer it until the external validation above is complete.
-7. **Mock NNTP retry/timeout/failover tests.** The downloader code supports
+5. **Mock NNTP retry/timeout/failover tests.** The downloader code supports
    retries, backoff and multiple servers; dedicated scripted mock coverage is
    still worthwhile.
-8. **Minor shortcut polish** and any remaining peripheral settings.
-9. **Per-setting verification checklist**; the current baseline is tests,
+6. **Downloads are not self-verifying.** Add a checksum-on-complete option or a
+   per-article `=yend size` cross-check so a decode regression cannot pass on
+   length alone.
+7. **Minor shortcut polish** and any remaining peripheral settings.
+8. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.
 
 ## Suggested next order
 
-1. Commit the Phase 3 unrar work and cut a post-1.0.0 release.
-2. Add mock NNTP timeout/retry/failover tests.
-3. Validate a different real NZB with a valid PAR2 set.
-4. Configure a live Newznab endpoint/key and verify search → add → download.
-5. Exercise live second-server failover with a second account.
-6. Optional: code signing, shortcut polish and a full per-setting checklist.
+1. Add mock NNTP timeout/retry/failover tests.
+2. Re-test the `Civilization.IV` / `Love.Under.the.Mistletoe` NZBs now that the
+   decoder is fixed; use one with a valid PAR2 set for live repair validation.
+3. Configure a live Newznab endpoint/key and verify search → add → download.
+4. Exercise live second-server failover with a second account.
+5. Optional: checksum-on-complete, code signing, shortcut polish and a full
+   per-setting checklist.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.
 The remaining gaps need external data or are optional polish.
