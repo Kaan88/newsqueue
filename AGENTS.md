@@ -16,9 +16,10 @@ cargo run
 cargo run -- --screenshot shots/now.png
 ```
 
-- Single test: `cargo test speed_limit_uses_decompiled_formula`; also `cargo test unrar` and `cargo test completed_collection_can_be_unpacked`.
+- Single test: `cargo test speed_limit_uses_decompiled_formula`; also `cargo test unrar`, `cargo test par2`, and `cargo test par2_repair_then_unrar_chain_works`.
 - `--screenshot` draws about 120 frames, writes a PNG and exits 0. It uses default settings and the sample queue, not saved state.
-- `cargo run -- --unrar-test <folder-with-rar> <dest>` runs the extraction path without the UI.
+- `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
+- `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `cargo fmt --check` currently fails on existing code. Run `cargo fmt` when formatting; don't claim the check passed unless you ran it.
 
 ## Where things live
@@ -27,14 +28,16 @@ cargo run -- --screenshot shots/now.png
 - `model.rs` — persisted types (`Settings`, `Collection`, `Server`), measured constants and formatters, NZB parser, sample data. New persisted fields need defaults (`#[serde(default)]`) so existing JSON still loads.
 - `ui.rs` — main window, tabs, queue table, status bar. Queue and Explorer rows add a transparent `row_click_overlay` so clicks on labels and progress bars reach the row; preserve it when editing columns.
 - `dialogs.rs` — 17 setup pages, server editor, stats/search/columns and other modal windows.
-- `download.rs` — real NNTP/yEnc downloader. One active job at a time; a job opens the server's configured connection count and splits the global limit per worker. Network code runs in std threads with a `Mutex<DownloadSnapshot>`; there is no async runtime.
+- `download.rs` — real NNTP/yEnc downloader. One active job at a time; all enabled servers are used and the global limit is split across workers. Resume metadata lives in `.nqpart` sidecars. Network code runs in std threads with a `Mutex<DownloadSnapshot>`; there is no async runtime.
+- `par2.rs` — PAR2 verify/repair worker using `app/tools/par2.exe`; feeds the unrar stage.
+- `rss.rs` — RSS/Atom fetch, filter matching and NZB autodownload using `ureq` with native TLS.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit) and a polling channel; do not delete the tool.
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
 
 ## Gotchas
 
-- Normal runs persist to `app/newsqueue-settings.json` and `app/newsqueue-queue.json` (autosave every 30 s / `autosave_minutes`, and on exit). Don't hand-edit them while the app is running. Saved queue entries without segment IDs are discarded on load; sample data appears only in screenshot mode.
-- `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source.
-- Test Usenet account: the host (`news.easynews.com`) and credentials are configured in the local, gitignored `app/newsqueue-settings.json`. Never copy the account name or password into source, docs, logs, commits or replies.
-- `cargo run -- --download-test <file.nzb>` and Connect perform real network downloads into the download folder; don't run them unless asked. The repo-root `Resident.Evil.2026.1080p.MA.WEB-DL.H264.SDR.DDP.Atmos.5.1.English.--HONE.nzb` is the intended download test file (from `app/`: `cargo run -- --download-test ..\Resident.Evil.2026.1080p.MA.WEB-DL.H264.SDR.DDP.Atmos.5.1.English.--HONE.nzb`). It can return `430 Article not found` on the current server even though the NZB is valid. PAR2 repair remains out of scope; RAR extraction is real.
+- Normal runs persist to `app/newsqueue-settings.json`, `app/newsqueue-queue.json` and `app/newsqueue-history.json` (autosave every 30 s / `autosave_minutes`, and on exit). Don't hand-edit them while the app is running. Saved queue entries without segment IDs are discarded on load; sample data appears only in screenshot mode.
+- `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source. `*.nqpart` files are resume sidecars; keep them until a download finishes.
+- Test Usenet account and RSS API keys are configured only in the local, gitignored `app/newsqueue-settings.json`. Never copy them into source, docs, logs, commits or replies.
+- `cargo run -- --download-test <file.nzb>` and Connect perform real network downloads into the download folder; don't run them unless asked. Use a local NZB such as `Civilization.IV-RELOADED.nzb` or `Love.Under.the.Mistletoe...nzb` (both ignored by git). Missing articles are skipped and mark the collection `Incomplete`; PAR2 repair and RAR extraction are real.
 - For screenshots of specific UI, set `NQ_DEMO_DIALOG` (`setup`, `server`, `stats`, `search`, `categories`, `notes`, `about`, `columns`, `pause`), `NQ_DEMO_TAB` (`par2`, `explorer`, `log`, `rss`), `NQ_DEMO_SETUP_PAGE=0..16`, `NQ_DEMO_EXPLORER=<folder>`, or `NQ_DEMO_CONNECT=1`.

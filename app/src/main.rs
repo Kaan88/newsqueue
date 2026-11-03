@@ -1,6 +1,8 @@
 mod dialogs;
 mod download;
 mod model;
+mod par2;
+mod rss;
 mod theme;
 mod ui;
 mod unrar;
@@ -8,6 +10,7 @@ mod unrar;
 use chrono::{Local, Timelike};
 use eframe::egui;
 use model::*;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
@@ -49,11 +52,46 @@ pub enum UiAction {
     None,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HistoryItem {
     pub name: String,
     pub date: String,
     pub size: String,
+}
+
+fn history_path() -> PathBuf {
+    app_base().join("newsqueue-history.json")
+}
+
+fn load_history() -> Option<Vec<HistoryItem>> {
+    let text = std::fs::read_to_string(history_path()).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+fn save_history(history: &[HistoryItem]) {
+    if let Ok(text) = serde_json::to_string_pretty(history) {
+        let _ = std::fs::write(history_path(), text);
+    }
+}
+
+fn sample_history() -> Vec<HistoryItem> {
+    vec![
+        HistoryItem {
+            name: "Quiet Harbor Sessions".into(),
+            date: "2026-11-02 19:42".into(),
+            size: "2.41 GB".into(),
+        },
+        HistoryItem {
+            name: "Field Notes Collection".into(),
+            date: "2026-11-01 08:15".into(),
+            size: "918.2 MB".into(),
+        },
+        HistoryItem {
+            name: "Toolkit Archive 2024".into(),
+            date: "2026-10-29 22:05".into(),
+            size: "4.12 GB".into(),
+        },
+    ]
 }
 
 #[derive(Clone, Debug)]
@@ -141,6 +179,11 @@ pub struct App {
     pub log_filter: String,
     pub rss_filter: String,
     pub rss_timer: bool,
+    pub rss_feed_draft: String,
+    pub rss_filters_draft: String,
+    pub show_rss_feeds: bool,
+    pub rss_rx: Option<std::sync::mpsc::Receiver<Result<rss::FetchResult, String>>>,
+    pub rss_last_refresh: Instant,
     pub show_threads: bool,
     pub thread_height: f32,
     pub status_mode_speed: u8,
@@ -157,6 +200,9 @@ pub struct App {
     pub explorer_history: Vec<PathBuf>,
     pub explorer_forward: Vec<PathBuf>,
     pub explorer_filter: String,
+    pub show_explorer_rename: bool,
+    pub explorer_rename_draft: String,
+    pub explorer_rename_target: Option<PathBuf>,
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
     pub monthly_transfer: [f64; 12],
@@ -164,6 +210,7 @@ pub struct App {
     pub last_log_day: String,
     pub active_dl: Option<download::ActiveDownload>,
     pub active_unrar: Option<unrar::ActiveUnrar>,
+    pub active_par2: Option<par2::ActivePar2>,
     pub pending_unrar: VecDeque<u64>,
     pub resume_after_unrar: bool,
 }
@@ -171,6 +218,7 @@ pub struct App {
 impl App {
     pub fn new(settings: Settings, screenshot_path: Option<String>) -> Self {
         ensure_dirs(&settings);
+        prune_old_logs(settings.keep_log_days);
         let queue = if screenshot_path.is_none() {
             let mut saved = load_queue_state().unwrap_or_default();
             // Older saves contain demonstration entries with no article ids.
@@ -201,10 +249,17 @@ impl App {
         let speed_ceiling_mbps = settings.max_speed_mbps;
         let auto_speed = settings.max_speed_kbps <= 0.0;
         let notes_draft = settings.notes.clone();
+        let rss_feed_draft = settings.rss_urls.join("\n");
+        let rss_filters_draft = settings.rss_filters.clone();
         let column_visible_draft = settings.column_visible;
         let column_width_draft = settings.column_widths;
         let setup_draft = settings.clone();
         let category_draft = settings.categories.clone();
+        let history = if screenshot_path.is_none() {
+            load_history().unwrap_or_else(sample_history)
+        } else {
+            sample_history()
+        };
         let mut app = Self {
             settings,
             setup_draft,
@@ -213,23 +268,7 @@ impl App {
             rss: sample_rss(),
             logs: sample_log(),
             threads,
-            history: vec![
-                HistoryItem {
-                    name: "Quiet Harbor Sessions".into(),
-                    date: "2026-11-02 19:42".into(),
-                    size: "2.41 GB".into(),
-                },
-                HistoryItem {
-                    name: "Field Notes Collection".into(),
-                    date: "2026-11-01 08:15".into(),
-                    size: "918.2 MB".into(),
-                },
-                HistoryItem {
-                    name: "Toolkit Archive 2024".into(),
-                    date: "2026-10-29 22:05".into(),
-                    size: "4.12 GB".into(),
-                },
-            ],
+            history,
             search_results: Vec::new(),
             selected: None,
             selected_par2: None,
@@ -296,6 +335,11 @@ impl App {
             log_filter: String::new(),
             rss_filter: String::new(),
             rss_timer: false,
+            rss_feed_draft,
+            rss_filters_draft,
+            show_rss_feeds: false,
+            rss_rx: None,
+            rss_last_refresh: Instant::now(),
             show_threads,
             thread_height,
             status_mode_speed,
@@ -312,6 +356,9 @@ impl App {
             explorer_history: Vec::new(),
             explorer_forward: Vec::new(),
             explorer_filter: String::new(),
+            show_explorer_rename: false,
+            explorer_rename_draft: String::new(),
+            explorer_rename_target: None,
             toast: None,
             daily_transfer: daily,
             monthly_transfer: monthly,
@@ -319,6 +366,7 @@ impl App {
             last_log_day: String::new(),
             active_dl: None,
             active_unrar: None,
+            active_par2: None,
             pending_unrar: VecDeque::new(),
             resume_after_unrar: false,
         };
@@ -362,6 +410,9 @@ impl App {
         }
         if std::env::var("NQ_DEMO_CONNECT").is_ok() {
             app.connect();
+        }
+        if std::env::var("NQ_DEMO_RSS").is_ok() {
+            app.refresh_rss();
         }
         if app.screenshot_path.is_none() {
             for entry in app.logs.clone() {
@@ -711,6 +762,97 @@ impl App {
         }
     }
 
+    fn matching_category(&self, subject: &str, group: &str) -> Option<Category> {
+        let haystack = format!("{subject}\n{group}").to_ascii_lowercase();
+        self.settings.categories.iter().find(|category| {
+            category
+                .keywords
+                .split(['|', ';', ','])
+                .map(str::trim)
+                .filter(|keyword| !keyword.is_empty())
+                .any(|keyword| haystack.contains(&keyword.to_ascii_lowercase()))
+        }).cloned()
+    }
+
+    fn add_nzb_from_parsed(&mut self, nzb: ParsedNzb, source: String, filter_paused: bool) -> u64 {
+        let files: Vec<QueueFile> = nzb
+            .files
+            .iter()
+            .map(|file| QueueFile {
+                name: file.name.clone(),
+                bytes: file.bytes,
+                downloaded: 0.0,
+                parts: file.parts,
+                segments: file.segments.clone(),
+            })
+            .collect();
+        let id = self.queue.iter().map(|collection| collection.id).max().unwrap_or(0) + 1;
+        let paused = self.paused || filter_paused;
+        let category = self.matching_category(&nzb.name, &nzb.group);
+        let group = if nzb.group.is_empty() {
+            "alt.binaries.misc".to_string()
+        } else {
+            nzb.group.clone()
+        };
+        let folder = category
+            .as_ref()
+            .map(|category| category.download_folder.clone())
+            .filter(|folder| !folder.trim().is_empty())
+            .unwrap_or_else(|| {
+                PathBuf::from(&self.settings.download_dir)
+                    .join(sanitize_folder(&nzb.name))
+                    .to_string_lossy()
+                    .to_string()
+            });
+        let unrar = category.as_ref().map(|category| category.unrar).unwrap_or(true);
+        let unrar_folder = category
+            .as_ref()
+            .map(|category| category.unrar_folder.clone())
+            .unwrap_or_default();
+        let category_name = category
+            .as_ref()
+            .map(|category| category.name.clone())
+            .unwrap_or_else(|| "Default".into());
+        let collection = Collection {
+            id,
+            subject: nzb.name.clone(),
+            total_bytes: nzb.total_bytes.max(1),
+            downloaded: 0.0,
+            parts: nzb.parts,
+            age_days: nzb.age_days,
+            group,
+            poster: if nzb.poster.is_empty() {
+                "unknown".into()
+            } else {
+                nzb.poster.clone()
+            },
+            status: if paused {
+                ItemStatus::Paused
+            } else {
+                ItemStatus::Queued
+            },
+            folder,
+            unrar_folder,
+            unrar,
+            execute: String::new(),
+            expanded: true,
+            files,
+            posted_on: nzb.posted_on.clone(),
+            delete_archives: false,
+            category: category_name,
+            password: String::new(),
+            source,
+        };
+        let subject = collection.subject.clone();
+        if self.paused && !self.resume_ids.contains(&id) {
+            self.resume_ids.push(id);
+        }
+        self.queue.push(collection);
+        self.log("RSS", &format!("Added from RSS: {subject}"));
+        self.toast("RSS item added");
+        id
+    }
+
     pub fn import_nzb(&mut self) {
         let Some(path) = rfd::FileDialog::new()
             .add_filter("NZB files", &["nzb", "NZB"])
@@ -733,6 +875,31 @@ impl App {
                     .collect();
                 let id = self.queue.iter().map(|c| c.id).max().unwrap_or(0) + 1;
                 let paused = self.paused;
+                let category = self.matching_category(&nzb.name, &nzb.group);
+                let group = if nzb.group.is_empty() {
+                    "alt.binaries.misc".to_string()
+                } else {
+                    nzb.group.clone()
+                };
+                let folder = category
+                    .as_ref()
+                    .map(|category| category.download_folder.clone())
+                    .filter(|folder| !folder.trim().is_empty())
+                    .unwrap_or_else(|| {
+                        PathBuf::from(&self.settings.download_dir)
+                            .join(sanitize_folder(&nzb.name))
+                            .to_string_lossy()
+                            .to_string()
+                    });
+                let unrar = category.as_ref().map(|category| category.unrar).unwrap_or(true);
+                let unrar_folder = category
+                    .as_ref()
+                    .map(|category| category.unrar_folder.clone())
+                    .unwrap_or_default();
+                let category_name = category
+                    .as_ref()
+                    .map(|category| category.name.clone())
+                    .unwrap_or_else(|| "Default".into());
                 let collection = Collection {
                     id,
                     subject: nzb.name.clone(),
@@ -740,11 +907,7 @@ impl App {
                     downloaded: 0.0,
                     parts: nzb.parts,
                     age_days: nzb.age_days,
-                    group: if nzb.group.is_empty() {
-                        "alt.binaries.misc".into()
-                    } else {
-                        nzb.group.clone()
-                    },
+                    group,
                     poster: if nzb.poster.is_empty() {
                         "unknown".into()
                     } else {
@@ -755,18 +918,15 @@ impl App {
                     } else {
                         ItemStatus::Queued
                     },
-                    folder: PathBuf::from(&self.settings.download_dir)
-                        .join(sanitize_folder(&nzb.name))
-                        .to_string_lossy()
-                        .to_string(),
-                    unrar_folder: String::new(),
-                    unrar: true,
+                    folder,
+                    unrar_folder,
+                    unrar,
                     execute: String::new(),
                     expanded: true,
                     files,
                     posted_on: nzb.posted_on.clone(),
                     delete_archives: false,
-                    category: "Default".into(),
+                    category: category_name,
                     password: String::new(),
                     source: path.to_string_lossy().to_string(),
                 };
@@ -869,6 +1029,15 @@ impl App {
         }
     }
 
+    pub fn explorer_rename(&mut self, path: PathBuf) {
+        self.explorer_rename_draft = path
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_default();
+        self.explorer_rename_target = Some(path);
+        self.show_explorer_rename = true;
+    }
+
     pub fn explorer_new_folder(&mut self) {
         let mut name = "New folder".to_string();
         let mut index = 1;
@@ -946,6 +1115,280 @@ impl App {
                     format!("Could not delete {}:\n{error}", path.display()),
                 ));
             }
+        }
+    }
+
+    pub fn refresh_rss(&mut self) {
+        if self.rss_rx.is_some() {
+            self.toast("RSS refresh already running");
+            return;
+        }
+        if self.settings.rss_urls.is_empty() {
+            self.show_rss_feeds = true;
+            self.rss_feed_draft = String::new();
+            self.toast("Add an RSS feed first");
+            return;
+        }
+        let urls = self.settings.rss_urls.clone();
+        let filters = self.settings.rss_filters.clone();
+        let nzb_dir = PathBuf::from(&self.settings.nzb_dir);
+        let existing: Vec<String> = self
+            .queue
+            .iter()
+            .map(|collection| collection.source.clone())
+            .collect();
+        let count = urls.len();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(rss::fetch_and_download(
+                &urls,
+                &filters,
+                &nzb_dir,
+                &existing,
+            ));
+        });
+        self.rss_rx = Some(rx);
+        self.rss_last_refresh = Instant::now();
+        self.log("RSS", &format!("Refreshing {count} feed(s)."));
+    }
+
+    fn poll_rss(&mut self) {
+        let Some(rx) = self.rss_rx.take() else {
+            return;
+        };
+        match rx.try_recv() {
+            Ok(Ok(result)) => {
+                let count = result.items.len();
+                self.rss = result.items;
+                for error in &result.errors {
+                    self.log("Error", &format!("RSS autodownload: {error}"));
+                }
+                for download in result.downloads {
+                    self.add_nzb_from_parsed(download.nzb, download.source, download.paused);
+                }
+                self.log("RSS", &format!("Loaded {count} RSS item(s)."));
+                if result.errors.is_empty() {
+                    self.toast(format!("RSS: {count} items"));
+                } else {
+                    self.toast(format!(
+                        "RSS: {count} items, {} download error(s)",
+                        result.errors.len()
+                    ));
+                }
+            }
+            Ok(Err(error)) => {
+                self.log("Error", &format!("RSS refresh failed: {error}"));
+                self.toast("RSS refresh failed");
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => self.rss_rx = Some(rx),
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                self.log("Error", "RSS worker stopped unexpectedly.");
+            }
+        }
+    }
+
+    /// Start a PAR2 check for a completed collection. Returns true when a
+    /// worker was started.
+    pub fn start_par2(&mut self, id: u64) -> bool {
+        if self.active_par2.is_some() {
+            self.toast("PAR2 check already running");
+            return false;
+        }
+        let Some(index) = self.queue.iter().position(|c| c.id == id) else {
+            return false;
+        };
+        let collection = self.queue[index].clone();
+        let source = PathBuf::from(&collection.folder);
+        let expected: Vec<String> = collection
+            .files
+            .iter()
+            .map(|file| file.name.clone())
+            .collect();
+        let Some(par2_file) = par2::find_par2_file(&source, &expected) else {
+            return false;
+        };
+        self.ensure_par2_set(&collection, &par2_file);
+        self.queue[index].status = ItemStatus::Repairing;
+        self.log(
+            "PAR2",
+            &format!(
+                "Checking {} with {}",
+                collection.subject,
+                par2_file
+                    .file_name()
+                    .unwrap_or_default()
+                    .to_string_lossy()
+            ),
+        );
+        self.toast("Checking PAR2...");
+        self.active_par2 = Some(par2::spawn(
+            id,
+            source,
+            par2_file,
+            par2::Par2Options::from_settings(&self.settings),
+        ));
+        true
+    }
+
+    fn ensure_par2_set(&mut self, collection: &Collection, par2_file: &Path) {
+        let name = par2_file
+            .file_name()
+            .map(|name| name.to_string_lossy().to_string())
+            .unwrap_or_else(|| "collection.par2".into());
+        let size_mb = std::fs::metadata(par2_file)
+            .map(|meta| meta.len() as f64 / MB)
+            .unwrap_or(0.0);
+        if let Some(set) = self.par2.iter_mut().find(|set| {
+            set.collection_id == Some(collection.id)
+                || (set.folder == collection.folder && set.name.eq_ignore_ascii_case(&name))
+        }) {
+            set.name = name;
+            set.size_mb = size_mb;
+            set.unrar = collection.unrar;
+            set.folder = collection.folder.clone();
+            set.collection_id = Some(collection.id);
+            set.status = "Checking".into();
+            set.info = "Queued".into();
+            set.progress = 0.0;
+        } else {
+            self.par2.push(Par2Set {
+                name,
+                size_mb,
+                blocks: 0,
+                info: "Queued".into(),
+                unrar: collection.unrar,
+                progress: 0.0,
+                status: "Checking".into(),
+                folder: collection.folder.clone(),
+                collection_id: Some(collection.id),
+            });
+        }
+    }
+
+    pub fn start_par2_for_set(&mut self, index: usize) {
+        let Some(set) = self.par2.get(index).cloned() else {
+            return;
+        };
+        if let Some(id) = set.collection_id {
+            self.start_par2(id);
+            return;
+        }
+        if set.folder.is_empty() {
+            self.toast("No collection linked to this PAR2 set");
+            return;
+        }
+        if self.active_par2.is_some() {
+            self.toast("PAR2 check already running");
+            return;
+        }
+        let source = PathBuf::from(&set.folder);
+        let expected = vec![set.name.clone()];
+        let Some(par2_file) = par2::find_par2_file(&source, &expected) else {
+            self.toast("PAR2 file not found");
+            return;
+        };
+        self.par2[index].status = "Repairing".into();
+        self.par2[index].info = "Checking".into();
+        self.par2[index].progress = 0.0;
+        self.log("PAR2", &format!("Checking {}", set.name));
+        self.active_par2 = Some(par2::spawn(
+            0,
+            source,
+            par2_file,
+            par2::Par2Options::from_settings(&self.settings),
+        ));
+    }
+
+    fn poll_par2(&mut self) {
+        let Some(active) = self.active_par2.take() else {
+            return;
+        };
+        match par2::poll(&active) {
+            None => self.active_par2 = Some(active),
+            Some(Ok(message)) => {
+                if let Some(collection) = self
+                    .queue
+                    .iter_mut()
+                    .find(|collection| collection.id == active.collection_id)
+                {
+                    collection.status = ItemStatus::Completed;
+                }
+                for set in &mut self.par2 {
+                    if set.collection_id == Some(active.collection_id)
+                        || (active.collection_id == 0 && set.status == "Repairing")
+                    {
+                        set.status = if message.contains("repaired") {
+                            "Repaired".into()
+                        } else {
+                            "OK".into()
+                        };
+                        set.info = message.clone();
+                        set.progress = 1.0;
+                    }
+                }
+                self.log("PAR2", &message);
+                self.toast("PAR2 check complete");
+                let auto_unrar = active.collection_id != 0
+                    && self.settings.auto_unrar
+                    && self
+                        .queue
+                        .iter()
+                        .find(|collection| collection.id == active.collection_id)
+                        .map(|collection| collection.unrar)
+                        .unwrap_or(false);
+                if auto_unrar {
+                    self.start_unrar(active.collection_id);
+                }
+            }
+            Some(Err(error)) => {
+                if let Some(collection) = self
+                    .queue
+                    .iter_mut()
+                    .find(|collection| collection.id == active.collection_id)
+                {
+                    collection.status = ItemStatus::Incomplete;
+                }
+                for set in &mut self.par2 {
+                    if set.collection_id == Some(active.collection_id)
+                        || (active.collection_id == 0 && set.status == "Repairing")
+                    {
+                        set.status = "Incomplete".into();
+                        set.info = error.clone();
+                    }
+                }
+                self.log("PAR2", &error);
+                self.show_message = Some(("PAR2".into(), error));
+            }
+        }
+    }
+
+    fn schedule_after_download(&mut self, id: u64) {
+        let check_par2 = self.settings.par2_checking
+            && self
+                .queue
+                .iter()
+                .find(|collection| collection.id == id)
+                .map(|collection| {
+                    let expected: Vec<String> = collection
+                        .files
+                        .iter()
+                        .map(|file| file.name.clone())
+                        .collect();
+                    par2::has_par2(Path::new(&collection.folder), &expected)
+                })
+                .unwrap_or(false);
+        if check_par2 && self.start_par2(id) {
+            return;
+        }
+        if self.settings.auto_unrar
+            && self
+                .queue
+                .iter()
+                .find(|collection| collection.id == id)
+                .map(|collection| collection.unrar)
+                .unwrap_or(false)
+        {
+            self.start_unrar(id);
         }
     }
 
@@ -1063,10 +1506,33 @@ impl App {
             UiAction::SetCategory => {
                 if let Some(sel) = self.selected {
                     if let Some(c) = self.queue.get_mut(sel.collection) {
-                        c.category = "Default".into();
+                        if self.settings.categories.is_empty() {
+                            c.category = "Default".into();
+                        } else {
+                            let current = self
+                                .settings
+                                .categories
+                                .iter()
+                                .position(|category| category.name == c.category)
+                                .unwrap_or(usize::MAX);
+                            let next = if current == usize::MAX {
+                                0
+                            } else {
+                                (current + 1) % self.settings.categories.len()
+                            };
+                            let category = &self.settings.categories[next];
+                            c.category = category.name.clone();
+                            if !category.download_folder.trim().is_empty() {
+                                c.folder = category.download_folder.clone();
+                            }
+                            c.unrar = category.unrar;
+                            if !category.unrar_folder.trim().is_empty() {
+                                c.unrar_folder = category.unrar_folder.clone();
+                            }
+                        }
                     }
                 }
-                self.toast("Category set to Default");
+                self.toast("Category changed");
             }
             UiAction::ToggleUnrar(v) => {
                 if let Some(sel) = self.selected {
@@ -1140,6 +1606,15 @@ impl App {
         let dt = (now - self.last_tick).as_secs_f64().clamp(0.0, 0.5);
         self.last_tick = now;
         self.poll_unrar();
+        self.poll_par2();
+        self.poll_rss();
+        if self.rss_timer
+            && self.rss_rx.is_none()
+            && now.duration_since(self.rss_last_refresh)
+                >= Duration::from_secs(self.settings.rss_refresh_minutes.max(1) as u64 * 60)
+        {
+            self.refresh_rss();
+        }
 
         // Keep the limit reference in step with Setup. A maximum of 0 means
         // Auto (language hint `[0-10000] 0-Auto`), so the measured ceiling is
@@ -1219,17 +1694,23 @@ impl App {
                 .iter()
                 .position(|c| c.status == ItemStatus::Queued && c.has_segments())
             {
-                if let Some(server) = self.settings.enabled_servers().first().map(|s| (*s).clone()) {
+                let servers: Vec<Server> = self
+                    .settings
+                    .enabled_servers()
+                    .into_iter()
+                    .cloned()
+                    .collect();
+                if !servers.is_empty() {
                     let job =
                         download::job_for_collection(&self.queue[i], self.settings.skip_existing);
-                    // The downloader opens the server's connection count and
-                    // splits the global limit across those connections
+                    // The downloader opens each server's connection count and
+                    // splits the global limit across all workers
                     // (function 0x835e38 divides by the active count).
                     let throttle = self.speed_limit_bps();
                     self.queue[i].status = ItemStatus::Downloading;
                     let subject = self.queue[i].subject.clone();
                     self.log("Queue", &format!("Starting: {subject}"));
-                    self.active_dl = Some(download::spawn(job, server, throttle));
+                    self.active_dl = Some(download::spawn(job, servers, throttle));
                 }
             }
         }
@@ -1268,6 +1749,12 @@ impl App {
                 }
                 match snapshot.stage {
                     download::Stage::Completed => {
+                        completed = Some((c.subject.clone(), c.total_bytes));
+                        completed_id = Some(c.id);
+                        clear = true;
+                    }
+                    download::Stage::Incomplete => {
+                        c.status = ItemStatus::Incomplete;
                         completed = Some((c.subject.clone(), c.total_bytes));
                         completed_id = Some(c.id);
                         clear = true;
@@ -1318,16 +1805,7 @@ impl App {
                 self.active_dl = None;
             }
             if let Some(id) = completed_id {
-                if self.settings.auto_unrar
-                    && self
-                        .queue
-                        .iter()
-                        .find(|c| c.id == id)
-                        .map(|c| c.unrar)
-                        .unwrap_or(false)
-                {
-                    self.start_unrar(id);
-                }
+                self.schedule_after_download(id);
             }
         }
         self.pending_speed_bps = speed_this_frame;
@@ -1733,6 +2211,10 @@ impl Drop for App {
         if self.screenshot_path.is_none() {
             self.settings.save();
             save_queue_state(&self.queue);
+            if self.settings.clear_history_on_exit {
+                self.history.clear();
+            }
+            save_history(&self.history);
         }
     }
 }
@@ -1878,6 +2360,76 @@ fn load_window_icon() -> egui::IconData {
 
 fn main() -> eframe::Result<()> {
     let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|arg| arg == "--rss-download-test") {
+        let settings = Settings::load();
+        match rss::fetch_and_download(
+            &settings.rss_urls,
+            &settings.rss_filters,
+            Path::new(&settings.nzb_dir),
+            &[],
+        ) {
+            Ok(result) => {
+                println!(
+                    "{} RSS item(s), {} NZB download(s)",
+                    result.items.len(),
+                    result.downloads.len()
+                );
+                for error in &result.errors {
+                    println!("error: {error}");
+                }
+                for download in result.downloads {
+                    println!("{} | {} bytes", download.nzb.name, download.nzb.total_bytes);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("rss download test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if args.iter().any(|arg| arg == "--rss-test") {
+        let settings = Settings::load();
+        match rss::fetch_feeds(&settings.rss_urls) {
+            Ok(items) => {
+                println!("{} RSS item(s)", items.len());
+                for item in items.iter().take(10) {
+                    println!("{} | {}", item.name, item.url);
+                }
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("rss test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let Some(position) = args.iter().position(|a| a == "--par2-test") {
+        let source = args
+            .get(position + 1)
+            .cloned()
+            .unwrap_or_else(|| ".".into());
+        let source = PathBuf::from(source);
+        let settings = Settings::load();
+        let Some(par2_file) = par2::find_par2_file(&source, &[]) else {
+            eprintln!("No PAR2 file found in {}", source.display());
+            std::process::exit(1);
+        };
+        match par2::verify_or_repair(
+            &source,
+            &par2_file,
+            &par2::Par2Options::from_settings(&settings),
+        ) {
+            Ok(message) => {
+                println!("{message}");
+                return Ok(());
+            }
+            Err(error) => {
+                eprintln!("par2 test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     if let Some(position) = args.iter().position(|a| a == "--unrar-test") {
         let source = args
             .get(position + 1)
@@ -1981,6 +2533,76 @@ mod integration_tests {
         assert!(created.is_dir());
         app.explorer_properties(created.clone());
         assert!(app.show_message.is_some());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn par2_repair_then_unrar_chain_works() {
+        let root = std::env::temp_dir().join(format!(
+            "newsqueue-chain-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let source = root.join("source");
+        let dest = root.join("dest");
+        std::fs::create_dir_all(&source).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests")
+            .join("fixtures")
+            .join("tiny.rar");
+        let payload = source.join("payload.rar");
+        std::fs::copy(fixture, &payload).unwrap();
+        let par2_exe = app_base().join("tools").join("par2.exe");
+        let output = std::process::Command::new(&par2_exe)
+            .args(["c", "-q", "-r20", "payload.par2", "payload.rar"])
+            .current_dir(&source)
+            .output()
+            .unwrap();
+        assert!(output.status.success());
+        let mut damaged = std::fs::read(&payload).unwrap();
+        let index = damaged.len() / 2;
+        damaged[index] ^= 0xff;
+        std::fs::write(&payload, damaged).unwrap();
+
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.settings.auto_unrar = true;
+        app.settings.par2_checking = true;
+        app.settings.par2_repairing = true;
+        app.settings.overwrite_existing = true;
+        app.settings.unrar_to_different = true;
+        app.settings.unrar_dir = dest.to_string_lossy().to_string();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.id = 77;
+        collection.subject = "Chain test".into();
+        collection.folder = source.to_string_lossy().to_string();
+        collection.unrar = true;
+        collection.unrar_folder.clear();
+        collection.files.clear();
+        collection.status = ItemStatus::Completed;
+        app.queue = vec![collection];
+
+        assert!(app.start_par2(77));
+        for _ in 0..400 {
+            app.poll_par2();
+            app.poll_unrar();
+            if app.active_par2.is_none() && app.active_unrar.is_none() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25));
+        }
+        assert!(app.active_par2.is_none(), "par2 did not finish");
+        assert!(app.active_unrar.is_none(), "unrar did not finish");
+        assert_eq!(app.queue[0].status, ItemStatus::Completed);
+        assert_eq!(
+            std::fs::read_to_string(dest.join("readme.txt"))
+                .unwrap()
+                .trim(),
+            "tiny rar fixture"
+        );
         let _ = std::fs::remove_dir_all(root);
     }
 

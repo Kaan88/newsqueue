@@ -223,6 +223,8 @@ pub struct Par2Set {
     pub unrar: bool,
     pub progress: f32,
     pub status: String,
+    pub folder: String,
+    pub collection_id: Option<u64>,
 }
 #[derive(Clone, Debug)]
 pub struct LogEntry {
@@ -439,6 +441,10 @@ pub struct Settings {
     pub search_history_limit: u32,
     pub dropdown_limit: u32,
     pub rss_refresh_minutes: u32,
+    #[serde(default)]
+    pub rss_urls: Vec<String>,
+    #[serde(default)]
+    pub rss_filters: String,
     pub auto_cleanup_minutes: u32,
     pub player_exe: String,
     pub delete_rars_after_extract: bool,
@@ -567,6 +573,8 @@ impl Default for Settings {
             search_history_limit: 10,
             dropdown_limit: 10,
             rss_refresh_minutes: 15,
+            rss_urls: Vec::new(),
+            rss_filters: String::new(),
             auto_cleanup_minutes: 0,
             player_exe: String::new(),
             delete_rars_after_extract: false,
@@ -699,6 +707,33 @@ pub fn ensure_dirs(settings: &Settings) {
         let _ = std::fs::create_dir_all(path);
     }
 }
+
+pub fn prune_old_logs(keep_days: u32) {
+    if keep_days == 0 {
+        return;
+    }
+    let Ok(reader) = std::fs::read_dir(app_base().join("log")) else {
+        return;
+    };
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(keep_days as u64 * 86_400));
+    let Some(cutoff) = cutoff else { return };
+    for entry in reader.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) != Some("log") {
+            continue;
+        }
+        if entry
+            .metadata()
+            .ok()
+            .and_then(|meta| meta.modified().ok())
+            .map(|modified| modified < cutoff)
+            .unwrap_or(false)
+        {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
 pub fn file_name_from_subject(subject: &str) -> String {
     if let Some(start) = subject.find('"') {
         if let Some(end) = subject[start + 1..].find('"') {
@@ -751,6 +786,10 @@ struct NzbFileDraft {
     parts: u32,
     segments: Vec<Segment>,
 }
+fn local_xml_name(name: &[u8]) -> &[u8] {
+    name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
+}
+
 pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
     let text = std::fs::read_to_string(path).map_err(|e| e.to_string())?;
     let mut reader = quick_xml::Reader::from_str(&text);
@@ -771,7 +810,7 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
     loop {
         match reader.read_event_into(&mut buf) {
             Ok(quick_xml::events::Event::Start(e)) => {
-                let tag = e.name().as_ref().to_vec();
+                let tag = local_xml_name(e.name().as_ref()).to_vec();
                 match tag.as_slice() {
                     b"file" => {
                         let mut subject = String::new();
@@ -824,7 +863,7 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                 }
             }
             Ok(quick_xml::events::Event::Empty(e)) => {
-                if e.name().as_ref() == b"segment" {
+                if local_xml_name(e.name().as_ref()) == b"segment" {
                     let mut seg = Segment::default();
                     for attr in e.attributes().flatten() {
                         let v = String::from_utf8_lossy(&attr.value);
@@ -853,7 +892,7 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                     }
                 }
             }
-            Ok(quick_xml::events::Event::End(e)) => match e.name().as_ref() {
+            Ok(quick_xml::events::Event::End(e)) => match local_xml_name(e.name().as_ref()) {
                 b"segment" => {
                     if let (Some(cur), Some(seg)) = (cur.as_mut(), seg_draft.take()) {
                         let seg = Segment {
@@ -1216,6 +1255,8 @@ pub fn sample_par2() -> Vec<Par2Set> {
             unrar: true,
             progress: 0.65,
             status: "Repairing".into(),
+            folder: String::new(),
+            collection_id: None,
         },
         Par2Set {
             name: "Harbor.Lights.par2".into(),
@@ -1225,6 +1266,8 @@ pub fn sample_par2() -> Vec<Par2Set> {
             unrar: true,
             progress: 1.0,
             status: "OK".into(),
+            folder: String::new(),
+            collection_id: None,
         },
         Par2Set {
             name: "Workshop.Tools.sfv".into(),
@@ -1234,6 +1277,8 @@ pub fn sample_par2() -> Vec<Par2Set> {
             unrar: false,
             progress: 1.0,
             status: "OK".into(),
+            folder: String::new(),
+            collection_id: None,
         },
     ]
 }

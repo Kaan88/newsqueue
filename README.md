@@ -8,12 +8,16 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 ## Features
 
 - Download queue with groups/files, pause/resume, move, rename, delete, export
-- Real NNTP downloads over TLS or plain NNTP, parallel connections, yEnc decode
+- Real NNTP downloads over TLS or plain NNTP, parallel connections, yEnc decode,
+  resume sidecars, missing-article handling and multi-server workers
+- Real PAR2 verification/repair through the bundled `par2.exe`, followed by
+  optional unrar
 - RAR extraction through the bundled 64-bit `UnRAR.exe`, with overwrite/rename,
   strip-root, password, delete-archive, move/delete-pattern and target-folder
   options
 - Explorer tab with folder tree, file list, back/forward/up history, favourites,
-  filters, context menu and configurable columns
+  filters, context menu, rename/delete and configurable columns
+- RSS feed fetching with filter-based autodownload
 - Setup pages, server editor, scheduler, categories, statistics, search, notes,
   log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
@@ -29,47 +33,53 @@ cargo run
 cargo run -- --screenshot shots/now.png
 ```
 
-Single tests:
+Single tests and diagnostics:
 
 ```powershell
 cargo test speed_limit_uses_decompiled_formula
 cargo test unrar
+cargo test par2
 cargo test completed_collection_can_be_unpacked
+cargo test par2_repair_then_unrar_chain_works
+cargo run -- --unrar-test <folder-with-rar> <dest>
+cargo run -- --par2-test <folder-with-par2>
+cargo run -- --rss-test
+cargo run -- --rss-download-test
+cargo run -- --download-test <file.nzb>
 ```
 
 ## Configuration
 
-The app reads `app/newsqueue-settings.json` and `app/newsqueue-queue.json`.
-Both are created locally and are ignored by git. Configure your Usenet server
-in Setup; do not commit credentials.
+The app reads `app/newsqueue-settings.json`, `app/newsqueue-queue.json` and
+`app/newsqueue-history.json`. They are created locally and ignored by git.
+Configure your Usenet server and RSS feeds in the app; do not commit
+credentials or feed API keys.
 
-`UnRAR.exe` is bundled in `app/tools/` with its license files. The original
-AltBinz DLL is 32-bit; this build is 64-bit, so extraction uses the standalone
-64-bit tool.
+`UnRAR.exe` and `par2.exe` are bundled in `app/tools/` with their license files.
+The original AltBinz DLLs are 32-bit; this build is 64-bit, so extraction and
+repair use the standalone tools.
 
 ## Download test
 
-The repo contains a large NZB test fixture at the project root. To exercise the
-downloader from `app/`:
+Place an NZB locally and run from `app/`:
 
 ```powershell
-cargo run -- --download-test ..\Resident.Evil.2026.1080p.MA.WEB-DL.H264.SDR.DDP.Atmos.5.1.English.--HONE.nzb
+cargo run -- --download-test ..\Your.Test.Release.nzb
 ```
 
-This performs real network downloads. If the server returns `430 Article not
-found`, the post is incomplete on that server; the downloader reports the error
-instead of writing a corrupt file.
+This performs real network downloads. Missing articles are skipped and mark the
+collection `Incomplete`, which then flows into the PAR2 check/repair stage.
 
 ## Documentation
 
-- `AGENTS.md` — commands, layout and gotchas for coding agents
-- `ROADMAP.md` — parity plan, remaining gaps and required test data
-- `app/MECHANICS.md` — measured behaviour and function addresses from the
+- `AGENTS.md` - commands, layout and gotchas for coding agents
+- `ROADMAP.md` - parity plan, remaining gaps and required test data
+- `app/MECHANICS.md` - measured behaviour and function addresses from the
   original binary
-- `app/mechanics.json` — machine-readable measured values
+- `app/mechanics.json` - machine-readable measured values
 
 ## Scope
 
-PAR2 repair and RAR creation are not implemented. The original binaries,
-reverse-engineering evidence, build output and local runtime data are excluded
-from this repository.
+RAR creation is not implemented. PAR2 repair, unrar, RSS autodownload and the
+main download path are implemented. The original binaries, reverse-engineering
+evidence, build output and local runtime data are excluded from this repository.

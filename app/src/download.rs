@@ -6,7 +6,7 @@
 //! on the network.
 
 use crate::model::*;
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpStream, ToSocketAddrs};
@@ -21,6 +21,7 @@ pub enum Stage {
     Connecting,
     Downloading,
     Completed,
+    Incomplete,
     Error,
     Stopped,
 }
@@ -42,6 +43,8 @@ pub struct DownloadSnapshot {
     pub speed_bps: f64,
     pub message: String,
     pub current_file: String,
+    /// Articles the server reported as unavailable (430).
+    pub missing: usize,
 }
 
 pub struct ActiveDownload {
@@ -96,6 +99,7 @@ struct Task {
     path: PathBuf,
     offset: u64,
     id: String,
+    progress: PathBuf,
     /// The first article of a file is fetched during the name lookup pass, so
     /// the worker pool can reuse it instead of downloading it twice.
     prefetched: Option<(Option<u64>, Vec<u8>)>,
@@ -114,11 +118,18 @@ fn job_total(job: &DownloadJob) -> u64 {
         .sum()
 }
 
-pub fn spawn(job: DownloadJob, server: Server, throttle_bps: f64) -> ActiveDownload {
+fn progress_path_for(path: &Path) -> PathBuf {
+    PathBuf::from(format!("{}.nqpart", path.to_string_lossy()))
+}
+
+pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> ActiveDownload {
     let id = job.id;
     let total = job_total(&job);
-    let planned_workers = (server.connections.max(1) as usize)
-        .min(MAX_CONNECTIONS_PER_SERVER as usize);
+    let planned_workers = servers
+        .iter()
+        .map(|server| (server.connections.max(1) as usize).min(MAX_CONNECTIONS_PER_SERVER as usize))
+        .sum::<usize>()
+        .max(1);
     let snapshot = Arc::new(Mutex::new(DownloadSnapshot {
         id,
         stage: Stage::Connecting,
@@ -132,6 +143,7 @@ pub fn spawn(job: DownloadJob, server: Server, throttle_bps: f64) -> ActiveDownl
         speed_bps: 0.0,
         message: "Connecting".into(),
         current_file: String::new(),
+        missing: 0,
     }));
     let pause = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
@@ -139,7 +151,7 @@ pub fn spawn(job: DownloadJob, server: Server, throttle_bps: f64) -> ActiveDownl
     let pause2 = pause.clone();
     let stop2 = stop.clone();
     thread::spawn(move || {
-        let result = run_job(&job, &server, throttle_bps, &pause2, &stop2, &snap);
+        let result = run_job(&job, &servers, throttle_bps, &pause2, &stop2, &snap);
         if let Err(e) = result {
             if let Ok(mut s) = snap.lock() {
                 if s.stage != Stage::Stopped {
@@ -166,12 +178,15 @@ fn snapshot_set(snap: &Mutex<DownloadSnapshot>, f: impl FnOnce(&mut DownloadSnap
 
 fn run_job(
     job: &DownloadJob,
-    server: &Server,
+    servers: &[Server],
     throttle_bps: f64,
     pause: &Arc<AtomicBool>,
     stop: &Arc<AtomicBool>,
     snap: &Arc<Mutex<DownloadSnapshot>>,
 ) -> Result<(), String> {
+    let server = servers
+        .first()
+        .ok_or_else(|| "No enabled NNTP server configured".to_string())?;
     if stop.load(Ordering::Relaxed) {
         snapshot_set(snap, |s| s.stage = Stage::Stopped);
         return Ok(());
@@ -179,7 +194,14 @@ fn run_job(
     fs::create_dir_all(&job.folder).map_err(|e| format!("Cannot create folder: {e}"))?;
     snapshot_set(snap, |s| {
         s.stage = Stage::Connecting;
-        s.message = format!("Connecting to {}", host_only(&server.address));
+        s.message = format!(
+            "Connecting to {}",
+            servers
+                .iter()
+                .map(|server| host_only(&server.address))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
     });
 
     // Name lookup pass: one connection fetches the first article of every
@@ -190,6 +212,7 @@ fn run_job(
     let mut tasks: VecDeque<Task> = VecDeque::new();
     let mut paths: Vec<Option<PathBuf>> = vec![None; job.files.len()];
     let mut skipped = vec![false; job.files.len()];
+    let mut expected_sizes: Vec<Option<u64>> = vec![None; job.files.len()];
     let mut done_bytes: u64 = 0;
 
     for (index, file) in job.files.iter().enumerate() {
@@ -225,7 +248,13 @@ fn run_job(
                 return Err(e);
             }
         };
+        let decoded_size = yenc_size(&body);
+        expected_sizes[index] = decoded_size;
         let name = if yenc_name.is_empty() {
+            base
+        } else if Path::new(&file.name).extension().is_some() {
+            // Obfuscated posts often put a random name in =ybegin. The NZB
+            // subject still carries the intended filename and extension.
             base
         } else {
             safe_file_name(&yenc_name, &base)
@@ -233,11 +262,16 @@ fn run_job(
         let path = PathBuf::from(&job.folder).join(&name);
         paths[index] = Some(path.clone());
         if job.skip_existing
-            && fs::metadata(&path)
-                .map(|m| m.len() >= file.bytes)
+            && decoded_size
+                .map(|size| {
+                    fs::metadata(&path)
+                        .map(|metadata| metadata.len() >= size)
+                        .unwrap_or(false)
+                })
                 .unwrap_or(false)
         {
             skipped[index] = true;
+            let _ = fs::remove_file(progress_path_for(&path));
             done_bytes = done_bytes.saturating_add(file.bytes);
             snapshot_set(snap, |s| {
                 s.bytes = done_bytes;
@@ -248,13 +282,47 @@ fn run_job(
             continue;
         }
         // A previous interrupted attempt can leave a shorter file behind.
-        // Start this file from scratch instead of mixing old and new bytes.
-        if let Err(e) = fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(&path)
-        {
+        // Keep the bytes only when a sidecar proves which articles were written;
+        // otherwise start from scratch so old and new data are never mixed.
+        let progress_path = progress_path_for(&path);
+        let completed_ids: HashSet<String> = if progress_path.exists() {
+            fs::read_to_string(&progress_path)
+                .map(|text| {
+                    text.lines()
+                        .map(str::trim)
+                        .filter(|line| !line.is_empty())
+                        .map(ToOwned::to_owned)
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            HashSet::new()
+        };
+        let resuming = !completed_ids.is_empty()
+            && fs::metadata(&path).map(|meta| meta.len() > 0).unwrap_or(false);
+        if resuming {
+            let resumed_bytes: u64 = segments
+                .iter()
+                .filter(|segment| completed_ids.contains(&segment.id))
+                .map(|segment| segment.bytes)
+                .sum();
+            done_bytes = done_bytes.saturating_add(resumed_bytes);
+            snapshot_set(snap, |snapshot| {
+                snapshot.bytes = done_bytes;
+                if let Some(progress) = snapshot.file_progress.get_mut(index) {
+                    *progress = resumed_bytes;
+                }
+            });
+        }
+        if !resuming {
+            let _ = fs::remove_file(&progress_path);
+        }
+        let mut options = fs::OpenOptions::new();
+        options.create(true).write(true);
+        if !resuming {
+            options.truncate(true);
+        }
+        if let Err(e) = options.open(&path) {
             let _ = lookup.quit();
             return Err(format!("Cannot create file: {e}"));
         }
@@ -265,14 +333,20 @@ fn run_job(
             } else {
                 None
             };
-            tasks.push_back(Task {
-                file_index: index,
-                path: path.clone(),
-                offset,
-                id: segment.id.clone(),
-                prefetched,
-            });
+            if !completed_ids.contains(&segment.id) {
+                tasks.push_back(Task {
+                    file_index: index,
+                    path: path.clone(),
+                    offset,
+                    id: segment.id.clone(),
+                    progress: progress_path.clone(),
+                    prefetched,
+                });
+            }
             offset = offset.saturating_add(segment.bytes);
+        }
+        if completed_ids.len() >= segments.len() {
+            let _ = fs::remove_file(&progress_path);
         }
     }
     let _ = lookup.quit();
@@ -299,9 +373,12 @@ fn run_job(
         return Ok(());
     }
 
-    let worker_count = (server.connections.max(1) as usize)
-        .min(tasks.len())
-        .min(MAX_CONNECTIONS_PER_SERVER as usize);
+    let total_connections = servers
+        .iter()
+        .map(|server| (server.connections.max(1) as usize).min(MAX_CONNECTIONS_PER_SERVER as usize))
+        .sum::<usize>()
+        .max(1);
+    let worker_count = total_connections.min(tasks.len()).max(1);
     let per_worker_throttle = if throttle_bps > 0.0 {
         throttle_bps / worker_count as f64
     } else {
@@ -321,10 +398,10 @@ fn run_job(
         window: Instant::now(),
         bytes: 0,
     }));
-    let server = server.clone();
+    let servers = servers.to_vec();
     let mut handles = Vec::new();
-    for _ in 0..worker_count {
-        let server = server.clone();
+    for worker_index in 0..worker_count {
+        let server = servers[worker_index % servers.len()].clone();
         let tasks = shared_tasks.clone();
         let errors = errors.clone();
         let connect_errors = connect_errors.clone();
@@ -385,29 +462,48 @@ fn run_job(
         return Err(message);
     }
 
-    for (index, file) in job.files.iter().enumerate() {
-        if skipped[index] || file.segments.is_empty() {
-            continue;
+    let missing = snap.lock().map(|snapshot| snapshot.missing).unwrap_or(0);
+    if missing > 0 {
+        snapshot_set(snap, |s| {
+            s.stage = Stage::Incomplete;
+            s.bytes = total;
+            s.total = total;
+            s.file_index = job.files.len();
+            s.file_bytes = 0;
+            s.speed_bps = 0.0;
+            s.message = format!("{missing} article(s) missing; PAR2 repair required");
+        });
+        return Ok(());
+    }
+
+    let mut bad_size = None;
+    for (index, expected) in expected_sizes.iter().enumerate() {
+        let Some(expected) = expected else { continue };
+        let Some(path) = &paths[index] else { continue };
+        let actual = fs::metadata(path).map(|meta| meta.len()).unwrap_or(0);
+        if actual != *expected {
+            bad_size = Some(format!(
+                "{} has {} bytes, expected {}",
+                path.file_name()
+                    .map(|name| name.to_string_lossy().to_string())
+                    .unwrap_or_default(),
+                actual,
+                expected
+            ));
+            break;
         }
-        if let Some(path) = &paths[index] {
-            let len = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-            if len != file.bytes {
-                let message = format!(
-                    "{} is incomplete: expected {} bytes but wrote {}",
-                    path.file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    file.bytes,
-                    len
-                );
-                snapshot_set(snap, |s| {
-                    s.stage = Stage::Error;
-                    s.speed_bps = 0.0;
-                    s.message = message.clone();
-                });
-                return Err(message);
-            }
-        }
+    }
+    if let Some(message) = bad_size {
+        snapshot_set(snap, |s| {
+            s.stage = Stage::Incomplete;
+            s.bytes = total;
+            s.total = total;
+            s.file_index = job.files.len();
+            s.file_bytes = 0;
+            s.speed_bps = 0.0;
+            s.message = format!("{message}; PAR2 repair required");
+        });
+        return Ok(());
     }
 
     snapshot_set(snap, |s| {
@@ -419,6 +515,9 @@ fn run_job(
         s.speed_bps = 0.0;
         s.message = "Download complete".into();
     });
+    for path in paths.iter().flatten() {
+        let _ = fs::remove_file(progress_path_for(path));
+    }
     Ok(())
 }
 
@@ -476,8 +575,18 @@ fn download_worker(
         let (begin, data) = match decoded {
             Ok(value) => value,
             Err(e) => {
-                record_error(errors, stop, e);
-                break;
+                // A missing article must not kill the whole job. PAR2 (or a
+                // later retry) can repair the hole; record it and continue.
+                if e.starts_with("Article not found") {
+                    if let Ok(mut snapshot) = snap.lock() {
+                        snapshot.missing += 1;
+                        snapshot.message = format!("{} article(s) missing", snapshot.missing);
+                    }
+                } else {
+                    record_error(errors, stop, e);
+                    break;
+                }
+                continue;
             }
         };
         let offset = begin
@@ -487,6 +596,13 @@ fn download_worker(
         if let Err(e) = write_result {
             record_error(errors, stop, e);
             break;
+        }
+        if let Ok(mut progress) = fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&task.progress)
+        {
+            let _ = writeln!(progress, "{}", task.id);
         }
         let chunk = data.len() as u64;
 
@@ -794,6 +910,22 @@ fn ybegin_name(line: &[u8]) -> String {
     }
 }
 
+fn yenc_size(body: &[u8]) -> Option<u64> {
+    for line in body.split(|byte| *byte == b'\n') {
+        if !line.starts_with(b"=ybegin") {
+            continue;
+        }
+        let text = String::from_utf8_lossy(line);
+        for token in text.split_whitespace() {
+            if let Some(value) = token.strip_prefix("size=") {
+                return value.parse::<u64>().ok();
+            }
+        }
+        return None;
+    }
+    None
+}
+
 fn ypart_begin(line: &[u8]) -> Option<u64> {
     let text = String::from_utf8_lossy(line);
     for token in text.split_whitespace() {
@@ -925,7 +1057,7 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
         server.port,
         folder.display()
     );
-    let active = spawn(job, server, 0.0);
+    let active = spawn(job, vec![server], 0.0);
     let mut last = 0u64;
     loop {
         thread::sleep(Duration::from_millis(500));
@@ -948,6 +1080,14 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
             Stage::Completed => {
                 println!("Download complete: {}", folder.display());
                 return Ok(());
+            }
+            Stage::Incomplete => {
+                println!(
+                    "Download incomplete ({} missing articles): {}",
+                    snapshot.missing,
+                    folder.display()
+                );
+                return Err(snapshot.message);
             }
             Stage::Error => return Err(snapshot.message),
             Stage::Stopped => return Err("Download stopped".into()),

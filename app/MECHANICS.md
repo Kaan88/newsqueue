@@ -341,8 +341,9 @@ form:
   the same configured values as the rest of the window. The workers use
   plain NNTP for an SSL-off server and TLS for an SSL-on server; the saved
   profile is the original's 8-connection SSL profile on port 563, and both
-  that profile and a plain 119 profile were exercised end to end. PAR2 repair
-  remains out of scope. RAR extraction runs the 64-bit `UnRAR.exe` in
+  that profile and a plain 119 profile were exercised end to end. PAR2 repair is
+  implemented with the bundled `par2.exe`; a damaged RAR is repaired and then
+  extracted in the test suite. RAR extraction runs the 64-bit `UnRAR.exe` in
   `app/tools` (the original's bundled DLL is 32-bit), with overwrite/rename,
   strip-root, password, delete-archive, move/delete-pattern and different-folder
   handling. These are scope limits, not measured values.

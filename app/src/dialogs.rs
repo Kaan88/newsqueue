@@ -67,6 +67,12 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if app.show_filter_help {
         filter_help_window(app, ctx);
     }
+    if app.show_rss_feeds {
+        rss_feeds_window(app, ctx);
+    }
+    if app.show_explorer_rename {
+        explorer_rename_window(app, ctx);
+    }
     if app.show_message.is_some() {
         message_window(app, ctx);
     }
@@ -1850,6 +1856,139 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
         });
     app.show_shutdown = open;
 }
+
+fn explorer_rename_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.show_explorer_rename;
+    let mut draft = app.explorer_rename_draft.clone();
+    let mut save = false;
+    let mut cancel = false;
+    egui::Window::new("Rename")
+        .default_pos([430.0, 250.0])
+        .default_size([360.0, 110.0])
+        .resizable(false)
+        .collapsible(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label("New name");
+            ui.add_sized([330.0, 20.0], TextEdit::singleline(&mut draft));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Save").clicked() {
+                    save = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    app.explorer_rename_draft = draft.clone();
+    if save {
+        if let Some(target) = app.explorer_rename_target.clone() {
+            let name = draft.trim();
+            let valid = !name.is_empty()
+                && !name
+                    .chars()
+                    .any(|character| matches!(character, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'));
+            if valid {
+                let parent = target
+                    .parent()
+                    .map(std::path::Path::to_path_buf)
+                    .unwrap_or_default();
+                let new_path = parent.join(name);
+                if new_path.exists() && new_path != target {
+                    app.show_message =
+                        Some(("Rename".into(), "That name already exists.".into()));
+                } else {
+                    match std::fs::rename(&target, &new_path) {
+                        Ok(()) => {
+                            if app.explorer_selected.as_ref() == Some(&target) {
+                                app.explorer_selected = Some(new_path.clone());
+                            }
+                            app.log(
+                                "Explorer",
+                                &format!("Renamed {} to {}", target.display(), new_path.display()),
+                            );
+                            app.show_explorer_rename = false;
+                        }
+                        Err(error) => {
+                            app.show_message =
+                                Some(("Rename".into(), format!("Could not rename:\n{error}")));
+                        }
+                    }
+                }
+            }
+        }
+        return;
+    }
+    if cancel || !open {
+        app.show_explorer_rename = false;
+    }
+}
+
+fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.show_rss_feeds;
+    let mut draft = app.rss_feed_draft.clone();
+    let mut filters = app.rss_filters_draft.clone();
+    let mut save = false;
+    let mut cancel = false;
+    egui::Window::new("RSS feeds")
+        .default_pos([390.0, 150.0])
+        .default_size([560.0, 480.0])
+        .resizable(true)
+        .collapsible(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label("One feed URL per line. API keys stay in the local settings file.");
+            ui.add(
+                TextEdit::multiline(&mut draft)
+                    .desired_rows(5)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("https://example.invalid/rss?api=..."),
+            );
+            ui.separator();
+            ui.label("Autodownload filters (leave empty to only list items)");
+            ui.label(
+                RichText::new(
+                    "pattern | A[P]  or  pattern | D\nLast matching line wins. P starts the item paused.",
+                )
+                .size(9.0)
+                .color(theme::TEXT_MUTED),
+            );
+            ui.add(
+                TextEdit::multiline(&mut filters)
+                    .desired_rows(6)
+                    .desired_width(f32::INFINITY)
+                    .hint_text("*1080p* | A\n*sample* | D"),
+            );
+            ui.separator();
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                if ui.button("Save").clicked() {
+                    save = true;
+                }
+                if ui.button("Cancel").clicked() {
+                    cancel = true;
+                }
+            });
+        });
+    app.rss_feed_draft = draft.clone();
+    app.rss_filters_draft = filters.clone();
+    if save {
+        app.settings.rss_urls = draft
+            .lines()
+            .map(str::trim)
+            .filter(|line| !line.is_empty())
+            .map(ToOwned::to_owned)
+            .collect();
+        app.settings.rss_filters = filters;
+        app.settings.save();
+        app.show_rss_feeds = false;
+        app.log("RSS", "RSS feed list and filters saved.");
+        return;
+    }
+    if cancel || !open {
+        app.show_rss_feeds = false;
+    }
+}
+
 
 fn search_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_search;

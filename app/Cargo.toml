@@ -14,6 +14,7 @@ quick-xml = "0.36"
 chrono = "0.4"
 fs2 = "0.4"
 native-tls = "0.2"
+ureq = { version = "2.12", default-features = false, features = ["native-tls", "gzip", "charset"] }
 
 [build-dependencies]
 embed-resource = "2.5"

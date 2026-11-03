@@ -32,6 +32,7 @@ enum ExplorerAction {
     NewFolder,
     Properties(std::path::PathBuf),
     Delete(std::path::PathBuf),
+    Rename(std::path::PathBuf),
 }
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -940,7 +941,16 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                 let r = theme::small_button(ui, Icon::Shield, false);
                 if r.clicked() {
                     if let Some(i) = app.selected_par2 {
-                        if let Some(p) = app.par2.get_mut(i) {
+                        let linked = app
+                            .par2
+                            .get(i)
+                            .map(|p| p.collection_id.is_some() || !p.folder.is_empty())
+                            .unwrap_or(false);
+                        if linked {
+                            app.start_par2_for_set(i);
+                        } else if let Some(p) = app.par2.get_mut(i) {
+                            // Sample/demo set with no folder: keep the visual
+                            // progress path rather than failing.
                             p.status = "Repairing".into();
                             p.info = "Repairing...".into();
                             app.repair_until = Some((
@@ -958,15 +968,12 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                 let r = theme::small_button(ui, Icon::Unrar, false);
                 if r.clicked() {
                     if let Some(i) = app.selected_par2 {
-                        if let Some(p) = app.par2.get_mut(i) {
-                            p.status = "Unpacking".into();
-                            p.info = "Queued for unpack".into();
-                            let name = p.name.clone();
-                            app.log("Unpack", &format!("Unpack queued: {name}"));
-                        }
+                        app.start_par2_for_set(i);
+                    } else {
+                        app.toast("Select a PAR2 set first");
                     }
                 }
-                r.on_hover_text("Unpack PAR2/SFV set");
+                r.on_hover_text("Check/repair PAR2 set and unpack");
                 let r = theme::small_button(ui, Icon::Add, false);
                 if r.clicked() {
                     if let Some(path) = rfd::FileDialog::new()
@@ -988,6 +995,11 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                             unrar: false,
                             progress: 0.0,
                             status: "Queued".into(),
+                            folder: path
+                                .parent()
+                                .map(|p| p.to_string_lossy().to_string())
+                                .unwrap_or_default(),
+                            collection_id: None,
                         });
                         app.log("PAR2", &format!("Imported PAR2/SFV: {name}"));
                     }
@@ -1519,6 +1531,10 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         action = Some(ExplorerAction::Properties(entry.path.clone()));
                         ui.close_menu();
                     }
+                    if ui.button("Rename").clicked() {
+                        action = Some(ExplorerAction::Rename(entry.path.clone()));
+                        ui.close_menu();
+                    }
                     if ui.button("Delete").clicked() {
                         action = Some(ExplorerAction::Delete(entry.path.clone()));
                         ui.close_menu();
@@ -1538,6 +1554,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
         Some(ExplorerAction::NewFolder) => app.explorer_new_folder(),
         Some(ExplorerAction::Properties(path)) => app.explorer_properties(path),
         Some(ExplorerAction::Delete(path)) => app.explorer_delete(path),
+        Some(ExplorerAction::Rename(path)) => app.explorer_rename(path),
         None => {}
     }
 }
@@ -1716,14 +1733,15 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                 ui.add_space(4.0);
                 let r = theme::small_button(ui, Icon::Refresh, false);
                 if r.clicked() {
-                    let stamp = now_datetime();
-                    for item in &mut app.rss {
-                        item.date = stamp.clone();
-                    }
-                    app.log("RSS", "Feed list refreshed.");
-                    app.toast("RSS refreshed");
+                    app.refresh_rss();
                 }
-                r.on_hover_text("Refresh list");
+                r.on_hover_text("Refresh feeds");
+                let r = theme::small_button(ui, Icon::Link, false);
+                if r.clicked() {
+                    app.rss_feed_draft = app.settings.rss_urls.join("\n");
+                    app.show_rss_feeds = true;
+                }
+                r.on_hover_text("RSS feeds");
                 let r = theme::small_button(ui, Icon::Scheduler, app.rss_timer);
                 if r.clicked() {
                     app.rss_timer = !app.rss_timer;

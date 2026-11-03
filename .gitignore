@@ -4,6 +4,7 @@
 # Runtime state and downloaded data (contains the local Usenet account)
 /app/newsqueue-settings.json
 /app/newsqueue-queue.json
+/app/newsqueue-history.json
 /app/download/
 /app/log/
 /app/nzb/
