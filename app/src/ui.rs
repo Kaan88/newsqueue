@@ -374,7 +374,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                         app.filter = filter;
                     }
                     resp.on_hover_text("Filter subjects");
-                    ui.label(RichText::new("Filter").size(9.5));
+                    ui.label(RichText::new("Filter").size(10.0));
                 });
             });
         });
@@ -426,7 +426,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
         table = table.column(col);
     }
     table
-        .header(20.0, |mut header| {
+        .header(19.0, |mut header| {
             for &ci in &col_map {
                 header.col(|ui| {
                     ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
@@ -448,14 +448,14 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     };
                     ui.with_layout(layout, |ui| {
                         ui.add(
-                            Label::new(RichText::new(QUEUE_COLUMN_NAMES[ci]).size(9.5)).truncate(),
+                            Label::new(RichText::new(QUEUE_COLUMN_NAMES[ci]).size(10.0)).truncate(),
                         );
                     });
                 });
             }
         })
         .body(|body| {
-            body.rows(21.0, rows.len(), |mut row| {
+            body.rows(19.0, rows.len(), |mut row| {
                 let ri = row.index();
                 let row_ref = rows[ri];
                 // A transparent click-catcher is added after the cell contents so
@@ -479,7 +479,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                             let label = if c.expanded { "-" } else { "+" };
                                             let btn = ui.add_sized(
                                                 [14.0, 14.0],
-                                                egui::Button::new(RichText::new(label).size(9.0))
+                                                egui::Button::new(RichText::new(label).size(9.5))
                                                     .frame(false),
                                             );
                                             if btn.clicked() {
@@ -494,7 +494,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                         ui.add(
                                             Label::new(
                                                 RichText::new(&c.subject)
-                                                    .size(10.0)
+                                                    .size(11.0)
                                                     .color(theme::TEXT_GROUP),
                                             )
                                             .truncate(),
@@ -504,7 +504,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                             ui.label(
                                                 RichText::new(format_size_short(c.total_bytes))
-                                                    .size(9.5),
+                                                    .size(10.0),
                                             );
                                         });
                                     }
@@ -515,24 +515,24 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                             ),
                                             |ui| {
                                                 ui.label(
-                                                    RichText::new(format!("{}p", c.parts)).size(9.5),
+                                                    RichText::new(format!("{}p", c.parts)).size(10.0),
                                                 );
                                             },
                                         );
                                     }
                                     3 => {
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                            ui.label(RichText::new(format_age(c.age_days)).size(9.5));
+                                            ui.label(RichText::new(format_age(c.age_days)).size(10.0));
                                         });
                                     }
                                     4 => {
                                         ui.add(
-                                            Label::new(RichText::new(&c.group).size(9.5)).truncate(),
+                                            Label::new(RichText::new(&c.group).size(10.0)).truncate(),
                                         );
                                     }
                                     5 => {
                                         ui.add(
-                                            Label::new(RichText::new(&c.poster).size(9.5)).truncate(),
+                                            Label::new(RichText::new(&c.poster).size(10.0)).truncate(),
                                         );
                                     }
                                     6 => {
@@ -544,7 +544,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                         egui::Direction::LeftToRight,
                                                     ),
                                                     |ui| {
-                                                        ui.label(RichText::new("Queued").size(9.0));
+                                                        ui.label(RichText::new("Queued").size(9.5));
                                                     },
                                                 );
                                             }
@@ -564,7 +564,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                     |ui| {
                                                         ui.label(
                                                             RichText::new("Error!")
-                                                                .size(9.0)
+                                                                .size(9.5)
                                                                 .color(theme::RED),
                                                         );
                                                     },
@@ -582,7 +582,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                     }
                                     7 => {
                                         ui.add(
-                                            Label::new(RichText::new(&c.folder).size(8.8)).truncate(),
+                                            Label::new(RichText::new(&c.folder).size(9.5)).truncate(),
                                         );
                                     }
                                     8 => {
@@ -596,7 +596,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                 } else {
                                                     ("-", theme::TEXT_MUTED)
                                                 };
-                                                ui.label(RichText::new(txt).size(9.0).color(color));
+                                                ui.label(RichText::new(txt).size(9.5).color(color));
                                             },
                                         );
                                     }
@@ -608,7 +608,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                 } else {
                                                     &c.execute
                                                 })
-                                                .size(9.0),
+                                                .size(9.5),
                                             )
                                             .truncate(),
                                         );
@@ -625,14 +625,14 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                     } else {
                                                         "-"
                                                     })
-                                                    .size(9.0),
+                                                    .size(9.5),
                                                 );
                                             },
                                         );
                                     }
                                     _ => {
                                         ui.add(
-                                            Label::new(RichText::new(&c.posted_on).size(9.0))
+                                            Label::new(RichText::new(&c.posted_on).size(9.5))
                                                 .truncate(),
                                         );
                                     }
@@ -658,12 +658,12 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                         let (r, _) = ui
                                             .allocate_exact_size(Vec2::new(13.0, 13.0), Sense::hover());
                                         theme::paint_icon(ui.painter(), r, Icon::File, theme::TEXT);
-                                        ui.add(Label::new(RichText::new(&f.name).size(9.2)).truncate());
+                                        ui.add(Label::new(RichText::new(&f.name).size(10.5)).truncate());
                                     }
                                     1 => {
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                                             ui.label(
-                                                RichText::new(format_size_short(f.bytes)).size(9.2),
+                                                RichText::new(format_size_short(f.bytes)).size(10.0),
                                             );
                                         });
                                     }
@@ -674,7 +674,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                             ),
                                             |ui| {
                                                 ui.label(
-                                                    RichText::new(format!("{}p", f.parts)).size(9.2),
+                                                    RichText::new(format!("{}p", f.parts)).size(10.0),
                                                 );
                                             },
                                         );
@@ -700,7 +700,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                     egui::Direction::LeftToRight,
                                                 ),
                                                 |ui| {
-                                                    ui.label(RichText::new("Queued").size(9.0));
+                                                    ui.label(RichText::new("Queued").size(9.5));
                                                 },
                                             );
                                         }
@@ -1049,7 +1049,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                 ui.add_space(10.0);
                 ui.label(
                     RichText::new("PAR2 checking and repairing are enabled")
-                        .size(9.5)
+                        .size(10.0)
                         .color(theme::TEXT_MUTED),
                 );
             });
@@ -1098,7 +1098,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                 .clip(true)
                 .resizable(true),
         );
-    let table = table.header(20.0, |mut header| {
+    let table = table.header(19.0, |mut header| {
         for text in [
             "Par2/sfv set",
             "Size",
@@ -1113,23 +1113,23 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                     [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                     Stroke::new(1.0_f32, theme::BORDER_LIGHT),
                 );
-                ui.add(Label::new(RichText::new(text).size(9.5)).truncate());
+                ui.add(Label::new(RichText::new(text).size(10.0)).truncate());
             });
         }
     });
     table.body(|body| {
-        body.rows(22.0, par2.len(), |mut row| {
+        body.rows(19.0, par2.len(), |mut row| {
             let i = row.index();
             let p = &par2[i];
             row.set_selected(selected == Some(i));
             row.col(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
                 theme::paint_icon(ui.painter(), r, Icon::Shield, theme::TEXT);
-                ui.add(Label::new(RichText::new(&p.name).size(9.5)).truncate());
+                ui.add(Label::new(RichText::new(&p.name).size(10.0)).truncate());
             });
             row.col(|ui| {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.label(RichText::new(format!("{:.0} MB", p.size_mb)).size(9.5));
+                    ui.label(RichText::new(format!("{:.0} MB", p.size_mb)).size(10.0));
                 });
             });
             row.col(|ui| {
@@ -1142,13 +1142,13 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                             } else {
                                 "-".into()
                             })
-                            .size(9.5),
+                            .size(10.0),
                         );
                     },
                 );
             });
             row.col(|ui| {
-                ui.add(Label::new(RichText::new(&p.info).size(9.5)).truncate());
+                ui.add(Label::new(RichText::new(&p.info).size(10.0)).truncate());
             });
             row.col(|ui| {
                 ui.with_layout(
@@ -1156,7 +1156,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                     |ui| {
                         ui.label(
                             RichText::new(if p.unrar { "Yes" } else { "-" })
-                                .size(9.0)
+                                .size(9.5)
                                 .color(if p.unrar {
                                     theme::GREEN_DARK
                                 } else {
@@ -1302,7 +1302,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                         TextEdit::singleline(&mut app.explorer_filter)
                             .hint_text("Filter files/folders"),
                     );
-                    ui.label(RichText::new("Filter").size(9.5));
+                    ui.label(RichText::new("Filter").size(10.0));
                 });
             });
         });
@@ -1413,7 +1413,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
         entries.iter().map(|entry| entry.path.clone()).collect();
 
     let mut table = TableBuilder::new(ui)
-        .striped(true)
+        .striped(false)
         .resizable(true)
         .sense(egui::Sense::click())
         .cell_layout(Layout::left_to_right(Align::Center));
@@ -1429,7 +1429,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
     }
 
     table
-        .header(20.0, |mut header| {
+        .header(19.0, |mut header| {
             for &index in &columns {
                 header.col(|ui| {
                     ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
@@ -1444,7 +1444,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                     };
                     ui.with_layout(layout, |ui| {
                         ui.add(
-                            Label::new(RichText::new(explorer_column_name(index)).size(9.5))
+                            Label::new(RichText::new(explorer_column_name(index)).size(10.0))
                                 .truncate(),
                         );
                     });
@@ -1452,7 +1452,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
             }
         })
         .body(|body| {
-            body.rows(21.0, entries.len(), |mut row| {
+            body.rows(19.0, entries.len(), |mut row| {
                 let index = row.index();
                 let entry = &entries[index];
                 row.set_selected(selection.contains(entry.path.as_path()));
@@ -1472,7 +1472,7 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                                 theme::TEXT,
                             );
                             ui.add(
-                                Label::new(RichText::new(&entry.name).size(9.5)).truncate(),
+                                Label::new(RichText::new(&entry.name).size(10.0)).truncate(),
                             );
                         }
                         1 => {
@@ -1483,42 +1483,42 @@ fn explorer_tab(app: &mut App, ui: &mut Ui) {
                                     } else {
                                         format_size_short(entry.size)
                                     })
-                                    .size(9.2),
+                                    .size(10.0),
                                 );
                             });
                         }
                         2 => {
                             ui.add(
-                                Label::new(RichText::new(&entry.kind).size(9.2)).truncate(),
+                                Label::new(RichText::new(&entry.kind).size(10.0)).truncate(),
                             );
                         }
                         3 => {
                             ui.add(
-                                Label::new(RichText::new(&entry.modified).size(9.0)).truncate(),
+                                Label::new(RichText::new(&entry.modified).size(9.5)).truncate(),
                             );
                         }
                         4 => {
                             ui.label(
-                                RichText::new(if entry.readonly { "R" } else { "-" }).size(9.0),
+                                RichText::new(if entry.readonly { "R" } else { "-" }).size(9.5),
                             );
                         }
                         5 => {
                             ui.add(
-                                Label::new(RichText::new(&entry.accessed).size(9.0)).truncate(),
+                                Label::new(RichText::new(&entry.accessed).size(9.5)).truncate(),
                             );
                         }
                         6 => {
                             ui.add(
-                                Label::new(RichText::new(&entry.created).size(9.0)).truncate(),
+                                Label::new(RichText::new(&entry.created).size(9.5)).truncate(),
                             );
                         }
                         7 => {
-                            ui.add(Label::new(RichText::new(&entry.name).size(9.0)).truncate());
+                            ui.add(Label::new(RichText::new(&entry.name).size(9.5)).truncate());
                         }
                         _ => {
                             ui.add(
                                 Label::new(
-                                    RichText::new(entry.path.to_string_lossy()).size(8.5),
+                                    RichText::new(entry.path.to_string_lossy()).size(9.0),
                                 )
                                 .truncate(),
                             );
@@ -1773,7 +1773,7 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                     app.toast("Log copied");
                 }
                 ui.add_space(8.0);
-                ui.label(RichText::new("Filter").size(9.5));
+                ui.label(RichText::new("Filter").size(10.0));
                 ui.add_sized(
                     [180.0, 20.0],
                     TextEdit::singleline(&mut app.log_filter).hint_text("Filter log lines"),
@@ -1782,7 +1782,7 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new(format!("{} lines", app.logs.len()))
-                            .size(9.0)
+                            .size(9.5)
                             .color(theme::TEXT_MUTED),
                     );
                 });
@@ -1804,7 +1804,7 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                     ui.label(
                         RichText::new(&e.time)
                             .monospace()
-                            .size(9.0)
+                            .size(9.5)
                             .color(theme::TEXT_MUTED),
                     );
                     let color = match e.level.as_str() {
@@ -1815,9 +1815,9 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                     };
                     ui.add_sized(
                         [62.0, 14.0],
-                        Label::new(RichText::new(&e.level).size(9.0).color(color)),
+                        Label::new(RichText::new(&e.level).size(9.5).color(color)),
                     );
-                    ui.add(Label::new(RichText::new(&e.message).size(9.5)));
+                    ui.add(Label::new(RichText::new(&e.message).size(10.0)));
                 });
             }
         });
@@ -1864,7 +1864,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                 }
                 r.on_hover_text("Show/hide filters");
                 ui.add_space(8.0);
-                ui.label(RichText::new("Filter").size(9.5));
+                ui.label(RichText::new("Filter").size(10.0));
                 ui.add_sized(
                     [180.0, 20.0],
                     TextEdit::singleline(&mut app.rss_filter).hint_text("Filter names"),
@@ -1873,7 +1873,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                     ui.add_space(4.0);
                     ui.label(
                         RichText::new("Press Refresh to update the feed list")
-                            .size(9.0)
+                            .size(9.5)
                             .color(theme::TEXT_MUTED),
                     );
                 });
@@ -1891,7 +1891,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
         .cloned()
         .collect();
     let table = TableBuilder::new(ui)
-        .striped(true)
+        .striped(false)
         .resizable(true)
         .cell_layout(Layout::left_to_right(Align::Center))
         .column(
@@ -1907,28 +1907,28 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                 .resizable(true),
         )
         .column(Column::remainder().at_least(150.0).clip(true));
-    let table = table.header(20.0, |mut header| {
+    let table = table.header(19.0, |mut header| {
         for text in ["Name", "Date", "Description"] {
             header.col(|ui| {
                 ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
-                ui.add(Label::new(RichText::new(text).size(9.5)).truncate());
+                ui.add(Label::new(RichText::new(text).size(10.0)).truncate());
             });
         }
     });
     table.body(|body| {
-        body.rows(22.0, items.len(), |mut row| {
+        body.rows(19.0, items.len(), |mut row| {
             let i = row.index();
             let item = &items[i];
             row.col(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
                 theme::paint_icon(ui.painter(), r, Icon::Rss, theme::TEXT);
-                ui.add(Label::new(RichText::new(&item.name).size(9.5)).truncate());
+                ui.add(Label::new(RichText::new(&item.name).size(10.0)).truncate());
             });
             row.col(|ui| {
-                ui.add(Label::new(RichText::new(&item.date).size(9.2)).truncate());
+                ui.add(Label::new(RichText::new(&item.date).size(10.0)).truncate());
             });
             row.col(|ui| {
-                ui.add(Label::new(RichText::new(&item.description).size(9.2)).truncate());
+                ui.add(Label::new(RichText::new(&item.description).size(10.0)).truncate());
             });
         });
     });
@@ -1972,27 +1972,27 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
         .column(Column::remainder().at_least(120.0).clip(true))
         .column(Column::initial(200.0).at_least(80.0).clip(true))
         .column(Column::initial(130.0).at_least(70.0).clip(true));
-    let table = table.header(20.0, |mut header| {
+    let table = table.header(19.0, |mut header| {
         for text in ["#", "Action", "Description", "Status", "Server"] {
             header.col(|ui| {
                 ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
-                ui.add(Label::new(RichText::new(text).size(9.5)).truncate());
+                ui.add(Label::new(RichText::new(text).size(10.0)).truncate());
             });
         }
     });
     let threads = &app.threads;
     table.body(|body| {
-        body.rows(20.0, threads.len(), |mut row| {
+        body.rows(19.0, threads.len(), |mut row| {
             let i = row.index();
             let t = &threads[i];
             row.col(|ui| {
-                ui.label(RichText::new(t.number.to_string()).size(9.0));
+                ui.label(RichText::new(t.number.to_string()).size(9.5));
             });
             row.col(|ui| {
-                ui.add(Label::new(RichText::new(&t.action).size(9.2)).truncate());
+                ui.add(Label::new(RichText::new(&t.action).size(10.0)).truncate());
             });
             row.col(|ui| {
-                ui.add(Label::new(RichText::new(&t.description).size(9.2)).truncate());
+                ui.add(Label::new(RichText::new(&t.description).size(10.0)).truncate());
             });
             row.col(|ui| {
                 let color = if t.status == "Downloading" {
@@ -2000,10 +2000,10 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
                 } else {
                     theme::TEXT_MUTED
                 };
-                ui.label(RichText::new(&t.status).size(9.2).color(color));
+                ui.label(RichText::new(&t.status).size(10.0).color(color));
             });
             row.col(|ui| {
-                ui.add(Label::new(RichText::new(&t.server).size(9.0)).truncate());
+                ui.add(Label::new(RichText::new(&t.server).size(9.5)).truncate());
             });
         });
     });
@@ -2079,7 +2079,7 @@ fn status_bar(app: &mut App, ui: &mut Ui) {
                 arenas.center(),
                 Align2::CENTER_CENTER,
                 text,
-                FontId::proportional(9.2),
+                FontId::proportional(10.5),
                 theme::TEXT,
             );
         }
@@ -2140,7 +2140,7 @@ fn status_bar(app: &mut App, ui: &mut Ui) {
                 egui::pos2(spring.left() + 6.0, spring.center().y),
                 Align2::LEFT_CENTER,
                 text,
-                FontId::proportional(9.2),
+                FontId::proportional(10.5),
                 theme::ACCENT,
             );
         }

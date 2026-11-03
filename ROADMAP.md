@@ -6,8 +6,8 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-04)
 
-Current app version: **0.1.0**. NewsQueue now versions independently of AltBinz;
-1.0.0 is planned once the remaining external validation is complete.
+Current app version: **1.0.0**, versioned independently of the AltBinz 0.48.4
+parity target.
 
 **Core roadmap complete.** Download → PAR2 → unrar, resume/missing articles,
 multi-server workers, RSS autodownload, generic Newznab search, Explorer
@@ -16,7 +16,7 @@ implemented and exercised. The remaining items are optional polish or need
 external data: a live Newznab index, a known-good PAR2 release and a second
 server.
 
-- **Phase 0 — done for the baseline.** 43 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 50 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -42,8 +42,10 @@ server.
 - **Phase 6 — mostly done.** Log retention, persistent real history and transfer
   statistics, category routing, multi-server use, thread priority, player launch,
   execute hooks, file Join/Split and HTTP/SOCKS5 proxy support are implemented.
-  Native tray show/restore/Exit, minimize-to-tray, close-to-tray, speed tooltip
-  and download/unrar balloon hints work. Windows shutdown remains.
+  Native tray show/restore/Exit, off-screen minimize-to-tray with taskbar removal,
+  close-to-tray, speed tooltip and download/unrar balloon hints work. Windows
+  shutdown, hibernate, sleep and app-exit actions run after the queue drains with
+  a 15-second abortable countdown and a mockable backend.
 - **Phase 7 — done for private use.** Original icon, window/exe resources, a
   portable release zip (`app/package.ps1`), a golden screenshot matrix
   (`app/screenshots.ps1`) and a per-user IExpress installer
@@ -56,8 +58,8 @@ inconsistent; the PAR2 repair path is verified with the generated damaged-RAR
 fixture instead.
 
 Current state: usable clone. Strong on layout, queue/status maths, NNTP, PAR2,
-unrar extraction and common Explorer browsing. Weak on Windows shutdown and a
-few peripheral settings.
+unrar extraction and common Explorer browsing. Remaining work is external
+validation, optional code signing and a few peripheral settings.
 
 Effort: **S** ≈ one focused session, **M** ≈ 2–3, **L** ≈ 4+ and needs repeated
 live testing.
@@ -137,7 +139,8 @@ live testing.
   in `newsqueue-history.json` / `newsqueue-stats.json`; demo values only appear
   in screenshot mode.
 - Category keyword/folder rules are applied on import and manual category changes.
-- Windows shutdown and the remaining shortcuts.
+- Windows shutdown/hibernate/sleep/exit runs after a 15-second abortable countdown;
+  the mock backend keeps the power calls testable.
 - **Done when:** every visible setting has an observable effect and a test.
 
 ## Phase 7 — visual and release polish (M)
@@ -171,12 +174,11 @@ live testing.
 
 5. Private use and Windows-only are accepted. `UnRAR.exe` and the bundled PAR2
    binary are included with their license files.
-6. Remaining optional parity work: Windows shutdown and code signing. Confirm
-   which matter for daily use.
+6. Remaining optional parity work: code signing and minor shortcut polish.
 
 ## Suggested next order
 
 **Validate a different real NZB → add mock NNTP retry/failover tests → live
-Newznab search → optional Windows shutdown → optional code signing.**
+Newznab search → optional code signing.**
 Download robustness and PAR2 are already in place; the remaining gaps are mostly
 peripheral or need external service details.

@@ -4,6 +4,7 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exe = Join-Path $root 'target\debug\newsqueue.exe'
 $queue = Join-Path $root 'newsqueue-queue.json'
+$settings = Join-Path $root 'newsqueue-settings.json'
 if (-not (Test-Path $exe)) { throw "Build first: $exe is missing" }
 if (Get-Process newsqueue -ErrorAction SilentlyContinue) {
     throw 'Close the running NewsQueue instance before running this check.'
@@ -29,8 +30,38 @@ public class TrayTest {
   [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint msg, IntPtr w, IntPtr l);
   [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
   [DllImport("shell32.dll")] public static extern int Shell_NotifyIconGetRect(ref TrayIconId id, out TrayIconRect rect);
+  [DllImport("user32.dll")] public static extern bool GetWindowRect(IntPtr h, out TrayIconRect r);
 }
 "@
+Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationTypes
+
+function Get-TaskbarButton {
+    try {
+        $rootElement = [System.Windows.Automation.AutomationElement]::RootElement
+        $condition = New-Object System.Windows.Automation.PropertyCondition(
+            [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+            [System.Windows.Automation.ControlType]::Button
+        )
+        $buttons = $rootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        for ($i = 0; $i -lt $buttons.Count; $i++) {
+            $element = $buttons.Item($i)
+            if ($element.Current.Name -like '*newsqueue.exe*' -and
+                $element.Current.ClassName -like '*Taskbar*') {
+                return $element.Current.Name
+            }
+        }
+    } catch {
+        return $null
+    }
+    return $null
+}
+
+function Test-Offscreen([IntPtr]$handle) {
+    $rect = New-Object TrayIconRect
+    [void][TrayTest]::GetWindowRect($handle, [ref]$rect)
+    return ($rect.Left -le -10000 -and $rect.Top -le -10000)
+}
 
 $before = if (Test-Path $queue) { (Get-Item $queue).LastWriteTimeUtc } else { [DateTime]::MinValue }
 $tipFile = Join-Path $env:TEMP 'newsqueue-tray-tip.txt'
@@ -54,7 +85,7 @@ try {
     $main = [IntPtr]::Zero
     for ($i = 0; $i -lt 100; $i++) {
         Start-Sleep -Milliseconds 200
-        $main = [TrayTest]::FindWindowByTitle([IntPtr]::Zero, 'NewsQueue 0.1.0')
+        $main = [TrayTest]::FindWindowByTitle([IntPtr]::Zero, 'NewsQueue 1.0.0')
         if ($main -ne [IntPtr]::Zero) { break }
     }
     if ($main -eq [IntPtr]::Zero) { throw 'main window not found' }
@@ -82,7 +113,7 @@ try {
         }
     }
     if (-not $tooltip) { throw 'tray tooltip was not updated' }
-    if ($tooltip -notlike 'NewsQueue 0.1.0*MiB/s*') { throw "unexpected tray tooltip: $tooltip" }
+    if ($tooltip -notlike 'NewsQueue 1.0.0*MiB/s*') { throw "unexpected tray tooltip: $tooltip" }
     Write-Output "tray tooltip='$tooltip'"
 
     # The balloon test message asks the tray thread to issue a real
@@ -106,24 +137,45 @@ try {
     [void][TrayTest]::GetWindowThreadProcessId($main, [ref]$owner)
     Write-Output "started pid=$($proc.Id) owner=$owner mainVisible=$([TrayTest]::IsWindowVisible($main)) trayWindow=$tray"
 
-    # 1. Minimizing through the titlebar must hide the window to the tray.
+    # 1. Minimizing through the titlebar must move the window off-screen,
+    # remove its taskbar entry, and keep App::tick running.
+    $taskbarBefore = Get-TaskbarButton
+    Write-Output "taskbar-before='$taskbarBefore'"
     [void][TrayTest]::ShowWindow($main, 6)
     $minimized = $false
     for ($i = 0; $i -lt 50; $i++) {
         Start-Sleep -Milliseconds 200
-        if (-not [TrayTest]::IsWindowVisible($main)) { $minimized = $true; break }
+        if (Test-Offscreen $main) { $minimized = $true; break }
     }
-    Write-Output "after-minimize visible=$([TrayTest]::IsWindowVisible($main)) hiddenToTray=$minimized"
-    if (-not $minimized) { throw 'minimize did not hide the window' }
+    $taskbarAfter = Get-TaskbarButton
+    Write-Output "after-minimize visible=$([TrayTest]::IsWindowVisible($main)) offscreen=$minimized taskbar='$taskbarAfter'"
+    if (-not $minimized) { throw 'minimize did not move the window off-screen' }
+    if ($taskbarBefore -and $taskbarAfter) {
+        throw "taskbar entry still present after minimize: $taskbarAfter"
+    }
+
+    # App::tick must keep running while off-screen. The 30-second settings
+    # autosave is a simple, observable heartbeat.
+    $saveBefore = if (Test-Path $settings) { (Get-Item $settings).LastWriteTimeUtc } else { [DateTime]::MinValue }
+    $tickRunning = $false
+    for ($i = 0; $i -lt 80; $i++) {
+        Start-Sleep -Milliseconds 500
+        if (Test-Path $settings) {
+            $saveAfter = (Get-Item $settings).LastWriteTimeUtc
+            if ($saveAfter -gt $saveBefore) { $tickRunning = $true; break }
+        }
+    }
+    Write-Output "offscreen-tick autosaveUpdated=$tickRunning"
+    if (-not $tickRunning) { throw 'App::tick did not run while the window was off-screen' }
 
     # 2. A left click on the icon restores it (WM_TRAY = WM_APP+1, WM_LBUTTONUP).
     [void][TrayTest]::PostMessage($tray, 0x8001, [IntPtr]::Zero, [IntPtr]0x0202)
     $restored = $false
     for ($i = 0; $i -lt 50; $i++) {
         Start-Sleep -Milliseconds 200
-        if ([TrayTest]::IsWindowVisible($main) -and -not [TrayTest]::IsIconic($main)) { $restored = $true; break }
+        if ([TrayTest]::IsWindowVisible($main) -and -not [TrayTest]::IsIconic($main) -and -not (Test-Offscreen $main)) { $restored = $true; break }
     }
-    Write-Output "after-restore visible=$([TrayTest]::IsWindowVisible($main)) iconic=$([TrayTest]::IsIconic($main)) restored=$restored"
+    Write-Output "after-restore visible=$([TrayTest]::IsWindowVisible($main)) iconic=$([TrayTest]::IsIconic($main)) offscreen=$(Test-Offscreen $main) restored=$restored taskbar='$(Get-TaskbarButton)'"
     if (-not $restored) { throw 'tray click did not restore the window' }
 
     # 3. Closing hides to the tray instead of exiting.
@@ -131,10 +183,10 @@ try {
     $closedToTray = $false
     for ($i = 0; $i -lt 50; $i++) {
         Start-Sleep -Milliseconds 200
-        if (-not [TrayTest]::IsWindowVisible($main) -and -not $proc.HasExited) { $closedToTray = $true; break }
+        if ((Test-Offscreen $main) -and -not $proc.HasExited) { $closedToTray = $true; break }
     }
-    Write-Output "after-close hidden=$(-not [TrayTest]::IsWindowVisible($main)) alive=$(-not $proc.HasExited) closeToTray=$closedToTray"
-    if (-not $closedToTray) { throw 'close did not hide to the tray' }
+    Write-Output "after-close offscreen=$(Test-Offscreen $main) alive=$(-not $proc.HasExited) closeToTray=$closedToTray"
+    if (-not $closedToTray) { throw 'close did not move the window off-screen' }
 
     # 4. The tray Exit command exits cleanly (WM_TRAY_EXIT = WM_APP+2).
     [void][TrayTest]::PostMessage($tray, 0x8002, [IntPtr]::Zero, [IntPtr]::Zero)

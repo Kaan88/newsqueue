@@ -5,8 +5,7 @@
 A from-scratch Rust + egui desktop Usenet downloader modelled on the behaviour
 of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 
-NewsQueue uses its own versioning: the current release is **0.1.0**, and 1.0.0
-will follow once the remaining external validation is complete.
+NewsQueue uses its own versioning: the current release is **1.0.0**.
 
 ## Features
 
@@ -25,9 +24,11 @@ will follow once the remaining external validation is complete.
 - Generic Newznab search (configure URL/API key in Setup > NZB)
 - Per-collection or default execute commands after successful download/PAR2/unrar
 - File join/split actions in the queue and Explorer
-- Native Windows notification-area icon with show/restore, Exit, minimize-to-tray,
-  close-to-tray, speed tooltip and completion balloons (verified by
-  `app/tray-verify.ps1`)
+- Native Windows notification-area icon with show/restore, Exit, off-screen
+  minimize-to-tray and close-to-tray (taskbar entry removed while hidden),
+  speed tooltip and completion balloons (verified by `app/tray-verify.ps1`)
+- Queue-drained Windows shutdown, hibernate, sleep or app exit with a 15-second
+  abortable countdown and a mockable backend
 - Per-user Windows installer with Start Menu/Desktop shortcuts, Add/Remove
   Programs entry and uninstaller (`app/build-installer.ps1`)
 - Setup pages, server editor, scheduler, categories, real persisted statistics,
@@ -78,7 +79,7 @@ Build the per-user installer:
 .\build-installer.ps1
 ```
 
-This writes `app/dist/NewsQueue-0.1.0-Setup.exe` and a `.sha256` checksum. The
+This writes `app/dist/NewsQueue-1.0.0-Setup.exe` and a `.sha256` checksum. The
 installer copies the app and tools to `%LOCALAPPDATA%\Programs\NewsQueue`,
 creates Start Menu and Desktop shortcuts, registers Add/Remove Programs, and
 includes an uninstaller. It does not need administrator rights.
@@ -87,6 +88,17 @@ Verify install and uninstall end to end (requires no existing NewsQueue install)
 
 ```powershell
 .\installer-test.ps1
+```
+
+The release build uses the Windows GUI subsystem and does not open a console
+window. Use the debug build for command-line diagnostics.
+
+Verify the off-screen tray and shutdown countdown:
+
+```powershell
+.\tray-verify.ps1
+.\shutdown-verify.ps1
+.\download-while-tray-verify.ps1
 ```
 
 Regenerate the golden UI screenshots:

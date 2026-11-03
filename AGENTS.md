@@ -2,7 +2,7 @@
 
 ## Project
 
-- `app/` is the whole Rust 2021 project (eframe/egui 0.29): a from-scratch clone of AltBinz, presented as NewsQueue 0.1.0. The parity target is still AltBinz 0.48.4.
+- `app/` is the whole Rust 2021 project (eframe/egui 0.29): a from-scratch clone of AltBinz, presented as NewsQueue 1.0.0. The parity target is still AltBinz 0.48.4.
 - `app/MECHANICS.md` records measured constants, formulas and function addresses from the original Delphi binary; `app/mechanics.json` is the machine-checked list. Keep both in sync with `model.rs`, and only mark a value "estimated" after searching the evidence.
 - `capture/`, `investigation.cany/`, `altbinz_original/` and `reference/` are read-only evidence. Harness files (`craft.json`, `feed.json`, `build-activity.log`, `checks/`) are generated; don't edit them. This directory is not a git repo.
 - Ghidra 12.1.4 is installed at `C:\Users\kaank\AppData\Roaming\craft-anything\engines\ghidra\ghidra_12.1.4_PUBLIC`. Use it when the recorded evidence is insufficient to verify a value or behavior; do not guess mechanics.
@@ -21,9 +21,12 @@ cargo run -- --screenshot shots/now.png
 - `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `cargo run -- --search-test <query>` queries the configured Newznab endpoint.
-- `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close any running NewsQueue. It checks the tray icon, speed tooltip, balloon API result, minimize-to-tray, click-to-restore, close-to-tray and tray Exit.
-- `.\build-installer.ps1` runs `package.ps1`, stages in `%TEMP%`, builds `dist\NewsQueue-0.1.0-Setup.exe` with IExpress and writes its SHA256.
+- `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close any running NewsQueue. It checks the tray icon, speed tooltip, balloon API result, off-screen minimize, taskbar removal, continued tick/autosave, click-to-restore, close-to-tray and tray Exit.
+- `.\build-installer.ps1` runs `package.ps1`, stages in `%TEMP%`, builds `dist\NewsQueue-1.0.0-Setup.exe` with IExpress and writes its SHA256.
 - `.\installer-test.ps1` installs the built setup into a temp folder, checks files/registry/shortcuts, launches the installed exe and uninstalls. It refuses to run if any NewsQueue install, shortcut or process exists.
+- `.\shutdown-verify.ps1` arms the safe `Exit` shutdown path in a debug build, minimizes to the tray and checks the 15-second countdown still exits the app.
+- `.\download-while-tray-verify.ps1` runs a local mock NNTP server, minimizes the app, and verifies a download still completes while off-screen and the payload is correct. It backs up and restores the local settings/queue/history/stats files.
+- Release builds use the Windows GUI subsystem, so they do not open a console. Use the debug build (`cargo run`) for CLI diagnostics and unit tests.
 - `cargo fmt --check` currently fails on existing code. Run `cargo fmt` when formatting; don't claim the check passed unless you ran it.
 
 ## Where things live
@@ -39,9 +42,11 @@ cargo run -- --screenshot shots/now.png
 - `files.rs` — file join/split operations used by queue and Explorer actions.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit) and a polling channel; do not delete the tool.
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
-- `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, minimize/close-to-tray, speed tooltip, balloon hints and the shared exit flag. `main.rs` cancels window close unless the tray requested exit. `--screenshot` never starts the tray.
+- `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, off-screen minimize/close-to-tray with the taskbar entry removed, speed tooltip, balloon hints and the shared exit flag. `main.rs` cancels window close unless the tray or shutdown requested exit. `--screenshot` never starts the tray.
+- `shutdown.rs` — queue-drained power actions (`shutdown.exe /s`, `/h`, `SetSuspendState`, or app exit) with inspectable plans and a mock mode used by tests.
 - `package.ps1` / `build-installer.ps1` — portable release zip and IExpress setup exe. `installer/install.ps1` copies the payload, creates shortcuts and the HKCU uninstall entry; `installer/uninstall.ps1` removes them and schedules deletion of the install folder.
 - `installer-test.ps1` — end-to-end install/uninstall check against the built setup; uses temp paths and a clean state.
+- `tray-verify.ps1` / `shutdown-verify.ps1` / `download-while-tray-verify.ps1` — scripted off-screen tray, shutdown-countdown and mock-NNTP download checks.
 
 ## Gotchas
 
@@ -51,4 +56,4 @@ cargo run -- --screenshot shots/now.png
 - `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source. `*.nqpart` files are resume sidecars; keep them until a download finishes.
 - Test Usenet account, RSS API keys and Newznab API keys are configured only in the local, gitignored `app/newsqueue-settings.json`. Never copy them into source, docs, logs, commits or replies.
 - `cargo run -- --download-test <file.nzb>` and Connect perform real network downloads into the download folder; don't run them unless asked. Use a local NZB such as `Civilization.IV-RELOADED.nzb` or `Love.Under.the.Mistletoe...nzb` (both ignored by git). Missing articles are skipped and mark the collection `Incomplete`; PAR2 repair and RAR extraction are real.
-- For screenshots of specific UI, set `NQ_DEMO_DIALOG` (`setup`, `server`, `stats`, `search`, `categories`, `notes`, `about`, `columns`, `pause`), `NQ_DEMO_TAB` (`par2`, `explorer`, `log`, `rss`), `NQ_DEMO_SETUP_PAGE=0..16`, `NQ_DEMO_EXPLORER=<folder>`, or `NQ_DEMO_CONNECT=1`.
+- For screenshots of specific UI, set `NQ_DEMO_DIALOG` (`setup`, `server`, `stats`, `search`, `categories`, `notes`, `about`, `columns`, `pause`, `shutdown`), `NQ_DEMO_TAB` (`par2`, `explorer`, `log`, `rss`), `NQ_DEMO_SETUP_PAGE=0..16`, `NQ_DEMO_EXPLORER=<folder>`, or `NQ_DEMO_CONNECT=1`.

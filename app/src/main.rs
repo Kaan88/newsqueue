@@ -1,3 +1,5 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+
 mod dialogs;
 mod download;
 mod files;
@@ -5,6 +7,7 @@ mod model;
 mod par2;
 mod rss;
 mod search;
+mod shutdown;
 mod theme;
 mod tray;
 mod ui;
@@ -281,6 +284,9 @@ pub struct App {
     pub scheduler_last_hold: bool,
     pub shutdown_armed: bool,
     pub shutdown_countdown: Option<Instant>,
+    pub shutdown_mode: shutdown::ShutdownMode,
+    pub shutdown_exit_requested: bool,
+    pub shutdown_exit_sent: bool,
     pub repair_until: Option<(usize, Instant)>,
     pub explorer_path: PathBuf,
     pub explorer_path_edit: String,
@@ -478,6 +484,9 @@ impl App {
             scheduler_last_hold: false,
             shutdown_armed: false,
             shutdown_countdown: None,
+            shutdown_mode: shutdown::ShutdownMode::Real,
+            shutdown_exit_requested: false,
+            shutdown_exit_sent: false,
             repair_until: None,
             explorer_path,
             explorer_path_edit: explorer_path_text,
@@ -531,12 +540,13 @@ impl App {
             Ok("server") => {
                 app.setup_draft = app.settings.clone();
                 app.show_setup = true;
-                app.setup_page = 13;
+                app.setup_page = 4;
                 app.server_draft = app.settings.servers[0].clone();
                 app.editing_server = Some(0);
                 app.show_server_edit = true;
             }
             Ok("stats") => app.show_stats = true,
+            Ok("shutdown") => app.show_shutdown = true,
             Ok("search") => app.show_search = true,
             Ok("categories") => app.show_categories = true,
             Ok("notes") => app.show_notes = true,
@@ -564,8 +574,20 @@ impl App {
         if std::env::var("NQ_DEMO_CONNECT").is_ok() {
             app.connect();
         }
+        if app.settings.startup_connect && !app.connected {
+            app.connect();
+        }
         if std::env::var("NQ_DEMO_RSS").is_ok() {
             app.refresh_rss();
+        }
+        #[cfg(debug_assertions)]
+        if std::env::var("NQ_TEST_ARM_SHUTDOWN").as_deref() == Ok("exit") {
+            app.settings.shutdown_method = "Exit".into();
+            app.settings.minimize_to_tray = true;
+            app.settings.minimize_to_tray_on_close = true;
+            app.shutdown_armed = true;
+            app.shutdown_mode = shutdown::ShutdownMode::Real;
+            app.log("Shutdown", "Test shutdown armed (Exit).");
         }
         if app.screenshot_path.is_none() {
             for entry in app.logs.clone() {
@@ -2131,6 +2153,12 @@ impl App {
         }
     }
 
+    fn all_tasks_done(&self) -> bool {
+        self.queue
+            .iter()
+            .all(|c| matches!(c.status, ItemStatus::Completed | ItemStatus::Error))
+    }
+
     pub fn tick(&mut self) {
         let now = Instant::now();
         let dt = (now - self.last_tick).as_secs_f64().clamp(0.0, 0.5);
@@ -2472,28 +2500,56 @@ impl App {
             self.threads.clear();
         }
 
-        if self.shutdown_armed && self.shutdown_countdown.is_none() {
-            let all_done = self
-                .queue
-                .iter()
-                .all(|c| matches!(c.status, ItemStatus::Completed | ItemStatus::Error));
-            if all_done {
-                self.shutdown_countdown = Some(now + Duration::from_secs(15));
-                self.log("Shutdown", "All tasks finished. Shutdown scheduled.");
-            }
+        if self.shutdown_armed && self.shutdown_countdown.is_none() && self.all_tasks_done() {
+            self.shutdown_countdown = Some(now + Duration::from_secs(15));
+            self.log("Shutdown", "All tasks finished. Shutdown scheduled.");
+        }
+        if self.shutdown_countdown.is_some() && !self.all_tasks_done() {
+            self.shutdown_countdown = None;
+            self.log(
+                "Shutdown",
+                "Countdown cancelled: unfinished tasks remain.",
+            );
         }
         if let Some(until) = self.shutdown_countdown {
             if now >= until {
                 self.shutdown_countdown = None;
                 self.shutdown_armed = false;
-                self.show_message = Some((
-                    "Shutdown".into(),
-                    "NewsQueue would shut down the computer now.\nThis demo does not power off your machine.".into(),
-                ));
+                let action = shutdown::PowerAction::from_setting(&self.settings.shutdown_method);
                 self.log(
                     "Shutdown",
-                    "Shutdown point reached (simulated; computer left running).",
+                    &format!("All tasks finished. Running {}.", action.label()),
                 );
+                if self.shutdown_mode == shutdown::ShutdownMode::Real
+                    && self.screenshot_path.is_none()
+                {
+                    self.settings.save();
+                    save_queue_state(&self.queue);
+                    if self.settings.clear_history_on_exit {
+                        self.history.clear();
+                    }
+                    save_history(&self.history);
+                    self.save_statistics();
+                }
+                match shutdown::execute(action, self.shutdown_mode) {
+                    Ok(shutdown::ShutdownOutcome::Executed(detail)) => {
+                        self.log("Shutdown", &format!("{}: {detail}", action.label()));
+                    }
+                    Ok(shutdown::ShutdownOutcome::Mocked(detail)) => {
+                        self.log(
+                            "Shutdown",
+                            &format!("{} simulated: {detail}", action.label()),
+                        );
+                    }
+                    Ok(shutdown::ShutdownOutcome::ExitApplication) => {
+                        self.log("Shutdown", "Exiting NewsQueue.");
+                        self.shutdown_exit_requested = true;
+                    }
+                    Err(error) => {
+                        self.log("Error", &format!("Shutdown failed: {error}"));
+                        self.show_message = Some(("Shutdown".into(), error));
+                    }
+                }
             }
         }
 
@@ -2706,7 +2762,7 @@ impl App {
         };
         if close_requested {
             match tray::close_action(
-                tray::exit_requested(),
+                tray::exit_requested() || self.shutdown_exit_requested,
                 self.settings.minimize_to_tray_on_close,
                 tray::ready(),
             ) {
@@ -2803,6 +2859,10 @@ impl eframe::App for App {
         self.frame += 1;
         self.handle_tray(ctx);
         self.tick();
+        if self.shutdown_exit_requested && !self.shutdown_exit_sent {
+            self.shutdown_exit_sent = true;
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         self.handle_keys(ctx);
         let dropped: Vec<PathBuf> = ctx.input(|input| {
             input
@@ -3301,6 +3361,79 @@ mod integration_tests {
         );
         assert!(app.queue.iter().all(|collection| collection.execute_done));
         let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn shutdown_countdown_uses_mock_backend() {
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.status = ItemStatus::Completed;
+        app.queue = vec![collection];
+        app.settings.shutdown_method = "Shutdown Windows".into();
+        app.shutdown_mode = shutdown::ShutdownMode::Mock;
+        app.shutdown_armed = true;
+        app.shutdown_countdown = Some(std::time::Instant::now());
+        app.tick();
+        assert!(!app.shutdown_armed);
+        assert!(app.shutdown_countdown.is_none());
+        assert!(!app.shutdown_exit_requested);
+        assert!(app
+            .logs
+            .iter()
+            .any(|entry| entry.message.contains("simulated")
+                && entry.message.contains("shutdown.exe /s /t 0")));
+    }
+
+    #[test]
+    fn shutdown_exit_method_only_requests_the_app_to_close() {
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        app.settings.shutdown_method = "Exit".into();
+        app.shutdown_mode = shutdown::ShutdownMode::Mock;
+        app.shutdown_armed = true;
+        app.shutdown_countdown = Some(std::time::Instant::now());
+        app.tick();
+        assert!(!app.shutdown_armed);
+        assert!(app.shutdown_countdown.is_none());
+        assert!(app.shutdown_exit_requested);
+        assert!(app
+            .logs
+            .iter()
+            .any(|entry| entry.message.contains("Exiting NewsQueue")));
+    }
+
+    #[test]
+    fn shutdown_waits_for_unfinished_tasks() {
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.status = ItemStatus::Downloading;
+        app.queue = vec![collection];
+        app.shutdown_mode = shutdown::ShutdownMode::Mock;
+        app.shutdown_armed = true;
+        app.tick();
+        assert!(app.shutdown_countdown.is_none());
+        assert!(app.shutdown_armed);
+    }
+
+    #[test]
+    fn shutdown_countdown_cancels_if_new_work_appears() {
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.status = ItemStatus::Downloading;
+        app.queue = vec![collection];
+        app.shutdown_mode = shutdown::ShutdownMode::Mock;
+        app.shutdown_armed = true;
+        app.shutdown_countdown = Some(std::time::Instant::now() + Duration::from_secs(10));
+        app.tick();
+        assert!(app.shutdown_countdown.is_none());
+        assert!(app.shutdown_armed);
+        assert!(app
+            .logs
+            .iter()
+            .any(|entry| entry.message.contains("Countdown cancelled")));
     }
 
     #[test]

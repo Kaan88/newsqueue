@@ -59,7 +59,7 @@ fn agent() -> Result<ureq::Agent, String> {
     Ok(ureq::AgentBuilder::new()
         .tls_connector(Arc::new(tls))
         .timeout(Duration::from_secs(30))
-        .user_agent("NewsQueue/0.1.0")
+        .user_agent("NewsQueue/1.0.0")
         .build())
 }
 

@@ -211,7 +211,7 @@ pub fn tool_button(ui: &mut Ui, caption: &str, icon: Icon, active: bool) -> Resp
         caption_rect.center(),
         Align2::CENTER_CENTER,
         caption,
-        FontId::proportional(9.3),
+        FontId::proportional(10.0),
         TEXT,
     );
     resp
@@ -281,7 +281,7 @@ pub fn tab_button(ui: &mut Ui, caption: &str, icon: Icon, selected: bool, width:
         Pos2::new(rect.left() + 27.0, rect.center().y),
         Align2::LEFT_CENTER,
         caption,
-        FontId::proportional(10.5),
+        FontId::proportional(11.0),
         TEXT,
     );
     resp
@@ -1013,7 +1013,7 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
         Stroke::new(1.0_f32, Color32::from_rgb(160, 175, 195)),
     );
     let fill = if complete {
-        Color32::from_rgb(170, 220, 170)
+        Color32::from_rgb(198, 209, 222)
     } else {
         Color32::from_rgb(190, 225, 250)
     };
@@ -1026,7 +1026,7 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::proportional(9.0),
+        FontId::proportional(9.5),
         TEXT,
     );
 }

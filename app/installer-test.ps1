@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '0.1.0'
+$version = '1.0.0'
 $setup = Join-Path $root "dist\NewsQueue-$version-Setup.exe"
 $testDir = Join-Path $env:TEMP 'newsqueue-install-test'
 $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NewsQueue'
@@ -98,7 +98,10 @@ try {
     }
     Write-Output 'start menu and desktop shortcuts present'
 
-    & $installedExe --screenshot $screenshot
+    $installedRun = Start-Process -FilePath $installedExe -ArgumentList @('--screenshot', $screenshot) -WorkingDirectory $testDir -Wait -PassThru
+    if ($installedRun.ExitCode -ne 0) {
+        throw "The installed executable exited with $($installedRun.ExitCode)"
+    }
     if (-not (Test-Path -LiteralPath $screenshot)) {
         throw 'The installed executable could not take a screenshot'
     }

@@ -8,23 +8,23 @@ use crate::theme::{self, Icon};
 use crate::App;
 
 const SETUP_PAGES: [&str; 17] = [
-    "Connection",
     "Download",
     "Download #2",
+    "NZB",
+    "NZB #2",
+    "Servers",
     "Log",
+    "Connection",
+    "Proxy",
+    "Scheduler",
+    "Par2",
+    "Unpack",
     "Miscellaneous",
     "Miscellaneous #2",
     "Miscellaneous #3",
-    "NZB",
-    "NZB #2",
-    "NZB Play",
-    "Par2",
-    "Proxy",
-    "Scheduler",
-    "Servers",
-    "Unpack",
     "User interface",
     "User interface #2",
+    "NZB Play",
 ];
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -91,7 +91,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
     let mut cancel = false;
     egui::Window::new("Setup")
         .default_pos([245.0, 95.0])
-        .default_size([790.0, 620.0])
+        .default_size([700.0, 580.0])
         .min_size([650.0, 470.0])
         .resizable(true)
         .collapsible(false)
@@ -100,7 +100,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
             let height = (ui.available_height() - 38.0).max(200.0);
             ui.horizontal(|ui| {
                 ui.allocate_ui_with_layout(
-                    Vec2::new(205.0, height),
+                    Vec2::new(193.0, height),
                     Layout::top_down(Align::Min),
                     |ui| {
                         ui.painter().rect_filled(
@@ -141,23 +141,23 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                                 );
                                 ui.separator();
                                 match app.setup_page {
-                                    0 => page_connection(ui, &mut draft),
-                                    1 => page_download(ui, &mut draft),
-                                    2 => page_download2(ui, &mut draft),
-                                    3 => page_log(ui, &mut draft),
-                                    4 => page_misc(ui, &mut draft),
-                                    5 => page_misc2(ui, &mut draft),
-                                    6 => page_misc3(ui, &mut draft),
-                                    7 => page_nzb(ui, &mut draft),
-                                    8 => page_nzb2(ui, &mut draft),
-                                    9 => page_nzb_play(ui, &mut draft),
-                                    10 => page_par2(ui, &mut draft),
-                                    11 => page_proxy(ui, &mut draft),
-                                    12 => page_scheduler(ui, &mut draft),
-                                    13 => page_servers(ui, app, &mut draft),
-                                    14 => page_unpack(ui, &mut draft),
-                                    15 => page_ui(ui, &mut draft),
-                                    _ => page_ui2(ui, &mut draft),
+                                    0 => page_download(ui, &mut draft),
+                                    1 => page_download2(ui, &mut draft),
+                                    2 => page_nzb(ui, &mut draft),
+                                    3 => page_nzb2(ui, &mut draft),
+                                    4 => page_servers(ui, app, &mut draft),
+                                    5 => page_log(ui, &mut draft),
+                                    6 => page_connection(ui, &mut draft),
+                                    7 => page_proxy(ui, &mut draft),
+                                    8 => page_scheduler(ui, &mut draft),
+                                    9 => page_par2(ui, &mut draft),
+                                    10 => page_unpack(ui, &mut draft),
+                                    11 => page_misc(ui, &mut draft),
+                                    12 => page_misc2(ui, &mut draft),
+                                    13 => page_misc3(ui, &mut draft),
+                                    14 => page_ui(ui, &mut draft),
+                                    15 => page_ui2(ui, &mut draft),
+                                    _ => page_nzb_play(ui, &mut draft),
                                 }
                             });
                     },
@@ -1875,7 +1875,7 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_shutdown;
     egui::Window::new("Shutdown")
         .default_pos([440.0, 240.0])
-        .default_size([380.0, 240.0])
+        .default_size([380.0, 160.0])
         .resizable(false)
         .collapsible(false)
         .open(&mut open)
@@ -1890,11 +1890,18 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                     }
                 });
             ui.add_space(6.0);
-            ui.checkbox(&mut app.shutdown_armed, "Shutdown when all tasks are done");
+            ui.checkbox(&mut app.shutdown_armed, "Run this action when all tasks are done");
             ui.add_space(6.0);
             if let Some(until) = app.shutdown_countdown {
                 let secs = until.saturating_duration_since(std::time::Instant::now()).as_secs();
-                ui.label(RichText::new(format!("Shutting down in {secs}s (simulated)")).size(10.0).color(theme::ORANGE));
+                ui.label(
+                    RichText::new(format!(
+                        "{} in {secs}s",
+                        app.settings.shutdown_method
+                    ))
+                    .size(10.0)
+                    .color(theme::ORANGE),
+                );
                 if ui.button("Abort").clicked() {
                     app.shutdown_countdown = None;
                     app.shutdown_armed = false;
@@ -1902,9 +1909,12 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                 }
             }
             ui.label(
-                RichText::new("This build never powers off the machine; the countdown is shown as a demonstration.")
-                    .size(8.8)
-                    .color(theme::TEXT_MUTED),
+                RichText::new(
+                    "After a 15 second countdown NewsQueue runs the selected action. \
+                     Shutdown, Hibernate and Sleep affect Windows; Exit only closes NewsQueue.",
+                )
+                .size(8.8)
+                .color(theme::TEXT_MUTED),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("OK").clicked() {
