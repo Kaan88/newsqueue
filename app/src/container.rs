@@ -102,11 +102,10 @@ pub fn rar_volume_name(base: &str, volume: u32) -> String {
 /// The name a single-file download of this container should get.
 pub fn single_name(base: &str, container: Container) -> Option<String> {
     match container {
-        Container::Rar5 { volume: Some(volume) } => Some(rar_volume_name(base, volume)),
-        Container::Rar5 { volume: None } | Container::Rar4 => Some(format!("{base}.rar")),
-        Container::Zip => Some(format!("{base}.zip")),
-        Container::SevenZip => Some(format!("{base}.7z")),
-        Container::Par2 => Some(format!("{base}.par2")),
+        Container::Rar5 {
+            volume: Some(volume),
+        } => Some(rar_volume_name(base, volume)),
+        _ => Some(format!("{base}.{}", container.extension())),
     }
 }
 
