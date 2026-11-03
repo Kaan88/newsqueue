@@ -6,6 +6,7 @@
 /app/newsqueue-settings.json
 /app/newsqueue-queue.json
 /app/newsqueue-history.json
+/app/newsqueue-stats.json
 /app/download/
 /app/log/
 /app/nzb/

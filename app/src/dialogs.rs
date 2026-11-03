@@ -1488,16 +1488,21 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                             ui.label(format_bytes_auto(app.transfered_session as f64));
                             ui.end_row();
                             ui.label("Current session collections downloaded:");
-                            ui.label(app.history.len().to_string());
+                            ui.label(app.session_collections.to_string());
                             ui.end_row();
                             ui.label("Total collections downloaded:");
-                            ui.label((app.history.len() as u64 + 124).to_string());
+                            ui.label(app.total_collections.to_string());
                             ui.end_row();
                             ui.label("Total startups:");
                             ui.label(app.startups.to_string());
                             ui.end_row();
                             ui.label("Longest uptime:");
-                            ui.label("14h 27m");
+                            let longest = app.longest_uptime_secs.max(uptime.as_secs());
+                            ui.label(format!(
+                                "{}h {:02}m",
+                                longest / 3600,
+                                (longest % 3600) / 60
+                            ));
                             ui.end_row();
                         });
                 }

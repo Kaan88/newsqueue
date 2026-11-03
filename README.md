@@ -24,8 +24,8 @@ of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 - File join/split actions in the queue and Explorer
 - Native Windows notification-area icon with show/restore, Exit, minimize-to-tray
   and close-to-tray (verified by `app/tray-verify.ps1`)
-- Setup pages, server editor, scheduler, categories, statistics, search, notes,
-  log, PAR2 list and speed limiting
+- Setup pages, server editor, scheduler, categories, real persisted statistics,
+  search, notes, log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
 
 ## Build and test
@@ -74,8 +74,10 @@ Regenerate the golden UI screenshots:
 
 ## Configuration
 
-The app reads `app/newsqueue-settings.json`, `app/newsqueue-queue.json` and
-`app/newsqueue-history.json`. They are created locally and ignored by git.
+The app reads `app/newsqueue-settings.json`, `app/newsqueue-queue.json`,
+`app/newsqueue-history.json` and `app/newsqueue-stats.json`. They are created
+locally and ignored by git. Download history and transfer statistics are real
+and persist across restarts; demo data is only used by `--screenshot`.
 Configure your Usenet server and RSS feeds in the app; do not commit
 credentials or feed API keys.
 

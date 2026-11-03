@@ -41,7 +41,7 @@ cargo run -- --screenshot shots/now.png
 
 ## Gotchas
 
-- Normal runs persist to `app/newsqueue-settings.json`, `app/newsqueue-queue.json` and `app/newsqueue-history.json` (autosave every 30 s / `autosave_minutes`, and on exit). Don't hand-edit them while the app is running. Saved queue entries without segment IDs are discarded on load; sample data appears only in screenshot mode.
+- Normal runs persist to `app/newsqueue-settings.json`, `app/newsqueue-queue.json`, `app/newsqueue-history.json` and `app/newsqueue-stats.json` (autosave every 30 s / `autosave_minutes`, and on exit). Don't hand-edit them while the app is running. Saved queue entries without segment IDs are discarded on load; sample/demo data appears only in screenshot mode.
 - `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source. `*.nqpart` files are resume sidecars; keep them until a download finishes.
 - Test Usenet account, RSS API keys and Newznab API keys are configured only in the local, gitignored `app/newsqueue-settings.json`. Never copy them into source, docs, logs, commits or replies.
 - `cargo run -- --download-test <file.nzb>` and Connect perform real network downloads into the download folder; don't run them unless asked. Use a local NZB such as `Civilization.IV-RELOADED.nzb` or `Love.Under.the.Mistletoe...nzb` (both ignored by git). Missing articles are skipped and mark the collection `Incomplete`; PAR2 repair and RAR extraction are real.

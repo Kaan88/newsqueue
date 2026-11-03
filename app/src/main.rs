@@ -10,7 +10,7 @@ mod tray;
 mod ui;
 mod unrar;
 
-use chrono::{Local, Timelike};
+use chrono::{Datelike, Local, Timelike};
 use eframe::egui;
 use model::*;
 use serde::{Deserialize, Serialize};
@@ -80,6 +80,81 @@ fn save_history(history: &[HistoryItem]) {
     }
 }
 
+/// Persisted transfer totals. Only the current day and year are kept; older
+/// buckets are intentionally not shown because the Statistics window has no
+/// day picker yet.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+struct TransferStats {
+    #[serde(default)]
+    day: String,
+    #[serde(default)]
+    year: i32,
+    #[serde(default)]
+    daily: [f64; 24],
+    #[serde(default)]
+    monthly: [f64; 12],
+    #[serde(default)]
+    collections: u64,
+    #[serde(default)]
+    startups: u64,
+    #[serde(default)]
+    longest_uptime_secs: u64,
+}
+
+impl TransferStats {
+    fn normalize(&mut self) {
+        let now = Local::now();
+        self.normalize_for(now.year(), &now.format("%Y-%m-%d").to_string());
+    }
+
+    fn normalize_for(&mut self, year: i32, day: &str) {
+        if self.day != day {
+            self.daily = [0.0; 24];
+            self.day = day.to_string();
+        }
+        if self.year != year {
+            self.monthly = [0.0; 12];
+            self.year = year;
+        }
+    }
+}
+
+fn stats_path() -> PathBuf {
+    app_base().join("newsqueue-stats.json")
+}
+
+fn load_transfer_stats() -> TransferStats {
+    let mut stats = std::fs::read_to_string(stats_path())
+        .ok()
+        .and_then(|text| serde_json::from_str::<TransferStats>(&text).ok())
+        .unwrap_or_default();
+    stats.normalize();
+    stats
+}
+
+fn save_transfer_stats(stats: &TransferStats) {
+    if let Ok(text) = serde_json::to_string_pretty(stats) {
+        let _ = std::fs::write(stats_path(), text);
+    }
+}
+
+fn demo_daily_transfer() -> [f64; 24] {
+    let mut daily = [0.0f64; 24];
+    for (index, value) in daily.iter_mut().enumerate() {
+        *value = ((index as f64 * 0.73).sin().abs() * 240.0
+            + (index as f64 * 0.31).cos().abs() * 80.0)
+            .round();
+    }
+    daily
+}
+
+fn demo_monthly_transfer() -> [f64; 12] {
+    [
+        3_240.0, 2_980.0, 4_120.0, 3_760.0, 4_880.0, 5_120.0, 4_460.0, 4_910.0, 5_380.0,
+        5_010.0, 4_720.0, 5_640.0,
+    ]
+}
+
 fn sample_history() -> Vec<HistoryItem> {
     vec![
         HistoryItem {
@@ -143,6 +218,9 @@ pub struct App {
     pub transfered_session: u64,
     pub session_start: Instant,
     pub startups: u64,
+    pub total_collections: u64,
+    pub session_collections: u64,
+    pub longest_uptime_secs: u64,
     pub last_tick: Instant,
     pub last_sample: Instant,
     pub last_minute_stats: Instant,
@@ -225,6 +303,8 @@ pub struct App {
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
     pub monthly_transfer: [f64; 12],
+    pub stats_day: String,
+    pub stats_year: i32,
     pub startup_done: bool,
     pub last_log_day: String,
     pub active_dl: Option<download::ActiveDownload>,
@@ -238,24 +318,48 @@ impl App {
     pub fn new(settings: Settings, screenshot_path: Option<String>) -> Self {
         ensure_dirs(&settings);
         prune_old_logs(settings.keep_log_days);
-        let queue = if screenshot_path.is_none() {
+        let demo = screenshot_path.is_some();
+        let queue = if demo {
+            sample_queue(&settings)
+        } else {
             let mut saved = load_queue_state().unwrap_or_default();
             // Older saves contain demonstration entries with no article ids.
             saved.retain(|c| c.has_segments());
             saved
-        } else {
-            sample_queue(&settings)
         };
         let threads = build_threads(false, &queue, &settings, false, 0);
-        let mut daily = [0.0f64; 24];
-        for (i, v) in daily.iter_mut().enumerate() {
-            *v = ((i as f64 * 0.73).sin().abs() * 240.0 + (i as f64 * 0.31).cos().abs() * 80.0)
-                .round();
-        }
-        let monthly = [
-            3_240.0, 2_980.0, 4_120.0, 3_760.0, 4_880.0, 5_120.0, 4_460.0, 4_910.0, 5_380.0,
-            5_010.0, 4_720.0, 5_640.0,
-        ];
+        let (
+            daily,
+            monthly,
+            stats_day,
+            stats_year,
+            total_collections,
+            total_startups,
+            longest_uptime_secs,
+        ) = if demo {
+            let now = Local::now();
+            (
+                demo_daily_transfer(),
+                demo_monthly_transfer(),
+                now.format("%Y-%m-%d").to_string(),
+                now.year(),
+                0,
+                1,
+                0,
+            )
+        } else {
+            let mut stats = load_transfer_stats();
+            stats.startups = stats.startups.saturating_add(1);
+            (
+                stats.daily,
+                stats.monthly,
+                stats.day,
+                stats.year,
+                stats.collections,
+                stats.startups,
+                stats.longest_uptime_secs,
+            )
+        };
         let explorer_path = PathBuf::from(&settings.download_dir);
         let explorer_path_text = explorer_path.to_string_lossy().to_string();
         let _ = std::fs::create_dir_all(&explorer_path);
@@ -274,18 +378,18 @@ impl App {
         let column_width_draft = settings.column_widths;
         let setup_draft = settings.clone();
         let category_draft = settings.categories.clone();
-        let history = if screenshot_path.is_none() {
-            load_history().unwrap_or_else(sample_history)
-        } else {
+        let history = if demo {
             sample_history()
+        } else {
+            load_history().unwrap_or_default()
         };
         let mut app = Self {
             settings,
             setup_draft,
             queue,
-            par2: sample_par2(),
-            rss: sample_rss(),
-            logs: sample_log(),
+            par2: if demo { sample_par2() } else { Vec::new() },
+            rss: if demo { sample_rss() } else { Vec::new() },
+            logs: if demo { sample_log() } else { VecDeque::new() },
             threads,
             history,
             search_results: Vec::new(),
@@ -310,7 +414,10 @@ impl App {
             speed_history: VecDeque::from(vec![0.0; 120]),
             transfered_session: 0,
             session_start: Instant::now(),
-            startups: 1,
+            startups: total_startups,
+            total_collections,
+            session_collections: 0,
+            longest_uptime_secs,
             last_tick: Instant::now(),
             last_sample: Instant::now(),
             last_minute_stats: Instant::now(),
@@ -393,6 +500,8 @@ impl App {
             toast: None,
             daily_transfer: daily,
             monthly_transfer: monthly,
+            stats_day,
+            stats_year,
             startup_done: false,
             last_log_day: String::new(),
             active_dl: None,
@@ -401,6 +510,19 @@ impl App {
             pending_unrar: VecDeque::new(),
             resume_after_unrar: false,
         };
+        if !demo {
+            let history_count = app.history.len();
+            app.log(
+                "Main",
+                &format!("{APP_NAME} {VERSION}.0 ({BUILD_DATE}) started."),
+            );
+            app.log("Main", "OS Windows");
+            app.log(
+                "Main",
+                &format!("{history_count} items loaded into download history list."),
+            );
+            app.log("Main", "Ready. No server connection is open.");
+        }
         match std::env::var("NQ_DEMO_DIALOG").as_deref() {
             Ok("setup") => {
                 app.setup_draft = app.settings.clone();
@@ -2138,6 +2260,7 @@ impl App {
             let mut delta = 0.0;
             let mut completed: Option<(String, u64)> = None;
             let mut completed_id: Option<u64> = None;
+            let mut count_collection = false;
             let mut failed: Option<(String, String)> = None;
             if let Some(c) = self.queue.iter_mut().find(|c| c.id == snapshot.id) {
                 let previous = c.downloaded;
@@ -2165,6 +2288,7 @@ impl App {
                     download::Stage::Completed => {
                         completed = Some((c.subject.clone(), c.total_bytes));
                         completed_id = Some(c.id);
+                        count_collection = true;
                         clear = true;
                     }
                     download::Stage::Incomplete => {
@@ -2191,6 +2315,10 @@ impl App {
             }
             self.transfered_session = self.transfered_session.saturating_add(delta as u64);
             self.pending_bytes += delta;
+            if count_collection {
+                self.total_collections = self.total_collections.saturating_add(1);
+                self.session_collections = self.session_collections.saturating_add(1);
+            }
             if let Some((subject, total)) = completed {
                 self.log("Main", &format!("Download complete: {subject}"));
                 self.history.insert(
@@ -2253,9 +2381,14 @@ impl App {
                 }
                 self.auto_speed_ticks += 1;
             }
-            let hour = Local::now().hour() as usize;
+            self.roll_transfer_stats();
+            let now_local = Local::now();
+            let hour = now_local.hour() as usize;
+            let month = now_local.month0() as usize;
             let bytes_this_second = std::mem::take(&mut self.pending_bytes);
-            self.daily_transfer[hour] += bytes_this_second / MB;
+            let megabytes = bytes_this_second / MB;
+            self.daily_transfer[hour] += megabytes;
+            self.monthly_transfer[month] += megabytes;
         }
 
         if now.duration_since(self.last_minute_stats) >= Duration::from_millis(MINUTE_STATS_MS) {
@@ -2361,6 +2494,7 @@ impl App {
         if now.duration_since(self.last_save) > Duration::from_secs(30) {
             self.last_save = now;
             self.settings.save();
+            self.save_statistics();
         }
         if now.duration_since(self.last_queue_save)
             > Duration::from_secs(self.settings.autosave_minutes.max(1) as u64 * 60)
@@ -2475,71 +2609,9 @@ impl App {
             self.log("Search", &format!("Newznab search for: {q}"));
             return;
         }
-        let seeds = [
-            (
-                "Aurora.Field.Recordings.2025",
-                12_288.0,
-                12.4,
-                "alt.binaries.movies",
-                "northstar",
-            ),
-            (
-                "Harbor.Lights.1080p",
-                10_240.0,
-                3.1,
-                "alt.binaries.tv",
-                "lumen",
-            ),
-            (
-                "Workshop.Tools.Archive.2024",
-                11_305.32,
-                60.0,
-                "alt.binaries.apps",
-                "archivebot",
-            ),
-            (
-                "Quiet.Harbor.Sessions",
-                2_460.0,
-                8.8,
-                "alt.binaries.music",
-                "tidepool",
-            ),
-            (
-                "Field.Notes.Collection",
-                918.2,
-                21.0,
-                "alt.binaries.ebooks",
-                "paperback",
-            ),
-            (
-                "Signal.Processing.Pack",
-                4_112.0,
-                5.3,
-                "alt.binaries.apps",
-                "waves",
-            ),
-        ];
-        self.search_results = seeds
-            .iter()
-            .enumerate()
-            .map(|(i, (subject, size, age, group, poster))| SearchResult {
-                subject: if i == 0 {
-                    format!("{q}.Collection.2025")
-                } else if i == 1 {
-                    format!("{q}.1080p")
-                } else {
-                    (*subject).to_string()
-                },
-                size_mb: *size,
-                age: *age,
-                group: (*group).to_string(),
-                poster: (*poster).to_string(),
-                percent: 100 - (i as u32 * 7),
-                url: String::new(),
-            })
-            .collect();
-        self.search_status = format!("{} results", self.search_results.len());
-        self.log("Search", &format!("Global search for: {q}"));
+        self.search_results.clear();
+        self.search_status = "Newznab is not configured (Setup > NZB)".into();
+        self.log("Search", "Search skipped: Newznab URL is not configured.");
     }
 
     pub fn add_search_result(&mut self, index: usize) {
@@ -2572,43 +2644,42 @@ impl App {
             }
             return;
         }
-        let id = self.queue.iter().map(|c| c.id).max().unwrap_or(0) + 1;
-        let total = (r.size_mb * MB) as u64;
-        let c = Collection {
-            id,
-            subject: r.subject.clone(),
-            total_bytes: total.max(1),
-            downloaded: 0.0,
-            parts: 10,
-            age_days: r.age,
-            group: r.group.clone(),
-            poster: r.poster.clone(),
-            status: ItemStatus::Queued,
-            folder: PathBuf::from(&self.settings.download_dir)
-                .join(sanitize_folder(&r.subject))
-                .to_string_lossy()
-                .to_string(),
-            unrar_folder: String::new(),
-            unrar: true,
-            execute: String::new(),
-            execute_done: false,
-            expanded: false,
-            files: vec![QueueFile {
-                name: format!("{}.rar", sanitize_folder(&r.subject)),
-                bytes: total.max(1),
-                downloaded: 0.0,
-                parts: 10,
-                segments: Vec::new(),
-            }],
-            posted_on: now_datetime(),
-            delete_archives: false,
-            category: "Default".into(),
-            password: String::new(),
-            source: "global search".into(),
+        self.show_message = Some((
+            "Search".into(),
+            "This search result has no NZB link.".into(),
+        ));
+    }
+
+    fn roll_transfer_stats(&mut self) {
+        let now = Local::now();
+        let day = now.format("%Y-%m-%d").to_string();
+        if self.stats_day != day {
+            self.daily_transfer = [0.0; 24];
+            self.stats_day = day;
+        }
+        let year = now.year();
+        if self.stats_year != year {
+            self.monthly_transfer = [0.0; 12];
+            self.stats_year = year;
+        }
+    }
+
+    fn save_statistics(&self) {
+        if self.screenshot_path.is_some() {
+            return;
+        }
+        let stats = TransferStats {
+            day: self.stats_day.clone(),
+            year: self.stats_year,
+            daily: self.daily_transfer,
+            monthly: self.monthly_transfer,
+            collections: self.total_collections,
+            startups: self.startups,
+            longest_uptime_secs: self
+                .longest_uptime_secs
+                .max(self.session_start.elapsed().as_secs()),
         };
-        self.queue.push(c);
-        self.log("Queue", &format!("Added from search: {}", r.subject));
-        self.toast("Added to queue");
+        save_transfer_stats(&stats);
     }
 
     fn handle_tray(&mut self, ctx: &egui::Context) {
@@ -2708,6 +2779,7 @@ impl Drop for App {
                 self.history.clear();
             }
             save_history(&self.history);
+            self.save_statistics();
         }
     }
 }
@@ -3104,6 +3176,59 @@ mod integration_tests {
         let _ = std::fs::remove_dir_all(root);
     }
 
+    #[test]
+    fn transfer_stats_reset_daily_on_a_new_day_and_monthly_on_a_new_year() {
+        let mut stats = TransferStats {
+            day: "2026-11-03".into(),
+            year: 2026,
+            daily: [1.0; 24],
+            monthly: [2.0; 12],
+            ..Default::default()
+        };
+        stats.normalize_for(2026, "2026-11-04");
+        assert_eq!(stats.daily, [0.0; 24]);
+        assert_eq!(stats.monthly, [2.0; 12]);
+
+        stats.daily[7] = 9.0;
+        stats.normalize_for(2026, "2026-11-04");
+        assert_eq!(stats.daily[7], 9.0);
+
+        stats.normalize_for(2027, "2027-01-01");
+        assert_eq!(stats.monthly, [0.0; 12]);
+    }
+
+    #[test]
+    fn transfer_stats_round_trip_keeps_counters() {
+        let stats = TransferStats {
+            day: "2026-11-04".into(),
+            year: 2026,
+            daily: [1.5; 24],
+            monthly: [2.5; 12],
+            collections: 12,
+            startups: 7,
+            longest_uptime_secs: 5_400,
+        };
+        let text = serde_json::to_string(&stats).unwrap();
+        let loaded: TransferStats = serde_json::from_str(&text).unwrap();
+        assert_eq!(loaded.collections, 12);
+        assert_eq!(loaded.startups, 7);
+        assert_eq!(loaded.longest_uptime_secs, 5_400);
+        assert_eq!(loaded.daily, [1.5; 24]);
+        assert_eq!(loaded.monthly, [2.5; 12]);
+    }
+
+    #[test]
+    fn search_without_a_newznab_endpoint_shows_no_demo_results() {
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.search_query = "test".into();
+        app.search();
+        assert!(app.search_results.is_empty());
+        assert!(app
+            .search_status
+            .to_ascii_lowercase()
+            .contains("not configured"));
+    }
+
     #[cfg(target_os = "windows")]
     #[test]
     fn execute_hooks_use_per_collection_and_default_commands() {
@@ -3136,8 +3261,18 @@ mod integration_tests {
 
         app.run_execute_hook(201);
         app.run_execute_hook(202);
+        let one_ready = || {
+            std::fs::read_to_string(first.join("marker.txt"))
+                .map(|text| text.trim() == "one")
+                .unwrap_or(false)
+        };
+        let two_ready = || {
+            std::fs::read_to_string(second.join("marker.txt"))
+                .map(|text| text.trim() == "two")
+                .unwrap_or(false)
+        };
         for _ in 0..100 {
-            if first.join("marker.txt").exists() && second.join("marker.txt").exists() {
+            if one_ready() && two_ready() {
                 break;
             }
             std::thread::sleep(std::time::Duration::from_millis(20));

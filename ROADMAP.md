@@ -12,7 +12,7 @@ navigation/copy/paste and portable packaging are implemented and exercised.
 The remaining items are optional polish or need external data: a live Newznab
 index, a known-good PAR2 release and a second server.
 
-- **Phase 0 — done for the baseline.** 37 tests, mock NNTP tests, screenshot
+- **Phase 0 — done for the baseline.** 40 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real PAR2/damaged-RAR fixtures and
   the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -35,11 +35,11 @@ index, a known-good PAR2 release and a second server.
 - **Phase 5 — done for common use.** Explorer has multi-select
   (Ctrl/Shift), navigation, history, favourites, context menu, delete, rename,
   open-with, drag/drop copying, clipboard copy/cut/paste and columns.
-- **Phase 6 — mostly done.** Log retention, persistent history, category
-  routing, multi-server use, thread priority, player launch, execute hooks,
-  file Join/Split and HTTP/SOCKS5 proxy support are implemented. Native tray
-  show/restore/Exit, minimize-to-tray and close-to-tray work; tray balloon
-  notifications and speed-in-tray remain.
+- **Phase 6 — mostly done.** Log retention, persistent real history and transfer
+  statistics, category routing, multi-server use, thread priority, player launch,
+  execute hooks, file Join/Split and HTTP/SOCKS5 proxy support are implemented.
+  Native tray show/restore/Exit, minimize-to-tray and close-to-tray work; tray
+  balloon notifications and speed-in-tray remain.
 - **Phase 7 — mostly done.** Original icon, window/exe resources, a portable
   release zip (`app/package.ps1`) and a golden screenshot matrix
   (`app/screenshots.ps1`) are done. An installer remains.
@@ -127,8 +127,10 @@ live testing.
 
 - Settings are enforced for proxy, thread priorities, auto-import,
   execute/player, log retention and history.
-- Persist real download history and statistics; remove seeded/approximate data.
-- Apply category keyword/folder rules on import and manual category changes.
+- Download history and daily/monthly transfer statistics are real and persisted
+  in `newsqueue-history.json` / `newsqueue-stats.json`; demo values only appear
+  in screenshot mode.
+- Category keyword/folder rules are applied on import and manual category changes.
 - Tray balloon notifications, Windows shutdown and the remaining shortcuts.
 - **Done when:** every visible setting has an observable effect and a test.
 
