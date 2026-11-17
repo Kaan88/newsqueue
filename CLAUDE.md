@@ -386,9 +386,11 @@ Live check on 2026-11-18 (single server, after the CRC and failover changes):
 `Love.Under.the.Mistletoe` (1.21 GB, 5 files) downloaded with 0 missing articles
 and PAR2 verified it clean. `Civilization.IV` (1.63 GB, 40 files, `.rar`/`.rNN`)
 downloaded with 0 missing articles; PAR2 reported damage and repaired it, then
-UnRAR extracted `rld-civ4.iso` (1.45 GB) without errors. Why the Civ set needed
-repair with no missing or CRC-failed articles is not established (the posts
-may carry no `pcrc32`, or were damaged when posted).
+UnRAR extracted `rld-civ4.iso` (1.45 GB) without errors. The "repair" was not
+damage: a verify-only run on a fresh download shows all 2270 RAR/SFV data
+blocks intact and only `reloaded.nfo` missing. The NZB's 40 files do not include
+that NFO, but the PAR2 set covers it, so PAR2 rebuilt it from one recovery
+block. The downloader output was byte-exact.
 
 ## 12. Where to start for common changes
 

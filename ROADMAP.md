@@ -129,9 +129,11 @@ Live check on 2026-11-18 (single server, after the CRC and failover changes):
 `Love.Under.the.Mistletoe` (1.21 GB, 5 files) downloaded with 0 missing articles
 and PAR2 verified it clean. `Civilization.IV` (1.63 GB, 40 files, `.rar`/`.rNN`)
 downloaded with 0 missing articles; PAR2 reported damage and repaired it, then
-UnRAR extracted `rld-civ4.iso` (1.45 GB) without errors. Why the Civ set needed
-repair with no missing or CRC-failed articles is not established (the posts
-may carry no `pcrc32`, or were damaged when posted).
+UnRAR extracted `rld-civ4.iso` (1.45 GB) without errors. The "repair" was not
+damage: a verify-only run on a fresh download shows all 2270 RAR/SFV data
+blocks intact and only `reloaded.nfo` missing. The NZB's 40 files do not include
+that NFO, but the PAR2 set covers it, so PAR2 rebuilt it from one recovery
+block. The downloader output was byte-exact.
 
 Current state: usable Windows clone. Strong on layout, queue/status maths, NNTP,
 PAR2, unrar extraction, tray/shutdown behaviour and common Explorer browsing.
@@ -235,7 +237,7 @@ live testing.
 
 1. **Done: live download → PAR2 → unrar.** Both supplied NZBs downloaded
    cleanly; Mistletoe verified, Civilization.IV was repaired by PAR2 and
-   extracted. Open question: why Civ needed repair with no missing articles.
+   extracted; its only PAR2 "damage" was an NFO the NZB never listed.
 2. **A second Usenet server account.** Multi-server scheduling is implemented,
    but live failover needs a second account. Mock 430/CRC failover and
    reconnect tests cover the logic.
@@ -266,8 +268,8 @@ live testing.
 ## Suggested next order
 
 1. Add a mock NNTP read-timeout test.
-2. Find out why the live `Civilization.IV` set needed PAR2 repair with no
-   missing articles (check whether its posts carry `pcrc32`).
+2. Optional: report files a PAR2 set covers but the NZB does not list as
+   "not in NZB" rather than as a generic repair.
 3. Configure a live Newznab endpoint/key and verify search → add → download.
 4. Exercise live second-server failover with a second account.
 5. Optional: checksum-on-complete, code signing, shortcut polish and a full
