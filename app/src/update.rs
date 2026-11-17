@@ -98,7 +98,10 @@ pub fn parse_release(json: &str) -> Result<Release, String> {
 
 fn fetch_latest() -> Result<Release, String> {
     // NQ_UPDATE_REPO (owner/name) is a diagnostic override for testing.
-    let repo = std::env::var("NQ_UPDATE_REPO").unwrap_or_else(|_| HOME_REPO.to_string());
+    let repo = std::env::var("NQ_UPDATE_REPO")
+        .ok()
+        .filter(|repo| !repo.trim().is_empty())
+        .unwrap_or_else(|| HOME_REPO.to_string());
     let url = format!("https://api.github.com/repos/{repo}/releases/latest");
     let body = agent()
         .get(&url)
