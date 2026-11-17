@@ -22,7 +22,6 @@ NewsQueue uses its own versioning: the current release is **1.0.1**.
 - Explorer tab with folder tree, file list, multi-select, back/forward/up history,
   favourites, filters, context menu, rename/delete and configurable columns
 - RSS feed fetching with filter-based autodownload
-- Generic Newznab search (configure URL/API key in Setup > NZB)
 - Per-collection or default execute commands after successful download/PAR2/unrar
 - File join/split actions in the queue and Explorer
 - Native Windows notification-area icon with show/restore, Exit, off-screen
@@ -33,7 +32,7 @@ NewsQueue uses its own versioning: the current release is **1.0.1**.
 - Per-user Windows installer with Start Menu/Desktop shortcuts, Add/Remove
   Programs entry and uninstaller (`app/build-installer.ps1`)
 - Setup pages, server editor, scheduler, categories, real persisted statistics,
-  search, notes, log, PAR2 list and speed limiting
+  notes, log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
 
 ## Build and test
@@ -59,7 +58,6 @@ cargo run -- --unrar-test <folder-with-rar> <dest>
 cargo run -- --par2-test <folder-with-par2>
 cargo run -- --rss-test
 cargo run -- --rss-download-test
-cargo run -- --search-test <query>
 cargo run -- --download-test <file.nzb>
 .\tray-verify.ps1
 ```

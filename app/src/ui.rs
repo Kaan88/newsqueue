@@ -151,12 +151,6 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
         }
         r.on_hover_text("Remove downloaded entries from the queue and completed PAR2 sets");
         toolbar_sep(ui);
-        let r = theme::tool_button(ui, "Search", Icon::Search, false);
-        if r.clicked() {
-            app.show_search = true;
-        }
-        r.on_hover_text("Global search [CTRL+F]");
-        toolbar_sep(ui);
         let r = theme::tool_button(
             ui,
             "Scheduler",

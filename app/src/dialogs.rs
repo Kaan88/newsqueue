@@ -61,9 +61,6 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if app.show_unrar_password {
         unrar_password_window(app, ctx);
     }
-    if app.show_search {
-        search_window(app, ctx);
-    }
     if app.show_speed_limit {
         speed_limit_window(app, ctx);
     }
@@ -583,12 +580,6 @@ fn page_misc3(ui: &mut Ui, s: &mut Settings) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Global search history limit");
-            ui.add(egui::DragValue::new(&mut s.search_history_limit).range(0..=1000));
-            ui.end_row();
-            ui.label("Global dropdown limit");
-            ui.add(egui::DragValue::new(&mut s.dropdown_limit).range(0..=1000));
-            ui.end_row();
             ui.label("RSS refresh interval");
             ui.add(
                 egui::DragValue::new(&mut s.rss_refresh_minutes)
@@ -596,19 +587,7 @@ fn page_misc3(ui: &mut Ui, s: &mut Settings) {
                     .suffix(" min"),
             );
             ui.end_row();
-            ui.label("Index API key");
-            let mut key = String::new();
-            ui.add_sized(
-                [260.0, 20.0],
-                TextEdit::singleline(&mut key).hint_text("optional"),
-            );
-            ui.end_row();
         });
-    ui.label(
-        RichText::new("The search panel is local in this build; no index site is contacted.")
-            .size(9.0)
-            .color(theme::TEXT_MUTED),
-    );
 }
 
 fn page_nzb(ui: &mut Ui, s: &mut Settings) {
@@ -618,19 +597,6 @@ fn page_nzb(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 7.0])
         .show(ui, |ui| {
             dir_row(ui, "Default NZB folder", &mut s.nzb_dir);
-            ui.label("Newznab URL");
-            ui.add_sized(
-                [300.0, 20.0],
-                TextEdit::singleline(&mut s.newznab_url)
-                    .hint_text("https://index.example/api"),
-            );
-            ui.end_row();
-            ui.label("Newznab API key");
-            ui.add_sized(
-                [300.0, 20.0],
-                TextEdit::singleline(&mut s.newznab_api_key).password(true),
-            );
-            ui.end_row();
             ui.label("Autoimport NZB files from folder");
             ui.horizontal(|ui| {
                 ui.add_sized(
@@ -1113,9 +1079,6 @@ fn page_ui2(ui: &mut Ui, s: &mut Settings) {
         .show(ui, |ui| {
             ui.label("Auto focus on main control in tabs");
             ui.checkbox(&mut s.autofocus, "");
-            ui.end_row();
-            ui.label("Focus search combo when switching tabs");
-            ui.checkbox(&mut s.autofocus_search, "");
             ui.end_row();
             ui.label("Use dialog when renaming/changing folders");
             ui.checkbox(&mut s.alternate_rename, "");
@@ -2221,79 +2184,6 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
     }
 }
 
-
-fn search_window(app: &mut App, ctx: &egui::Context) {
-    let mut open = app.show_search;
-    egui::Window::new("Global search")
-        .default_pos([250.0, 120.0])
-        .default_size([760.0, 520.0])
-        .min_size([560.0, 360.0])
-        .resizable(true)
-        .collapsible(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Search for");
-                ui.add_sized(
-                    [320.0, 22.0],
-                    TextEdit::singleline(&mut app.search_query)
-                        .hint_text("Enter words to search for"),
-                );
-                if ui.button("Search").clicked() {
-                    app.search();
-                }
-                if ui.button("Clear").clicked() {
-                    app.search_query.clear();
-                    app.search_results.clear();
-                    app.search_status = "No results".into();
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                let names = ["Index A", "Index B", "Index C", "Index D", "Index E"];
-                for (i, name) in names.iter().enumerate() {
-                    ui.checkbox(&mut app.search_engines[i], *name);
-                }
-            });
-            ui.separator();
-            ui.label(
-                RichText::new(&app.search_status)
-                    .size(9.5)
-                    .color(theme::TEXT_MUTED),
-            );
-            egui::ScrollArea::vertical()
-                .id_salt("search_results_scroll")
-                .auto_shrink([false, false])
-                .show(ui, |ui| {
-                    egui::Grid::new("search_grid")
-                        .num_columns(7)
-                        .spacing([10.0, 4.0])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for h in ["Subject", "Size", "Age", "Group", "Poster", "%", ""] {
-                                ui.label(RichText::new(h).size(9.0).strong());
-                            }
-                            ui.end_row();
-                            let results = app.search_results.clone();
-                            for (i, r) in results.iter().enumerate() {
-                                ui.label(RichText::new(&r.subject).size(9.2));
-                                ui.label(RichText::new(format!("{:.1} MB", r.size_mb)).size(9.0));
-                                ui.label(RichText::new(format_age(r.age)).size(9.0));
-                                ui.label(RichText::new(&r.group).size(9.0));
-                                ui.label(RichText::new(&r.poster).size(9.0));
-                                ui.label(RichText::new(format!("{}%", r.percent)).size(9.0));
-                                if ui
-                                    .add_sized([52.0, 18.0], egui::Button::new("Add"))
-                                    .clicked()
-                                {
-                                    app.add_search_result(i);
-                                }
-                                ui.end_row();
-                            }
-                        });
-                });
-        });
-    app.show_search = open;
-}
 
 fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_speed_limit;

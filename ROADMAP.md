@@ -19,15 +19,15 @@ content-based naming for obfuscated posts.
 | PAR2 | Done for the core chain | Real verify/repair, damaged-RAR fixture, download → PAR2 → unrar |
 | Unrar | Done for the common path | Overwrite/rename, strip-root, archive/group/NZB subfolders, auto-rename, delete-empty-folder, password prompt and retry, delete/move patterns, target folder |
 | RSS | Done | Live feed returned 100 items; filters downloaded a real NZB |
-| Search | Implemented, mock-tested | Generic Newznab parser/NZB add path; no live endpoint/key configured |
+| Search | Removed | Global/Newznab search was cut on 2026-11-18 |
 | Explorer | Done for common use | Multi-select, history, context menu, rename/delete, open-with, drag/drop, clipboard, columns |
 | Tray | Done | Off-screen minimize-to-tray with taskbar entry removed, speed tooltip, download/unrar balloons, Show/Exit |
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
 | Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.1` |
-| Verification | Baseline done | 69 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Verification | Baseline done | 67 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
-| Live service validation | Blocked | Needs a valid PAR2 release, a Newznab endpoint/key and a second server |
+| Live service validation | Blocked | Needs a second server |
 
 ### Fixed: every download was byte-corrupted (2026-11-04)
 
@@ -86,7 +86,7 @@ Obfuscated releases arrive as `Rar!` payloads with random names such as
 
 ### Phase summary
 
-- **Phase 0 - done for the baseline.** 69 tests, mock NNTP tests, screenshot
+- **Phase 0 - done for the baseline.** 67 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real damaged-RAR/PAR2 fixtures,
   an encrypted-RAR fixture and the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -104,10 +104,10 @@ Obfuscated releases arrive as `Rar!` payloads with random names such as
   manual unpack, auto-rename to collection, delete-empty-folder, archive/group/NZB
   subfolders and the password prompt with retry work. Encrypted archives are
   detected, prompted for and retried with the entered per-collection password.
-- **Phase 4 — RSS and search are implemented.** Feed URLs and filters are
-  stored locally (never committed); a live feed returned 100 items, the filter
-  test downloaded one NZB, and generic Newznab search was exercised against a
-  mock endpoint. A real index URL/API key is still not configured.
+- **Phase 4 — RSS is implemented; search was cut.** Feed URLs and filters are
+  stored locally (never committed); a live feed returned 100 items and the
+  filter test downloaded one NZB. Global/Newznab search was removed on
+  2026-11-18 and is out of scope.
 - **Phase 5 — done for common use.** Explorer has multi-select
   (Ctrl/Shift), navigation, history, favourites, context menu, delete, rename,
   open-with, drag/drop copying, clipboard copy/cut/paste and columns.
@@ -193,15 +193,12 @@ live testing.
 - **Done when:** each option has an automated or manual test and `Unpack now`
   works on a real downloaded set.
 
-## Phase 4 — RSS and search (L)
+## Phase 4 — RSS (L)
 
 - Real RSS/Atom fetching and refresh timer.
 - Implement the original filter grammar (`| A/D/F/P/R`, download/unrar folders,
   execute command) and autodownload decisions.
-- Real global search: Newznab/search-provider configuration, history, dropdown
-  and add-to-queue.
-- **Done when:** a feed fixture produces the expected accept/deny decisions and
-  a test search endpoint can add a real result to the queue.
+- **Done when:** a feed fixture produces the expected accept/deny decisions.
 
 ## Phase 5 — Explorer shell parity (M)
 
@@ -244,11 +241,7 @@ live testing.
 
 ### Blocked on external services
 
-3. **A live Newznab endpoint and API key.** RSS is verified with the supplied
-   feed (100 items, one NZB downloaded through a filter); the API key is stored
-   only in the local gitignored settings. Generic Newznab search is implemented
-   and mock-tested, but no live index is configured.
-4. **Code-signing certificate** if signed release binaries are required. This is
+3. **Code-signing certificate** if signed release binaries are required. This is
    optional for private use.
 
 ### Not blocked
@@ -270,9 +263,8 @@ live testing.
 1. Add a mock NNTP read-timeout test.
 2. Optional: report files a PAR2 set covers but the NZB does not list as
    "not in NZB" rather than as a generic repair.
-3. Configure a live Newznab endpoint/key and verify search → add → download.
-4. Exercise live second-server failover with a second account.
-5. Optional: checksum-on-complete, code signing, shortcut polish and a full
+3. Exercise live second-server failover with a second account.
+4. Optional: code signing, shortcut polish and a full
    per-setting checklist.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.

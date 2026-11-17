@@ -18,6 +18,8 @@ versioning.
 - Platform: Windows x64
 - UI: eframe/egui 0.29, custom light theme
 - Network: std threads, blocking sockets, no async runtime
+- Out of scope: global/Newznab search (removed 2026-11-18; the toolbar has no
+  Search button and Ctrl+F does nothing)
 
 `v1.0.0` was deleted and recreated on 2026-11-04 because every download made
 before the yEnc escape fix was corrupt; `v1.0.1` supersedes it with
@@ -33,13 +35,12 @@ Everything that is part of the application lives in `app/`.
 | `app/src/main.rs` | `App` state, CLI entry, `App::tick()`, eframe `update`, timers, scheduler, worker start/finish, logging, autosave |
 | `app/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
 | `app/src/ui.rs` | Main window, tabs, queue table, status bar, Explorer, PAR2/RSS/Log tabs, queue actions |
-| `app/src/dialogs.rs` | 17 setup pages, server editor, stats/search/columns, password prompt, shutdown, file join/split and other modal windows |
+| `app/src/dialogs.rs` | 17 setup pages, server editor, stats/columns, password prompt, shutdown, file join/split and other modal windows |
 | `app/src/download.rs` | Real NNTP/yEnc downloader: TLS/plain, HTTP CONNECT/SOCKS5, workers, cache, resume, retries |
 | `app/src/container.rs` | Container detection from payload bytes (RAR5 volume numbers, RAR4, ZIP, 7Z, PAR2) used to name obfuscated downloads |
 | `app/src/par2.rs` | PAR2 verify/repair worker using `app/tools/par2.exe` |
 | `app/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
 | `app/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
-| `app/src/search.rs` | Generic Newznab search and NZB fetch |
 | `app/src/files.rs` | File join/split used by queue and Explorer |
 | `app/src/theme.rs` | Measured colours, fonts, icon drawing, widget metrics |
 | `app/src/tray.rs` | Win32 tray icon, off-screen hide/show, taskbar add/remove, tooltip, balloons |
@@ -79,7 +80,7 @@ copy credentials or feed/index URLs into source, docs, logs, commits or replies.
 `*.nqpart` files are resume sidecars. Keep them until a download finishes.
 
 Sample/demo data is used only by `--screenshot` mode. Normal runs must not show
-sample queue entries, fake statistics, demo search results or seeded logs.
+sample queue entries, fake statistics or seeded logs.
 
 `app_base()` returns the project `app/` directory for debug/release binaries
 launched from `target/debug` or `target/release`, otherwise the executable's
@@ -187,7 +188,7 @@ Important settings areas:
 
 - Connection/servers, TLS/plain, connections, retries, proxy
 - Download folders, skip-existing, auto-import, delete NZB after import
-- NZB naming/merge/category and Newznab URL/key
+- NZB naming/merge/category
 - PAR2 checking/repairing and tool options
 - Unrar/unpack options, archive/group/NZB subfolders, password per collection
 - Scheduler, speed limits, startup connect
@@ -226,7 +227,6 @@ cargo run -- --unrar-test <folder-with-rar> <dest>
 cargo run -- --par2-test <folder-with-par2>
 cargo run -- --rss-test
 cargo run -- --rss-download-test
-cargo run -- --search-test <query>
 cargo run -- --download-test <file.nzb>
 .\tray-verify.ps1
 .\shutdown-verify.ps1
@@ -244,7 +244,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 69 unit/integration tests currently pass.
+- 67 unit/integration tests currently pass.
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.
@@ -369,7 +369,7 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 ## 11. Current roadmap state and blockers
 
 Done: downloader, PAR2 core chain, unrar options and password prompt, RSS,
-mock-tested Newznab search, Explorer common actions, real statistics/history,
+Explorer common actions, real statistics/history,
 tray, off-screen behaviour, shutdown, portable packaging and installer.
 
 Not done / pending:
@@ -379,7 +379,6 @@ Not done / pending:
 Blocked on user-supplied data:
 
 - A currently available release with a valid PAR2 set for live repair validation.
-- A live Newznab endpoint and API key.
 - A second Usenet server account for live failover.
 
 Live check on 2026-11-18 (single server, after the CRC and failover changes):

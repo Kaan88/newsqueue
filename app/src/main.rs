@@ -7,7 +7,6 @@ mod files;
 mod model;
 mod par2;
 mod rss;
-mod search;
 mod shutdown;
 mod theme;
 mod tray;
@@ -179,17 +178,6 @@ fn sample_history() -> Vec<HistoryItem> {
     ]
 }
 
-#[derive(Clone, Debug)]
-pub struct SearchResult {
-    pub subject: String,
-    pub size_mb: f64,
-    pub age: f64,
-    pub group: String,
-    pub poster: String,
-    pub percent: u32,
-    pub url: String,
-}
-
 pub struct App {
     pub settings: Settings,
     pub setup_draft: Settings,
@@ -199,8 +187,6 @@ pub struct App {
     pub logs: VecDeque<LogEntry>,
     pub threads: Vec<ThreadRow>,
     pub history: Vec<HistoryItem>,
-    pub search_results: Vec<SearchResult>,
-    pub search_rx: Option<std::sync::mpsc::Receiver<Result<Vec<search::SearchHit>, String>>>,
     pub selected: Option<Selection>,
     pub selected_par2: Option<usize>,
     pub active_tab: usize,
@@ -262,13 +248,9 @@ pub struct App {
     pub show_unrar_password: bool,
     pub unrar_password_draft: String,
     pub unrar_password_target: Option<u64>,
-    pub show_search: bool,
     pub show_speed_limit: bool,
     pub show_filter_help: bool,
     pub show_message: Option<(String, String)>,
-    pub search_query: String,
-    pub search_engines: [bool; 5],
-    pub search_status: String,
     pub filter: String,
     pub log_filter: String,
     pub rss_filter: String,
@@ -402,8 +384,6 @@ impl App {
             logs: if demo { sample_log() } else { VecDeque::new() },
             threads,
             history,
-            search_results: Vec::new(),
-            search_rx: None,
             selected: None,
             selected_par2: None,
             active_tab: 0,
@@ -465,13 +445,9 @@ impl App {
             show_unrar_password: false,
             unrar_password_draft: String::new(),
             unrar_password_target: None,
-            show_search: false,
             show_speed_limit: false,
             show_filter_help: false,
             show_message: None,
-            search_query: String::new(),
-            search_engines: [true, true, true, false, false],
-            search_status: "No results".into(),
             filter: String::new(),
             log_filter: String::new(),
             rss_filter: String::new(),
@@ -555,7 +531,6 @@ impl App {
             Ok("stats") => app.show_stats = true,
             Ok("shutdown") => app.show_shutdown = true,
             Ok("unrar-password") => app.show_unrar_password = true,
-            Ok("search") => app.show_search = true,
             Ok("categories") => app.show_categories = true,
             Ok("notes") => app.show_notes = true,
             Ok("about") => app.show_about = true,
@@ -1547,40 +1522,6 @@ impl App {
         }
     }
 
-    fn poll_search(&mut self) {
-        let Some(rx) = self.search_rx.take() else {
-            return;
-        };
-        match rx.try_recv() {
-            Ok(Ok(hits)) => {
-                self.search_results = hits
-                    .into_iter()
-                    .map(|hit| SearchResult {
-                        subject: hit.subject,
-                        size_mb: hit.size_mb,
-                        age: hit.age,
-                        group: hit.group,
-                        poster: hit.poster,
-                        percent: 100,
-                        url: hit.url,
-                    })
-                    .collect();
-                self.search_status = format!("{} results", self.search_results.len());
-                self.log("Search", &format!("Found {} result(s).", self.search_results.len()));
-            }
-            Ok(Err(error)) => {
-                self.search_status = "Search failed".into();
-                self.log("Error", &format!("Search failed: {error}"));
-                self.toast("Search failed");
-            }
-            Err(std::sync::mpsc::TryRecvError::Empty) => self.search_rx = Some(rx),
-            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                self.search_status = "Search failed".into();
-                self.log("Error", "Search worker stopped unexpectedly.");
-            }
-        }
-    }
-
     fn auto_import_nzbs(&mut self) {
         let folder = PathBuf::from(&self.settings.auto_import_folder);
         if folder.as_os_str().is_empty() {
@@ -2257,7 +2198,6 @@ impl App {
         self.poll_unrar();
         self.poll_par2();
         self.poll_rss();
-        self.poll_search();
         if self.rss_timer
             && self.rss_rx.is_none()
             && now.duration_since(self.rss_last_refresh)
@@ -2665,14 +2605,13 @@ impl App {
     }
 
     pub fn handle_keys(&mut self, ctx: &egui::Context) {
-        let (f1, f2, f3, f9, ctrl_f, ctrl_p, ctrl_d, del, ctrl_up, ctrl_down, ctrl_e, escape) = ctx
+        let (f1, f2, f3, f9, ctrl_p, ctrl_d, del, ctrl_up, ctrl_down, ctrl_e, escape) = ctx
             .input(|i| {
                 (
                     i.key_pressed(egui::Key::F1),
                     i.key_pressed(egui::Key::F2),
                     i.key_pressed(egui::Key::F3),
                     i.key_pressed(egui::Key::F9),
-                    i.modifiers.command && i.key_pressed(egui::Key::F),
                     i.modifiers.command && i.key_pressed(egui::Key::P),
                     i.modifiers.command && i.key_pressed(egui::Key::D),
                     i.key_pressed(egui::Key::Delete),
@@ -2695,16 +2634,13 @@ impl App {
             self.show_threads = !self.show_threads;
             self.settings.thread_list_visible = self.show_threads;
         }
-        if ctrl_f {
-            self.show_search = true;
-        }
         if ctrl_p {
             self.pause_selected(true);
         }
         if ctrl_d {
             self.pause_selected(false);
         }
-        if del && !self.show_setup && !self.show_search {
+        if del && !self.show_setup {
             self.delete_selected();
         }
         if ctrl_up {
@@ -2733,8 +2669,6 @@ impl App {
                 self.show_about = false;
             } else if self.show_stats {
                 self.show_stats = false;
-            } else if self.show_search {
-                self.show_search = false;
             } else if self.show_categories {
                 self.show_categories = false;
             } else if self.show_server_edit {
@@ -2743,71 +2677,6 @@ impl App {
                 self.show_setup = false;
             }
         }
-    }
-
-    pub fn search(&mut self) {
-        let q = self.search_query.trim().to_string();
-        if q.is_empty() {
-            self.search_status = "No results".into();
-            self.search_results.clear();
-            return;
-        }
-        if !self.settings.newznab_url.trim().is_empty() {
-            if self.search_rx.is_some() {
-                self.toast("Search already running");
-                return;
-            }
-            let base = self.settings.newznab_url.clone();
-            let key = self.settings.newznab_api_key.clone();
-            let query = q.clone();
-            let (tx, rx) = std::sync::mpsc::channel();
-            std::thread::spawn(move || {
-                let _ = tx.send(search::search(&base, &key, &query));
-            });
-            self.search_rx = Some(rx);
-            self.search_status = "Searching...".into();
-            self.log("Search", &format!("Newznab search for: {q}"));
-            return;
-        }
-        self.search_results.clear();
-        self.search_status = "Newznab is not configured (Setup > NZB)".into();
-        self.log("Search", "Search skipped: Newznab URL is not configured.");
-    }
-
-    pub fn add_search_result(&mut self, index: usize) {
-        let Some(r) = self.search_results.get(index).cloned() else {
-            return;
-        };
-        if !r.url.trim().is_empty() {
-            let bytes = match search::fetch_nzb(&r.url) {
-                Ok(bytes) => bytes,
-                Err(error) => {
-                    self.show_message = Some(("Search".into(), format!("Could not download NZB:\n{error}")));
-                    return;
-                }
-            };
-            let _ = std::fs::create_dir_all(&self.settings.nzb_dir);
-            let path = PathBuf::from(&self.settings.nzb_dir)
-                .join(format!("{}.nzb", sanitize_folder(&r.subject)));
-            if let Err(error) = std::fs::write(&path, bytes) {
-                self.show_message = Some(("Search".into(), format!("Could not save NZB:\n{error}")));
-                return;
-            }
-            match parse_nzb(&path) {
-                Ok(nzb) => {
-                    self.add_nzb_from_parsed(nzb, r.url.clone(), false);
-                }
-                Err(error) => {
-                    let _ = std::fs::remove_file(&path);
-                    self.show_message = Some(("Search".into(), format!("Invalid NZB:\n{error}")));
-                }
-            }
-            return;
-        }
-        self.show_message = Some((
-            "Search".into(),
-            "This search result has no NZB link.".into(),
-        ));
     }
 
     fn roll_transfer_stats(&mut self) {
@@ -3234,26 +3103,6 @@ fn main() -> eframe::Result<()> {
             }
         }
     }
-    if let Some(position) = args.iter().position(|a| a == "--search-test") {
-        let settings = Settings::load();
-        let query = args
-            .get(position + 1)
-            .cloned()
-            .unwrap_or_else(|| "test".into());
-        match search::search(&settings.newznab_url, &settings.newznab_api_key, &query) {
-            Ok(hits) => {
-                println!("{} search result(s)", hits.len());
-                for hit in hits.iter().take(10) {
-                    println!("{} | {:.1} MB", hit.subject, hit.size_mb);
-                }
-                return Ok(());
-            }
-            Err(error) => {
-                eprintln!("search test failed: {error}");
-                std::process::exit(1);
-            }
-        }
-    }
     if let Some(position) = args.iter().position(|a| a == "--par2-test") {
         let source = args
             .get(position + 1)
@@ -3431,18 +3280,6 @@ mod integration_tests {
         assert_eq!(loaded.longest_uptime_secs, 5_400);
         assert_eq!(loaded.daily, [1.5; 24]);
         assert_eq!(loaded.monthly, [2.5; 12]);
-    }
-
-    #[test]
-    fn search_without_a_newznab_endpoint_shows_no_demo_results() {
-        let mut app = App::new(Settings::default(), Some("unused.png".into()));
-        app.search_query = "test".into();
-        app.search();
-        assert!(app.search_results.is_empty());
-        assert!(app
-            .search_status
-            .to_ascii_lowercase()
-            .contains("not configured"));
     }
 
     #[test]

@@ -127,7 +127,6 @@ pub enum Icon {
     Nzb,
     Download,
     Cleanup,
-    Search,
     Scheduler,
     Shutdown,
     Setup,
@@ -439,16 +438,6 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 color,
                 Stroke::NONE,
             ));
-        }
-        Icon::Search => {
-            painter.circle_stroke(c + Vec2::new(-s * 0.08, -s * 0.08), s * 0.26, stroke);
-            painter.line_segment(
-                [
-                    Pos2::new(c.x + s * 0.10, c.y + s * 0.10),
-                    Pos2::new(c.x + s * 0.32, c.y + s * 0.32),
-                ],
-                Stroke::new(stroke.width * 1.4, color),
-            );
         }
         Icon::Scheduler | Icon::Eta => {
             painter.circle_stroke(c, s * 0.34, stroke);
