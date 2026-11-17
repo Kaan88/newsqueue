@@ -382,11 +382,13 @@ Blocked on user-supplied data:
 - A live Newznab endpoint and API key.
 - A second Usenet server account for live failover.
 
-The `Civilization.IV` and `Love.Under.the.Mistletoe` transfers that used to look
-inconsistent were most likely the yEnc escape bug fixed on 2026-11-04 (see the
-gotchas in section 10); re-test them before calling the server data bad. The
-generated damaged-RAR and encrypted-RAR fixtures remain the reliable repair
-verification path.
+Live check on 2026-11-18 (single server, after the CRC and failover changes):
+`Love.Under.the.Mistletoe` (1.21 GB, 5 files) downloaded with 0 missing articles
+and PAR2 verified it clean. `Civilization.IV` (1.63 GB, 40 files, `.rar`/`.rNN`)
+downloaded with 0 missing articles; PAR2 reported damage and repaired it, then
+UnRAR extracted `rld-civ4.iso` (1.45 GB) without errors. Why the Civ set needed
+repair with no missing or CRC-failed articles is not established (the posts
+may carry no `pcrc32`, or were damaged when posted).
 
 ## 12. Where to start for common changes
 
