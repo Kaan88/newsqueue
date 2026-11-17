@@ -86,14 +86,15 @@ Server (`newsqueue-server`):
 
 Web UI:
 
-- Plain HTML/CSS/JS, embedded in the binary with `include_str!`. No build
-  step, no npm.
+- The egui front end compiled to WebAssembly (eframe web), served by the
+  server and talking to it only through the JSON API and SSE. The same
+  widgets and theme as the desktop app, so look-and-feel work on egui now
+  carries over. Fonts are bundled for the web build (no Windows font folder).
 - Pages: Queue (collections with expandable files, progress, speed, ETA,
   per-item actions, drag to reorder), History, Log, Add NZB (upload,
   URL, drag-and-drop file), Settings (servers, folders, PAR2/unpack, speed
   limit/scheduler, RSS).
 - Usable on a phone. Light/dark from the system.
-- It does not copy the AltBinz look; that stays the desktop app's job.
 
 Docker:
 
@@ -114,6 +115,10 @@ Testing:
   Completed.
 
 ## Phase 2: Windows desktop front end (native Win32)
+
+**On hold (2026-11-18).** AltBinz parity is no longer a requirement and the
+egui front end is kept for the web build, so the desktop app stays on egui
+unless there is a concrete reason to go native. The original proposal follows.
 
 The desktop app is rewritten on native Win32. This is required, not an
 experiment: egui is removed from the desktop build at the end of this phase.

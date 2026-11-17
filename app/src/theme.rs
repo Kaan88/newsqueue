@@ -3,30 +3,77 @@ use eframe::egui::{
     self, Align2, Color32, FontFamily, FontId, Pos2, Rect, Response, Rounding, Sense, Stroke, Ui,
     Vec2,
 };
-pub const BG: Color32 = Color32::from_rgb(187, 206, 230);
-pub const BG_LIGHT: Color32 = Color32::from_rgb(214, 228, 245);
-pub const BG_PALE: Color32 = Color32::from_rgb(232, 240, 250);
-pub const BG_HOVER: Color32 = Color32::from_rgb(205, 223, 244);
-pub const BG_ACTIVE: Color32 = Color32::from_rgb(160, 196, 235);
+pub const BG: Color32 = Color32::from_rgb(214, 226, 242);
+pub const BG_LIGHT: Color32 = Color32::from_rgb(230, 238, 248);
+pub const BG_PALE: Color32 = Color32::from_rgb(242, 246, 252);
+pub const BG_HOVER: Color32 = Color32::from_rgb(220, 234, 252);
+pub const BG_ACTIVE: Color32 = Color32::from_rgb(196, 222, 250);
 pub const PANEL_WHITE: Color32 = Color32::from_rgb(255, 255, 255);
 pub const ROW_ALT: Color32 = Color32::from_rgb(247, 250, 255);
 #[allow(dead_code)]
 pub const ROW_GROUP: Color32 = Color32::from_rgb(239, 245, 252);
 #[allow(dead_code)]
 pub const ROW_SELECT: Color32 = Color32::from_rgb(204, 228, 255);
-pub const TEXT: Color32 = Color32::from_rgb(24, 30, 40);
+pub const TEXT: Color32 = Color32::from_rgb(26, 30, 38);
 pub const TEXT_MUTED: Color32 = Color32::from_rgb(90, 100, 115);
 pub const TEXT_GROUP: Color32 = Color32::from_rgb(0, 0, 102);
-pub const ACCENT: Color32 = Color32::from_rgb(44, 109, 178);
-pub const BORDER: Color32 = Color32::from_rgb(150, 170, 195);
-pub const BORDER_LIGHT: Color32 = Color32::from_rgb(205, 218, 234);
+pub const ACCENT: Color32 = Color32::from_rgb(0, 103, 192);
+pub const BORDER: Color32 = Color32::from_rgb(170, 188, 212);
+pub const BORDER_LIGHT: Color32 = Color32::from_rgb(214, 224, 238);
 pub const GREEN: Color32 = Color32::from_rgb(92, 190, 92);
 pub const GREEN_DARK: Color32 = Color32::from_rgb(52, 135, 62);
 pub const ORANGE: Color32 = Color32::from_rgb(214, 138, 45);
 pub const RED: Color32 = Color32::from_rgb(196, 64, 64);
 pub const BLUE: Color32 = Color32::from_rgb(54, 118, 190);
 pub const YELLOW: Color32 = Color32::from_rgb(240, 196, 64);
-pub fn install(ctx: &egui::Context) {
+/// Segoe UI from the Windows font folder, falling back to egui's built-in
+/// font when it is missing. Adds a `semibold` family for headings.
+fn install_fonts(ctx: &egui::Context) {
+    let mut fonts = egui::FontDefinitions::default();
+    let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
+    let load = |file: &str| std::fs::read(std::path::Path::new(&dir).join("Fonts").join(file)).ok();
+    let mut add = |name: &str, file: &str| -> bool {
+        match load(file) {
+            Some(bytes) => {
+                fonts
+                    .font_data
+                    .insert(name.into(), egui::FontData::from_owned(bytes));
+                true
+            }
+            None => false,
+        }
+    };
+    let regular = add("segoe", "segoeui.ttf");
+    let semibold = add("segoe-semibold", "seguisb.ttf");
+    let mono = add("consolas", "consola.ttf");
+    let prop = fonts.families.entry(FontFamily::Proportional).or_default();
+    if regular {
+        prop.insert(0, "segoe".into());
+    }
+    let fallback = prop.clone();
+    let mut bold = fallback.clone();
+    if semibold {
+        bold.insert(0, "segoe-semibold".into());
+    }
+    fonts.families.insert(FontFamily::Name("semibold".into()), bold);
+    if mono {
+        fonts
+            .families
+            .entry(FontFamily::Monospace)
+            .or_default()
+            .insert(0, "consolas".into());
+    }
+    ctx.set_fonts(fonts);
+}
+
+pub fn semibold(size: f32) -> FontId {
+    FontId::new(size, FontFamily::Name("semibold".into()))
+}
+
+/// `fixed_scale` pins one pixel per point (deterministic screenshots);
+/// otherwise the monitor's DPI scale is used.
+pub fn install(ctx: &egui::Context, fixed_scale: bool) {
+    install_fonts(ctx);
     let mut style = (*ctx.style()).clone();
     style.visuals = egui::Visuals::light();
     style.visuals.panel_fill = BG;
@@ -34,10 +81,14 @@ pub fn install(ctx: &egui::Context) {
     style.visuals.extreme_bg_color = PANEL_WHITE;
     style.visuals.faint_bg_color = ROW_ALT;
     style.visuals.override_text_color = Some(TEXT);
-    style.visuals.window_rounding = Rounding::same(4.0);
-    style.visuals.menu_rounding = Rounding::same(3.0);
-    style.visuals.selection.bg_fill = ACCENT;
-    style.visuals.selection.stroke = Stroke::new(1.0_f32, Color32::WHITE);
+    style.visuals.window_rounding = Rounding::same(6.0);
+    style.visuals.menu_rounding = Rounding::same(4.0);
+    style.visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
+    style.visuals.window_shadow = egui::epaint::Shadow { offset: Vec2::new(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(40) };
+    style.visuals.popup_shadow = egui::epaint::Shadow { offset: Vec2::new(0.0, 2.0), blur: 8.0, spread: 0.0, color: Color32::from_black_alpha(30) };
+    for w in [&mut style.visuals.widgets.noninteractive, &mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered, &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] { w.rounding = Rounding::same(3.0); }
+    style.visuals.selection.bg_fill = Color32::from_rgb(153, 200, 245);
+    style.visuals.selection.stroke = Stroke::new(1.0_f32, TEXT);
     style.visuals.widgets.noninteractive.bg_fill = BG;
     style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER_LIGHT);
     style.visuals.widgets.inactive.bg_fill = BG_LIGHT;
@@ -51,36 +102,40 @@ pub fn install(ctx: &egui::Context) {
     style.visuals.widgets.active.weak_bg_fill = BG_ACTIVE;
     style.visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
     style.visuals.widgets.open.bg_fill = BG_PALE;
-    style.spacing.item_spacing = Vec2::new(4.0, 3.0);
-    style.spacing.button_padding = Vec2::new(6.0, 3.0);
+    style.spacing.item_spacing = Vec2::new(6.0, 4.0);
+    style.spacing.button_padding = Vec2::new(10.0, 3.0);
+    style.spacing.window_margin = egui::Margin::same(10.0);
+    style.interaction.selectable_labels = false;
     style.spacing.interact_size.y = 22.0;
     style.text_styles.insert(
         egui::TextStyle::Body,
-        FontId::new(11.0, FontFamily::Proportional),
+        FontId::new(12.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Button,
-        FontId::new(10.5, FontFamily::Proportional),
+        FontId::new(12.0, FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Small,
-        FontId::new(9.5, FontFamily::Proportional),
+        FontId::new(10.5, FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Heading,
-        FontId::new(14.0, FontFamily::Proportional),
+        semibold(15.0),
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
-        FontId::new(10.5, FontFamily::Monospace),
+        FontId::new(11.5, FontFamily::Monospace),
     );
     ctx.set_style(style);
-    ctx.set_pixels_per_point(1.0);
+    if fixed_scale {
+        ctx.set_pixels_per_point(1.0);
+    }
 }
 pub fn paint_toolbar_gradient(ui: &Ui, rect: Rect) {
     let p = ui.painter();
-    let top = Color32::from_rgb(164, 199, 240);
-    let mid = Color32::from_rgb(190, 211, 235);
+    let top = Color32::from_rgb(246, 249, 254);
+    let mid = Color32::from_rgb(232, 240, 250);
     let bottom = BG;
     let steps = 18;
     for i in 0..steps {
@@ -107,7 +162,7 @@ pub fn paint_toolbar_gradient(ui: &Ui, rect: Rect) {
             rect.left_top() + Vec2::new(0.0, 1.0),
             rect.right_top() + Vec2::new(0.0, 1.0),
         ],
-        Stroke::new(1.0_f32, Color32::from_rgb(230, 240, 252)),
+        Stroke::new(1.0_f32, Color32::WHITE),
     );
 }
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
@@ -206,7 +261,7 @@ pub fn tool_button(ui: &mut Ui, caption: &str, icon: Icon, active: bool) -> Resp
         caption_rect.center(),
         Align2::CENTER_CENTER,
         caption,
-        FontId::proportional(10.0),
+        FontId::proportional(11.0),
         TEXT,
     );
     resp
@@ -276,7 +331,7 @@ pub fn tab_button(ui: &mut Ui, caption: &str, icon: Icon, selected: bool, width:
         Pos2::new(rect.left() + 27.0, rect.center().y),
         Align2::LEFT_CENTER,
         caption,
-        FontId::proportional(11.0),
+        if selected { semibold(12.0) } else { FontId::proportional(12.0) },
         TEXT,
     );
     resp
@@ -954,27 +1009,28 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
     let desired = Vec2::new(ui.available_width().max(20.0), 15.0);
     let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
     let p = ui.painter();
-    p.rect_filled(rect, Rounding::same(1.0), Color32::from_rgb(236, 240, 246));
-    p.rect_stroke(
-        rect,
-        Rounding::same(1.0),
-        Stroke::new(1.0_f32, Color32::from_rgb(160, 175, 195)),
-    );
+    let rect = rect.shrink2(Vec2::new(0.0, 1.0));
+    p.rect_filled(rect, Rounding::same(3.0), Color32::from_rgb(238, 242, 248));
     let fill = if complete {
-        Color32::from_rgb(198, 209, 222)
+        Color32::from_rgb(200, 212, 226)
     } else {
-        Color32::from_rgb(190, 225, 250)
+        Color32::from_rgb(134, 196, 132)
     };
-    let mut inner = rect.shrink(1.0);
+    let mut inner = rect;
     inner.set_width((inner.width() * fraction.clamp(0.0, 1.0)).max(0.0));
     if inner.width() > 0.5 {
-        p.rect_filled(inner, Rounding::ZERO, fill);
+        p.rect_filled(inner, Rounding::same(3.0), fill);
     }
+    p.rect_stroke(
+        rect,
+        Rounding::same(3.0),
+        Stroke::new(1.0_f32, Color32::from_rgb(186, 198, 214)),
+    );
     p.text(
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::proportional(9.5),
+        FontId::proportional(10.5),
         TEXT,
     );
 }
@@ -1001,4 +1057,16 @@ pub fn thin_separator(ui: &mut Ui) {
         [rect.center_top(), rect.center_bottom()],
         Stroke::new(1.0_f32, BORDER_LIGHT),
     );
+}
+
+/// The folder a Browse dialog opens in: the current value when it exists,
+/// else its nearest existing parent.
+pub fn start_dir(value: &str) -> std::path::PathBuf {
+    let mut path = std::path::PathBuf::from(value.trim());
+    while !path.as_os_str().is_empty() && !path.is_dir() {
+        if !path.pop() {
+            break;
+        }
+    }
+    path
 }

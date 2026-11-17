@@ -9,7 +9,11 @@ before changing code. `AGENTS.md` contains the short day-to-day command list;
 
 NewsQueue is a Windows-only, from-scratch Rust/egui clone of AltBinz 0.48.4. It
 is a private-use desktop Usenet downloader, not a source-code or artwork copy of
-the original. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
+the original. **AltBinz parity is no longer a requirement (2026-11-18):** prefer a
+sensible app with useful settings over measured AltBinz behaviour; the
+measurements remain as reference. The UI uses Segoe UI (loaded from the
+Windows font folder), follows the monitor DPI outside `--screenshot` mode, and
+labels are not text-selectable. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
 - Current app version: **1.0.2**

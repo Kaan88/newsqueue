@@ -2805,7 +2805,7 @@ fn main() -> eframe::Result<()> {
         &format!("{APP_NAME} {VERSION}"),
         native_options,
         Box::new(move |cc| {
-            theme::install(&cc.egui_ctx);
+            theme::install(&cc.egui_ctx, screenshot.is_some());
             Ok(Box::new(App::new(settings, screenshot)))
         }),
     )

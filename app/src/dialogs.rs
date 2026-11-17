@@ -156,7 +156,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                                 for (i, name) in SETUP_PAGES.iter().enumerate() {
                                     let r = ui.selectable_label(
                                         app.setup_page == i,
-                                        format!("[+] {name}"),
+                                        *name,
                                     );
                                     if r.clicked() {
                                         app.setup_page = i;
@@ -245,7 +245,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
 
 fn heading(ui: &mut Ui, text: &str) {
     ui.add_space(2.0);
-    ui.label(RichText::new(text).size(10.0).strong());
+    ui.label(RichText::new(text).size(12.0).strong());
     ui.add_space(2.0);
 }
 
@@ -269,7 +269,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
                 }
                 ui.label(
                     RichText::new(format!("({:.2} Mbit/s)", s.max_speed_mbps))
-                        .size(9.0)
+                        .size(11.0)
                         .color(theme::TEXT_MUTED),
                 );
             });
@@ -289,7 +289,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
                 }
                 ui.label(
                     RichText::new(format!("({:.0} KB/s)", s.max_speed_kbps))
-                        .size(9.0)
+                        .size(11.0)
                         .color(theme::TEXT_MUTED),
                 );
             });
@@ -316,7 +316,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
     ui.add_space(8.0);
     ui.label(
         RichText::new("The original profile saved 8 connections with SSL on port 563. SSL switches the default port between 563 and 119. The limits are 200 connections per server and 8 servers per level.")
-            .size(9.0)
+            .size(11.0)
             .color(theme::TEXT_MUTED),
     );
 }
@@ -324,9 +324,9 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
 fn dir_row(ui: &mut Ui, label: &str, value: &mut String) {
     ui.label(label);
     ui.horizontal(|ui| {
-        ui.add_sized([340.0, 20.0], TextEdit::singleline(value));
+        ui.add_sized([380.0, 22.0], TextEdit::singleline(value));
         if ui.button("Browse...").clicked() {
-            if let Some(p) = rfd::FileDialog::new().pick_folder() {
+            if let Some(p) = rfd::FileDialog::new().set_directory(crate::theme::start_dir(value)).pick_folder() {
                 *value = p.to_string_lossy().to_string();
             }
         }
@@ -353,7 +353,7 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
                         .range(0..=1_000_000)
                         .suffix(" MB"),
                 );
-                ui.label(RichText::new("pause downloading").size(9.0));
+                ui.label(RichText::new("pause downloading").size(11.0));
             });
             ui.end_row();
 
@@ -381,7 +381,7 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
             ui.end_row();
         });
     ui.add_space(8.0);
-    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(9.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(11.0).color(theme::TEXT_MUTED));
 }
 
 fn page_download2(ui: &mut Ui, s: &mut Settings) {
@@ -437,7 +437,7 @@ fn page_log(ui: &mut Ui, s: &mut Settings) {
         });
     ui.label(
         RichText::new("The log keeps 200 visible lines in this build and writes one file per day.")
-            .size(9.0)
+            .size(11.0)
             .color(theme::TEXT_MUTED),
     );
 }
@@ -532,7 +532,7 @@ fn page_nzb(ui: &mut Ui, s: &mut Settings) {
                     TextEdit::singleline(&mut s.auto_import_folder),
                 );
                 if ui.button("Browse...").clicked() {
-                    if let Some(p) = rfd::FileDialog::new().pick_folder() {
+                    if let Some(p) = rfd::FileDialog::new().set_directory(crate::theme::start_dir(&s.auto_import_folder)).pick_folder() {
                         s.auto_import_folder = p.to_string_lossy().to_string();
                     }
                 }
@@ -627,7 +627,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
         RichText::new(
             "Each row is a day; each cell is a 30-minute slot. Green means downloading is allowed.",
         )
-        .size(9.0)
+        .size(11.0)
         .color(theme::TEXT_MUTED),
     );
     ui.add_space(6.0);
@@ -642,7 +642,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
     let mut click: Option<(usize, usize)> = None;
     for (d, day) in days.iter().enumerate() {
         ui.horizontal(|ui| {
-            ui.add_sized([34.0, 16.0], Label::new(RichText::new(*day).size(9.0)));
+            ui.add_sized([34.0, 16.0], Label::new(RichText::new(*day).size(11.0)));
             let chars: Vec<char> = s.scheduler[d].chars().collect();
             for slot in 0..SCHEDULE_SLOTS {
                 let (rect, resp) =
@@ -680,7 +680,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
                 [22.0, 12.0],
                 Label::new(
                     RichText::new(format!("{h:02}"))
-                        .size(8.0)
+                        .size(10.5)
                         .color(theme::TEXT_MUTED),
                 ),
             );
@@ -736,22 +736,22 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
         .striped(true)
         .show(ui, |ui| {
             for h in ["On", "Name", "Address", "Port", "Conn.", "SSL", "Level"] {
-                ui.label(RichText::new(h).size(9.0).strong());
+                ui.label(RichText::new(h).size(11.0).strong());
             }
             ui.end_row();
             for (i, server) in s.servers.iter_mut().enumerate() {
                 ui.checkbox(&mut server.enabled, "");
                 let selected = app.setup_server_selected == Some(i);
                 if ui
-                    .selectable_label(selected, RichText::new(&server.name).size(9.2))
+                    .selectable_label(selected, RichText::new(&server.name).size(11.5))
                     .clicked()
                 {
                     app.setup_server_selected = Some(i);
                 }
-                ui.label(RichText::new(&server.address).size(9.0));
-                ui.label(RichText::new(server.port.to_string()).size(9.0));
-                ui.label(RichText::new(server.connections.to_string()).size(9.0));
-                ui.label(RichText::new(if server.ssl { "Yes" } else { "No" }).size(9.0));
+                ui.label(RichText::new(&server.address).size(11.0));
+                ui.label(RichText::new(server.port.to_string()).size(11.0));
+                ui.label(RichText::new(server.connections.to_string()).size(11.0));
+                ui.label(RichText::new(if server.ssl { "Yes" } else { "No" }).size(11.0));
                 ui.label(
                     RichText::new(format!(
                         "Level {} ({})",
@@ -762,7 +762,7 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
                             "Backup"
                         }
                     ))
-                    .size(9.0),
+                    .size(11.0),
                 );
                 ui.end_row();
             }
@@ -770,7 +770,7 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
     ui.add_space(6.0);
     ui.label(
         RichText::new("A server needs a name, an address and a non-zero port. SSL switches the default port between 563 and 119.")
-            .size(9.0)
+            .size(11.0)
             .color(theme::TEXT_MUTED),
     );
     match action {
@@ -921,7 +921,7 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
             );
             ui.end_row();
         });
-    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(9.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(11.0).color(theme::TEXT_MUTED));
 }
 
 fn server_edit_window(app: &mut App, ctx: &egui::Context) {
@@ -1026,7 +1026,7 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
             if !app.server_edit_error.is_empty() {
                 ui.label(
                     RichText::new(&app.server_edit_error)
-                        .size(9.5)
+                        .size(11.5)
                         .color(theme::RED),
                 );
             }
@@ -1102,11 +1102,11 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                         ui.label("Select day");
                         ui.label(
                             RichText::new(chrono::Local::now().format("%Y-%m-%d").to_string())
-                                .size(9.5),
+                                .size(11.5),
                         );
                         ui.label(
                             RichText::new("(MB per hour)")
-                                .size(9.0)
+                                .size(11.0)
                                 .color(theme::TEXT_MUTED),
                         );
                     });
@@ -1143,7 +1143,7 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(
                                 RichText::new("Double click to open")
-                                    .size(9.0)
+                                    .size(11.0)
                                     .color(theme::TEXT_MUTED),
                             );
                         });
@@ -1158,18 +1158,18 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                                 .spacing([24.0, 5.0])
                                 .striped(true)
                                 .show(ui, |ui| {
-                                    ui.label(RichText::new("Name").size(9.0).strong());
-                                    ui.label(RichText::new("Date").size(9.0).strong());
-                                    ui.label(RichText::new("Size").size(9.0).strong());
+                                    ui.label(RichText::new("Name").size(11.0).strong());
+                                    ui.label(RichText::new("Date").size(11.0).strong());
+                                    ui.label(RichText::new("Size").size(11.0).strong());
                                     ui.end_row();
                                     for item in &app.history {
-                                        ui.label(RichText::new(&item.name).size(9.3));
+                                        ui.label(RichText::new(&item.name).size(11.5));
                                         ui.label(
                                             RichText::new(&item.date)
-                                                .size(9.0)
+                                                .size(11.0)
                                                 .color(theme::TEXT_MUTED),
                                         );
-                                        ui.label(RichText::new(&item.size).size(9.0));
+                                        ui.label(RichText::new(&item.size).size(11.0));
                                         ui.end_row();
                                     }
                                 });
@@ -1238,7 +1238,7 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
                 egui::pos2(bar.center().x, bottom + 10.0),
                 Align2::CENTER_CENTER,
                 labels.get(i).cloned().unwrap_or_default(),
-                FontId::proportional(8.0),
+                FontId::proportional(10.5),
                 theme::TEXT_MUTED,
             );
         }
@@ -1308,14 +1308,14 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
         egui::pos2(inner.left(), inner.bottom() + 4.0),
         Align2::LEFT_TOP,
         "2 minutes ago",
-        FontId::proportional(8.0),
+        FontId::proportional(10.5),
         theme::TEXT_MUTED,
     );
     p.text(
         egui::pos2(inner.right(), inner.bottom() + 4.0),
         Align2::RIGHT_TOP,
         "now",
-        FontId::proportional(8.0),
+        FontId::proportional(10.5),
         theme::TEXT_MUTED,
     );
 }
@@ -1335,12 +1335,12 @@ fn about_window(app: &mut App, ctx: &egui::Context) {
                 theme::paint_icon(ui.painter(), rect.shrink(10.0), Icon::Connect, theme::ACCENT);
                 ui.add_space(6.0);
                 ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::TEXT_GROUP));
-                ui.label(RichText::new(format!("Version {VERSION}")).size(10.5));
-                ui.label(RichText::new(format!("Build date {BUILD_DATE}")).size(9.5).color(theme::TEXT_MUTED));
+                ui.label(RichText::new(format!("Version {VERSION}")).size(12.0));
+                ui.label(RichText::new(format!("Build date {BUILD_DATE}")).size(11.5).color(theme::TEXT_MUTED));
                 ui.add_space(8.0);
-                ui.label(RichText::new("A desktop Usenet download queue, rebuilt from the observed layout and behaviour.").size(9.8));
+                ui.label(RichText::new("A desktop Usenet download queue, rebuilt from the observed layout and behaviour.").size(12.0));
                 ui.add_space(4.0);
-                ui.label(RichText::new("Free version. Independent project; not affiliated with the original application.").size(9.0).color(theme::TEXT_MUTED));
+                ui.label(RichText::new("Free version. Independent project; not affiliated with the original application.").size(11.0).color(theme::TEXT_MUTED));
                 ui.add_space(10.0);
                 if ui.button("OK").clicked() {
                     app.show_about = false;
@@ -1402,7 +1402,7 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
                 .show(ui, |ui| {
                     for (i, name) in QUEUE_COLUMN_NAMES.iter().enumerate() {
                         ui.checkbox(&mut visible[i], "");
-                        ui.label(RichText::new(*name).size(9.5));
+                        ui.label(RichText::new(*name).size(11.5));
                         ui.add(
                             egui::DragValue::new(&mut widths[i])
                                 .range(24.0..=800.0)
@@ -1492,7 +1492,7 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
         .collapsible(false)
         .open(&mut open)
         .show(ctx, |ui| {
-            ui.label(RichText::new("Pause downloading for:").size(10.0));
+            ui.label(RichText::new("Pause downloading for:").size(12.0));
             let presets = [5u32, 15, 30, 60, 120, 180, 240, 300];
             ui.horizontal_wrapped(|ui| {
                 for p in presets {
@@ -1538,7 +1538,7 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
                     .as_secs();
                 ui.label(
                     RichText::new(format!("Remaining: {}m {:02}s", secs / 60, secs % 60))
-                        .size(9.0)
+                        .size(11.0)
                         .color(theme::TEXT_MUTED),
                 );
             }
@@ -1595,7 +1595,7 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
         .collapsible(false)
         .open(&mut open)
         .show(ctx, |ui| {
-            ui.label(RichText::new("Shutdown method").size(10.0));
+            ui.label(RichText::new("Shutdown method").size(12.0));
             let methods = ["Shutdown Windows", "Hibernate", "Sleep", "Exit"];
             egui::ComboBox::from_id_salt("shutdown_method")
                 .selected_text(app.settings.shutdown_method.clone())
@@ -1614,7 +1614,7 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                         "{} in {secs}s",
                         app.settings.shutdown_method
                     ))
-                    .size(10.0)
+                    .size(12.0)
                     .color(theme::ORANGE),
                 );
                 if ui.button("Abort").clicked() {
@@ -1628,7 +1628,7 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                     "After a 15 second countdown NewsQueue runs the selected action. \
                      Shutdown, Hibernate and Sleep affect Windows; Exit only closes NewsQueue.",
                 )
-                .size(8.8)
+                .size(10.5)
                 .color(theme::TEXT_MUTED),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1659,7 +1659,7 @@ fn execute_command_window(app: &mut App, ctx: &egui::Context) {
             );
             ui.label(
                 RichText::new("Placeholders: {folder}, {name}, {file}")
-                    .size(9.0)
+                    .size(11.0)
                     .color(theme::TEXT_MUTED),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1713,7 +1713,7 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
                 RichText::new(
                     "pattern | A[P]  or  pattern | D\nLast matching line wins. P starts the item paused.",
                 )
-                .size(9.0)
+                .size(11.0)
                 .color(theme::TEXT_MUTED),
             );
             ui.add(
@@ -1770,7 +1770,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
                         app.status_mode_speed
                     )
                 ))
-                .size(9.5)
+                .size(11.5)
                 .color(theme::TEXT_MUTED),
             );
             ui.add_space(4.0);
@@ -1799,7 +1799,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
             ui.separator();
             ui.label(
                 RichText::new("The limit is applied to the total of all connections.")
-                    .size(8.8)
+                    .size(10.5)
                     .color(theme::TEXT_MUTED),
             );
         });
@@ -1825,7 +1825,7 @@ fn filter_help_window(app: &mut App, ctx: &egui::Context) {
                      Optional letters after A: F (add as first), P (add as paused), R (use release name).\n\n\
                      The last matching filter wins. Lines beginning with ; are comments.",
                 )
-                .size(9.5),
+                .size(11.5),
             );
             ui.add_space(8.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1851,7 +1851,7 @@ fn message_window(app: &mut App, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.add_space(6.0);
-            ui.label(RichText::new(text).size(10.0));
+            ui.label(RichText::new(text).size(12.0));
             ui.add_space(10.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("OK").clicked() {
