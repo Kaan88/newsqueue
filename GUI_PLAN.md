@@ -7,7 +7,7 @@ the earlier Win32-only plan.
 
 One downloader core with two front ends:
 
-- **Windows desktop**: the AltBinz-style app, as today.
+- **Windows desktop**: the AltBinz-style app, rewritten on native Win32.
 - **Docker web**: the same engine running headless on Linux (NAS, server),
   controlled from a browser.
 
@@ -113,31 +113,57 @@ Testing:
 - A container smoke test: `docker build`, run, upload a mock NZB, wait for
   Completed.
 
-## Phase 2: Windows desktop front end
+## Phase 2: Windows desktop front end (native Win32)
 
-Keeps the current features: AltBinz layout, tray, shutdown countdown,
+The desktop app is rewritten on native Win32. This is required, not an
+experiment: egui is removed from the desktop build at the end of this phase.
+It keeps the current features: AltBinz layout, tray, shutdown countdown,
 installer and self-update.
 
-- Step 1: the egui app moves to `desktop` and drives the `Engine` handle.
-  Behaviour and golden screenshots must not change.
-- Step 2: the tray hides the window with `SW_HIDE` and drops the off-screen
-  placement and `ITaskbarList3` tab removal, since the engine no longer
-  depends on frames. Rewrite `tray-verify.ps1` and
-  `download-while-tray-verify.ps1` for this.
-- Step 3 (optional): a native Win32 spike, as the earlier plan described —
-  virtual ListView queue, Win32 toolbar/tabs/status bar, dialogs at the
-  measured DFM coordinates, `PrintWindow` screenshot tests. Go only if it
-  clearly beats egui next to `shots/golden/queue.png`; otherwise polish egui
-  (Segoe UI, DPI-correct scaling, crisp icons, hover/pressed states).
+Why: AltBinz is Delphi VCL over the Win32 common controls, so native
+ListView/TreeView, toolbar, tabs and status bar recreate it most faithfully.
+It also brings real ClearType text, per-monitor DPI, keyboard navigation and
+accessibility, plus a virtual ListView that handles any queue size.
+
+Crate: `windows` (windows-rs) with small in-house wrappers; `winsafe` if raw
+windows-rs is too verbose. Not `native-windows-gui` (unmaintained).
+
+- Step 1: the egui app moves to `desktop` and drives the `Engine` handle,
+  unchanged, so there is a working app throughout the rewrite.
+- Step 2, main window and queue: toolbar with the measured buttons and
+  drawn icons, tab control, queue secondary toolbar, status bar with the
+  measured panes. Queue is a virtual ListView (`LVS_REPORT | LVS_OWNERDATA`)
+  using `QUEUE_COLUMN_WIDTHS`, collections shown with indented file rows and
+  an expand glyph, progress custom-drawn (`NM_CUSTOMDRAW`). A `WM_TIMER`
+  redraws only changed rows from the `Snapshot`. Per-monitor v2 DPI manifest.
+- Step 3, tabs: PAR2, Log (virtual ListView), RSS (feed + item ListViews).
+- Step 4, dialogs: a layout helper places controls at the coordinates from
+  the DFM evidence (`investigation.cany/`, `reference/`). Setup is a modeless
+  dialog with the 15 pages in the original order, bound to `Settings` by a
+  `bind_check`/`bind_edit`/`bind_combo` table. Then the server editor, stats,
+  columns, rename, unrar password, shutdown countdown, execute command, RSS
+  feeds, speed limit, version/update and the rest. File and folder pickers
+  through `IFileOpenDialog` (replaces `rfd`).
+- Step 5, tray and cleanup: keep the `Shell_NotifyIconW` code but hide with
+  `SW_HIDE`; drop the off-screen placement and `ITaskbarList3` tab removal.
+  Rewrite `tray-verify.ps1`, `download-while-tray-verify.ps1` and
+  `screenshots.ps1` (`PrintWindow` captures, compared with a tolerance),
+  regenerate `shots/golden/`, then remove eframe/egui/egui_extras and update
+  CLAUDE.md, AGENTS.md and ROADMAP.md.
 - Optional: a "Web access" setting that starts the same server inside the
   desktop app, so the Windows install can also be controlled from a phone.
+
+Done when: the native build downloads a mock-NNTP collection end to end,
+every dialog exists, the tray/shutdown/installer scripts pass, the golden
+screenshots are regenerated from the native window, and no egui dependency
+remains in `desktop`.
 
 ## Order and effort
 
 1. Phase 0 engine split: ~1 week.
 2. Phase 1 server + web UI + Docker: ~1–2 weeks.
-3. Phase 2 step 1–2 desktop on the engine: a few days.
-4. Phase 2 step 3 native Win32: 3–4 weeks, optional.
+3. Phase 2 step 1, egui desktop on the engine: a few days.
+4. Phase 2 steps 2–5, native Win32 rewrite: 3–4 weeks.
 
 ## Risks
 
@@ -147,5 +173,11 @@ installer and self-update.
   default and `unrar` optional.
 - **Exposed web UI** holds Usenet credentials. Password required, secrets
   never returned by the API, reverse proxy for TLS.
+- **Win32 setup pages are a lot of mechanical work;** the binding table
+  keeps it manageable.
+- **Owner-data ListView with a tree:** AltBinz fakes it with indentation;
+  expand/collapse and selection need care.
+- **Real-window screenshot tests are flakier** (font smoothing, DPI); use a
+  tolerance.
 - **Two front ends drift.** Both only send `Command`s and read `Snapshot`s;
   no logic in either front end.
