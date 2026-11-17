@@ -12,8 +12,8 @@ is a private-use desktop Usenet downloader, not a source-code or artwork copy of
 the original. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
-- Current app version: **1.0.1**
-- Current build date: **2026-11-04**
+- Current app version: **1.0.2**
+- Current build date: **2026-11-18**
 - Parity target: **AltBinz 0.48.4**
 - Platform: Windows x64
 - UI: eframe/egui 0.29, custom light theme
@@ -266,7 +266,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 8. Versioning, packaging and releases
 
-NewsQueue uses independent versions. Current version is **1.0.1**.
+NewsQueue uses independent versions. Current version is **1.0.2** (first release that can self-update).
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
 `v1.0.1`, which adds content-based naming for obfuscated posts. There is no
 `Version?` and a timer (`check_version_minutes`, 0 = never) check GitHub

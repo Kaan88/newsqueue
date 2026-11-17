@@ -47,7 +47,7 @@ pub fn fetch_and_download(
     let agent = ureq::AgentBuilder::new()
         .tls_connector(Arc::new(tls))
         .timeout(Duration::from_secs(60))
-        .user_agent("NewsQueue/1.0.1")
+        .user_agent(&format!("NewsQueue/{}", crate::model::VERSION))
         .build();
     let _ = std::fs::create_dir_all(nzb_dir);
     for item in &items {
@@ -168,7 +168,7 @@ pub fn fetch_feeds(urls: &[String]) -> Result<Vec<RssItem>, String> {
     let agent = ureq::AgentBuilder::new()
         .tls_connector(Arc::new(tls))
         .timeout(Duration::from_secs(30))
-        .user_agent("NewsQueue/1.0.1")
+        .user_agent(&format!("NewsQueue/{}", crate::model::VERSION))
         .build();
     let mut items = Vec::new();
     let mut errors = Vec::new();

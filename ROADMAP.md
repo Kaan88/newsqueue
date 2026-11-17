@@ -4,9 +4,9 @@ Goal: **behavioural parity** with AltBinz 0.48.4 — same workflow, settings and
 results, implemented from the measured evidence in `app/MECHANICS.md`. This is
 not a source-code or artwork copy.
 
-## Current status (2026-11-04)
+## Current status (2026-11-18)
 
-Current app version: **1.0.1**, versioned independently of the AltBinz 0.48.4
+Current app version: **1.0.2** (2026-11-18, first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds
 content-based naming for obfuscated posts.
