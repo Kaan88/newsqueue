@@ -7,12 +7,12 @@ try {
     Remove-Item Env:NQ_DEMO_TAB -ErrorAction SilentlyContinue
     Remove-Item Env:NQ_DEMO_DIALOG -ErrorAction SilentlyContinue
     cargo run -- --screenshot "shots\golden\queue.png"
-    foreach ($tab in @("par2", "explorer", "log", "rss")) {
+    foreach ($tab in @("par2", "log", "rss")) {
         $env:NQ_DEMO_TAB = $tab
         cargo run -- --screenshot "shots\golden\tab-$tab.png"
     }
     Remove-Item Env:NQ_DEMO_TAB -ErrorAction SilentlyContinue
-    foreach ($dialog in @("setup", "server", "stats", "categories", "notes", "about", "columns", "pause", "shutdown", "unrar-password")) {
+    foreach ($dialog in @("setup", "server", "stats", "notes", "about", "columns", "pause", "shutdown", "unrar-password")) {
         $env:NQ_DEMO_DIALOG = $dialog
         cargo run -- --screenshot "shots\golden\dialog-$dialog.png"
     }

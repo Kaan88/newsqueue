@@ -4,6 +4,9 @@ use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "NewsQueue";
 pub const VERSION: &str = "1.0.1";
+/// GitHub `owner/name` used for the Home button and the update check.
+pub const HOME_REPO: &str = "Kaan88/newsqueue";
+pub const HOME_URL: &str = "https://github.com/Kaan88/newsqueue";
 pub const BUILD_DATE: &str = "2026-11-04";
 pub const MAX_SPEED_KBPS: f64 = 55.0;
 pub const MAX_SPEED_MBPS: f64 = 0.44;
@@ -20,17 +23,13 @@ pub const SPEED_SAMPLE_COUNT: usize = 4;
 pub const AUTO_SPEED_WINDOW_TICKS: u32 = 60;
 pub const DEFAULT_CONNECTIONS: u32 = 8;
 pub const MAX_CONNECTIONS_PER_SERVER: u32 = 200;
-pub const MAX_SERVERS_PER_LEVEL: u32 = 8;
 pub const SSL_PORT: u16 = 563;
 pub const PLAIN_PORT: u16 = 119;
-pub const CONNECTION_RETRY_DELAY: u32 = 10;
 pub const CONNECTION_TIMEOUT: u32 = 30;
-pub const XPAT_TIMEOUT: u32 = 300;
 pub const RETRY_COUNT: u32 = 0;
 pub const RETRY_DELAY: u32 = 5;
 pub const LOW_FREE_SPACE_MB: u64 = 1000;
 pub const AUTOSAVE_MINUTES: u32 = 5;
-pub const MAX_PATH_LENGTH: u32 = 200;
 pub const LOG_KEEP_DAYS: u32 = 7;
 pub const LOG_MAX_LINES: usize = 200;
 pub const MINUTE_STATS_MS: u64 = 60_000;
@@ -66,17 +65,6 @@ pub const QUEUE_COLUMN_NAMES: [&str; 12] = [
     "Execute",
     "Delete archives",
     "Posted on",
-];
-pub const EXPLORER_COLUMN_NAMES: [&str; 9] = [
-    "Name",
-    "Size",
-    "Type",
-    "Modified",
-    "Attributes",
-    "Accessed",
-    "Created",
-    "DOS Name",
-    "Path",
 ];
 pub const MB: f64 = 1024.0 * 1024.0;
 pub const GB: f64 = MB * 1024.0;
@@ -162,7 +150,6 @@ pub struct Collection {
     pub files: Vec<QueueFile>,
     pub posted_on: String,
     pub delete_archives: bool,
-    pub category: String,
     pub password: String,
     pub source: String,
 }
@@ -241,34 +228,7 @@ pub struct RssItem {
     pub description: String,
     pub url: String,
 }
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(default)]
-pub struct Category {
-    pub name: String,
-    pub download_folder: String,
-    pub use_group: bool,
-    pub use_name: bool,
-    pub unrar: bool,
-    pub unrar_folder: String,
-    pub unrar_group: bool,
-    pub unrar_name: bool,
-    pub keywords: String,
-}
-impl Default for Category {
-    fn default() -> Self {
-        Self {
-            name: "Default".into(),
-            download_folder: String::new(),
-            use_group: false,
-            use_name: true,
-            unrar: false,
-            unrar_folder: String::new(),
-            unrar_group: false,
-            unrar_name: false,
-            keywords: String::new(),
-        }
-    }
-}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Server {
@@ -385,41 +345,29 @@ pub struct Settings {
     pub unrar_dir: String,
     pub max_speed_kbps: f64,
     pub max_speed_mbps: f64,
-    pub connections_per_thread: u32,
-    pub connection_retry_delay: u32,
-    pub connection_timeout: u32,
-    pub xpat_timeout: u32,
     pub retry_count: u32,
     pub retry_delay: u32,
-    pub connected_while_idle: bool,
-    pub grace_period: u32,
     pub low_free_space_mb: u64,
-    pub max_path_length: u32,
     pub autosave_minutes: u32,
-    pub cleanup_queue: bool,
     pub skip_existing: bool,
-    pub prompt_for_name: bool,
     pub dblclick_expand: bool,
     pub minimize_to_tray: bool,
     pub minimize_to_tray_on_close: bool,
     pub tray_balloon: bool,
     pub speed_in_tray: bool,
-    pub progress_taskbar: bool,
+    /// 0 turns the periodic version check off.
     pub check_version_minutes: u32,
-    pub status_xml: bool,
+    /// Install a newer release by itself once nothing is downloading.
+    pub auto_update: bool,
     pub clear_history_on_exit: bool,
     pub log_enabled: bool,
     pub log_to_file: bool,
     pub keep_log_days: u32,
     pub max_log_lines: usize,
     pub detailed_log: bool,
-    pub download_history: bool,
-    pub speed_and_bytes: bool,
     pub par2_checking: bool,
     pub par2_repairing: bool,
     pub cleanup_after_repair: bool,
-    pub delete_small_par2: bool,
-    pub save_par2_info: bool,
     pub auto_unrar: bool,
     pub create_dir_nzb_name: bool,
     pub create_dir_group_name: bool,
@@ -441,18 +389,14 @@ pub struct Settings {
     pub proxy_auth: bool,
     pub proxy_username: String,
     pub proxy_password: String,
-    pub max_connections_per_server: u32,
-    pub max_servers_per_level: u32,
     pub queue_bytes_mode: u8,
     pub speed_bytes_mode: u8,
     pub transfered_bytes_mode: u8,
     pub thread_list_height: f32,
     pub thread_list_visible: bool,
     pub show_tabs: [bool; 5],
-    pub show_captions: bool,
     pub column_visible: [bool; 12],
     pub column_widths: [f32; 12],
-    pub categories: Vec<Category>,
     pub servers: Vec<Server>,
     pub notes: String,
     pub scheduler: [String; 7],
@@ -460,46 +404,21 @@ pub struct Settings {
     pub shutdown_method: String,
     pub auto_import_folder: String,
     pub delete_nzb_after_import: bool,
-    pub merge_nzb: bool,
     pub auto_import_paused: bool,
-    pub sort_nzb: bool,
-    pub sort_rars: bool,
-    pub add_to_top: bool,
-    pub pause_nzb: bool,
-    pub pause_samples: bool,
-    pub pause_par2: bool,
-    pub autofocus: bool,
-    pub alternate_rename: bool,
-    pub disable_undocking: bool,
-    pub tray_single_click: bool,
-    pub keep_nfo: bool,
     pub case_insensitive_filters: bool,
     pub rss_refresh_minutes: u32,
     #[serde(default)]
     pub rss_urls: Vec<String>,
     #[serde(default)]
     pub rss_filters: String,
-    pub auto_cleanup_minutes: u32,
-    pub player_exe: String,
-    pub delete_rars_after_extract: bool,
     pub default_execute: String,
     pub hide_execute_window: bool,
     pub article_cache_mb: u32,
     pub cache_cleanup_minutes: u32,
-    pub decoder_sleep_lines: u32,
     pub download_priority: u32,
-    pub decode_priority: u32,
-    pub par2_priority: u32,
-    pub show_images: bool,
-    pub small_images: bool,
     pub exp_folders_visible: bool,
     pub exp_folders_width: f32,
-    pub explorer_columns: [bool; 9],
-    pub explorer_column_widths: [f32; 9],
-    pub explorer_favorites: Vec<String>,
     pub startup_connect: bool,
-    pub startup_pause: bool,
-    pub startup_scheduler: bool,
     pub startup_speed_limit: Option<u8>,
 }
 impl Default for Settings {
@@ -514,41 +433,27 @@ impl Default for Settings {
             unrar_dir: download.clone(),
             max_speed_kbps: MAX_SPEED_KBPS,
             max_speed_mbps: MAX_SPEED_MBPS,
-            connections_per_thread: 1,
-            connection_retry_delay: CONNECTION_RETRY_DELAY,
-            connection_timeout: CONNECTION_TIMEOUT,
-            xpat_timeout: XPAT_TIMEOUT,
             retry_count: RETRY_COUNT,
             retry_delay: RETRY_DELAY,
-            connected_while_idle: true,
-            grace_period: 0,
             low_free_space_mb: LOW_FREE_SPACE_MB,
-            max_path_length: MAX_PATH_LENGTH,
             autosave_minutes: AUTOSAVE_MINUTES,
-            cleanup_queue: true,
             skip_existing: true,
-            prompt_for_name: true,
             dblclick_expand: false,
             minimize_to_tray: true,
             minimize_to_tray_on_close: true,
             tray_balloon: true,
             speed_in_tray: true,
-            progress_taskbar: true,
             check_version_minutes: 1440,
-            status_xml: false,
+            auto_update: true,
             clear_history_on_exit: false,
             log_enabled: true,
             log_to_file: true,
             keep_log_days: LOG_KEEP_DAYS,
             max_log_lines: LOG_MAX_LINES,
             detailed_log: true,
-            download_history: true,
-            speed_and_bytes: true,
             par2_checking: true,
             par2_repairing: true,
             cleanup_after_repair: true,
-            delete_small_par2: false,
-            save_par2_info: true,
             auto_unrar: false,
             create_dir_nzb_name: false,
             create_dir_group_name: false,
@@ -570,24 +475,16 @@ impl Default for Settings {
             proxy_auth: false,
             proxy_username: String::new(),
             proxy_password: String::new(),
-            max_connections_per_server: MAX_CONNECTIONS_PER_SERVER,
-            max_servers_per_level: MAX_SERVERS_PER_LEVEL,
             queue_bytes_mode: 1,
             speed_bytes_mode: 3,
             transfered_bytes_mode: 0,
             thread_list_height: THREAD_PANEL_HEIGHT,
             thread_list_visible: true,
             show_tabs: [true; 5],
-            show_captions: true,
             column_visible: [
                 true, true, true, true, true, true, true, true, true, true, false, false,
             ],
             column_widths: QUEUE_COLUMN_WIDTHS,
-            categories: vec![Category {
-                download_folder: download.clone(),
-                unrar_folder: download,
-                ..Category::default()
-            }],
             servers: vec![Server::default()],
             notes: String::new(),
             scheduler: std::array::from_fn(|_| "10".repeat(24)),
@@ -595,44 +492,19 @@ impl Default for Settings {
             shutdown_method: "Exit".into(),
             auto_import_folder: String::new(),
             delete_nzb_after_import: false,
-            merge_nzb: true,
             auto_import_paused: false,
-            sort_nzb: true,
-            sort_rars: false,
-            add_to_top: false,
-            pause_nzb: true,
-            pause_samples: true,
-            pause_par2: true,
-            autofocus: false,
-            alternate_rename: false,
-            disable_undocking: false,
-            tray_single_click: false,
-            keep_nfo: true,
             case_insensitive_filters: true,
             rss_refresh_minutes: 15,
             rss_urls: Vec::new(),
             rss_filters: String::new(),
-            auto_cleanup_minutes: 0,
-            player_exe: String::new(),
-            delete_rars_after_extract: false,
             default_execute: String::new(),
             hide_execute_window: false,
             article_cache_mb: 0,
             cache_cleanup_minutes: 30,
-            decoder_sleep_lines: 4000,
             download_priority: 3,
-            decode_priority: 3,
-            par2_priority: 3,
-            show_images: true,
-            small_images: false,
             exp_folders_visible: true,
             exp_folders_width: 250.0,
-            explorer_columns: [true, true, true, true, true, false, false, false, false],
-            explorer_column_widths: [200.0; 9],
-            explorer_favorites: Vec::new(),
             startup_connect: false,
-            startup_pause: false,
-            startup_scheduler: false,
             startup_speed_limit: None,
         }
     }
@@ -661,18 +533,6 @@ impl Settings {
                     if rebased != *value {
                         *value = rebased;
                         changed = true;
-                    }
-                }
-                for category in &mut s.categories {
-                    for value in [
-                        &mut category.download_folder,
-                        &mut category.unrar_folder,
-                    ] {
-                        let rebased = rebase_app_path(value, &base);
-                        if rebased != *value {
-                            *value = rebased;
-                            changed = true;
-                        }
                     }
                 }
                 let is_old_demo = s.servers.len() == 1
@@ -1227,7 +1087,6 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         files: mk(first_name, 12_288.0, 8, 4),
         posted_on: "2026-10-21 21:14".into(),
         delete_archives: false,
-        category: "Default".into(),
         password: String::new(),
         source: String::new(),
     };
@@ -1253,7 +1112,6 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         files: mk(second_name, 10_240.0, 5, 5),
         posted_on: "2026-10-31 08:02".into(),
         delete_archives: false,
-        category: "Default".into(),
         password: String::new(),
         source: String::new(),
     };
@@ -1276,7 +1134,6 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         files: mk(third_name, 11_305.32, 12, 3),
         posted_on: "2026-09-04 17:40".into(),
         delete_archives: false,
-        category: "Default".into(),
         password: String::new(),
         source: String::new(),
     };

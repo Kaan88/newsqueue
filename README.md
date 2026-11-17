@@ -19,11 +19,9 @@ NewsQueue uses its own versioning: the current release is **1.0.1**.
   strip-root, password prompting, delete-archive, move/delete-pattern,
   target-folder, auto-rename-to-collection, delete-empty-folder and
   archive/group/NZB subfolder options
-- Explorer tab with folder tree, file list, multi-select, back/forward/up history,
-  favourites, filters, context menu, rename/delete and configurable columns
 - RSS feed fetching with filter-based autodownload
 - Per-collection or default execute commands after successful download/PAR2/unrar
-- File join/split actions in the queue and Explorer
+- Version check against GitHub releases with optional verified self-update
 - Native Windows notification-area icon with show/restore, Exit, off-screen
   minimize-to-tray and close-to-tray (taskbar entry removed while hidden),
   speed tooltip and completion balloons (verified by `app/tray-verify.ps1`)
@@ -31,7 +29,7 @@ NewsQueue uses its own versioning: the current release is **1.0.1**.
   abortable countdown and a mockable backend
 - Per-user Windows installer with Start Menu/Desktop shortcuts, Add/Remove
   Programs entry and uninstaller (`app/build-installer.ps1`)
-- Setup pages, server editor, scheduler, categories, real persisted statistics,
+- Setup pages, server editor, scheduler, real persisted statistics,
   notes, log, PAR2 list and speed limiting
 - `--screenshot <file>` for headless UI verification
 

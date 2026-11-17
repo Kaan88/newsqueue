@@ -131,9 +131,7 @@ pub enum Icon {
     Shutdown,
     Setup,
     Home,
-    Forum,
     Version,
-    Donate,
     About,
     Notes,
     Stats,
@@ -147,8 +145,6 @@ pub enum Icon {
     Back,
     Forward,
     Bottom,
-    Join,
-    Split,
     Collapse,
     Expand,
     Unrar,
@@ -487,12 +483,6 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 stroke,
             );
         }
-        Icon::Forum => {
-            painter.circle_stroke(c + Vec2::new(-s * 0.15, -s * 0.12), s * 0.12, thin);
-            painter.circle_stroke(c + Vec2::new(s * 0.15, -s * 0.12), s * 0.12, thin);
-            painter.circle_stroke(c + Vec2::new(-s * 0.15, s * 0.18), s * 0.18, thin);
-            painter.circle_stroke(c + Vec2::new(s * 0.15, s * 0.18), s * 0.18, thin);
-        }
         Icon::Version => {
             painter.text(
                 c,
@@ -501,19 +491,6 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 FontId::proportional(s * 0.80),
                 color,
             );
-        }
-        Icon::Donate => {
-            painter.circle_filled(c + Vec2::new(-s * 0.14, -s * 0.08), s * 0.16, color);
-            painter.circle_filled(c + Vec2::new(s * 0.14, -s * 0.08), s * 0.16, color);
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    Pos2::new(c.x - s * 0.29, c.y - s * 0.02),
-                    Pos2::new(c.x + s * 0.29, c.y - s * 0.02),
-                    Pos2::new(c.x, c.y + s * 0.32),
-                ],
-                color,
-                Stroke::NONE,
-            ));
         }
         Icon::About => {
             painter.circle_stroke(c, s * 0.34, stroke);
@@ -629,24 +606,6 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 color,
                 Stroke::NONE,
             ));
-        }
-        Icon::Join | Icon::Split => {
-            let gap = if matches!(icon, Icon::Join) {
-                s * 0.04
-            } else {
-                s * 0.16
-            };
-            let w = s * 0.20;
-            painter.rect_stroke(
-                Rect::from_center_size(Pos2::new(c.x - gap - w * 0.5, c.y), Vec2::new(w, s * 0.40)),
-                1.0,
-                thin,
-            );
-            painter.rect_stroke(
-                Rect::from_center_size(Pos2::new(c.x + gap + w * 0.5, c.y), Vec2::new(w, s * 0.40)),
-                1.0,
-                thin,
-            );
         }
         Icon::Collapse | Icon::Expand => {
             let r = Rect::from_center_size(c, Vec2::new(s * 0.46, s * 0.46));

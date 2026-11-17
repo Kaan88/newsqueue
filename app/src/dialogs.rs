@@ -7,7 +7,7 @@ use crate::model::*;
 use crate::theme::{self, Icon};
 use crate::App;
 
-const SETUP_PAGES: [&str; 17] = [
+const SETUP_PAGES: [&str; 15] = [
     "Download",
     "Download #2",
     "NZB",
@@ -23,8 +23,6 @@ const SETUP_PAGES: [&str; 17] = [
     "Miscellaneous #2",
     "Miscellaneous #3",
     "User interface",
-    "User interface #2",
-    "NZB Play",
 ];
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -33,9 +31,6 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     }
     if app.show_server_edit {
         server_edit_window(app, ctx);
-    }
-    if app.show_categories {
-        categories_window(app, ctx);
     }
     if app.show_stats {
         stats_window(app, ctx);
@@ -70,18 +65,64 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     if app.show_rss_feeds {
         rss_feeds_window(app, ctx);
     }
-    if app.show_explorer_rename {
-        explorer_rename_window(app, ctx);
-    }
     if app.show_execute_command {
         execute_command_window(app, ctx);
     }
-    if app.show_split_file {
-        split_file_window(app, ctx);
+    if app.show_version {
+        version_window(app, ctx);
     }
     if app.show_message.is_some() {
         message_window(app, ctx);
     }
+}
+
+fn version_window(app: &mut App, ctx: &egui::Context) {
+    let mut open = app.show_version;
+    let mut check = false;
+    let mut install = false;
+    egui::Window::new("Version")
+        .default_pos([420.0, 220.0])
+        .default_size([380.0, 140.0])
+        .resizable(false)
+        .collapsible(false)
+        .open(&mut open)
+        .show(ctx, |ui| {
+            ui.label(RichText::new(format!("{APP_NAME} {VERSION}")).strong());
+            ui.add_space(4.0);
+            let status = if app.update_status.is_empty() {
+                "Not checked yet.".to_string()
+            } else {
+                app.update_status.clone()
+            };
+            ui.label(status);
+            ui.add_space(8.0);
+            ui.horizontal(|ui| {
+                let busy = app.update_rx.is_some() || app.update_installing;
+                if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
+                    check = true;
+                }
+                if let Some(release) = app.update_available.clone() {
+                    let can_install = crate::update::install_dir().is_some();
+                    let label = format!("Update to {}", release.version);
+                    if ui
+                        .add_enabled(!busy && can_install, egui::Button::new(label))
+                        .clicked()
+                    {
+                        install = true;
+                    }
+                    if !release.page.is_empty() && ui.button("Release page").clicked() {
+                        ui.ctx().open_url(egui::OpenUrl::new_tab(release.page.clone()));
+                    }
+                }
+            });
+        });
+    if check {
+        app.check_for_update(true);
+    }
+    if install {
+        app.update_now();
+    }
+    app.show_version = open;
 }
 
 fn setup_window(app: &mut App, ctx: &egui::Context) {
@@ -155,9 +196,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                                     11 => page_misc(ui, &mut draft),
                                     12 => page_misc2(ui, &mut draft),
                                     13 => page_misc3(ui, &mut draft),
-                                    14 => page_ui(ui, &mut draft),
-                                    15 => page_ui2(ui, &mut draft),
-                                    _ => page_nzb_play(ui, &mut draft),
+                                    _ => page_ui(ui, &mut draft),
                                 }
                             });
                     },
@@ -165,21 +204,6 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                ui.label(RichText::new("Language").size(9.5));
-                let mut lang = "English".to_string();
-                egui::ComboBox::from_id_salt("setup_language")
-                    .selected_text(lang.clone())
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(&mut lang, "English".into(), "English");
-                    });
-                ui.add_space(12.0);
-                if ui.button("Clear history").clicked() {
-                    app.log("Setup", "Search history cleared.");
-                }
-                if ui.button("Categories...").clicked() {
-                    app.category_draft = draft.categories.clone();
-                    app.show_categories = true;
-                }
                 if ui.button("Columns...").clicked() {
                     app.column_visible_draft = app.settings.column_visible;
                     app.column_width_draft = app.settings.column_widths;
@@ -197,16 +221,12 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
         });
     app.setup_draft = draft.clone();
     if ok {
-        let old_download = app.settings.download_dir.clone();
         app.settings = draft.clone();
         if !app.settings.show_tabs.iter().any(|v| *v) {
             app.settings.show_tabs[0] = true;
         }
         app.setup_draft = app.settings.clone();
         ensure_dirs(&app.settings);
-        if app.explorer_path == std::path::PathBuf::from(&old_download) {
-            app.explorer_path = std::path::PathBuf::from(&app.settings.download_dir);
-        }
         app.show_threads = app.settings.thread_list_visible;
         app.thread_height = app.settings.thread_list_height;
         app.status_mode_speed = app.settings.speed_bytes_mode;
@@ -275,33 +295,9 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
             });
             ui.end_row();
 
-            ui.label("Nr. of connections per thread");
-            ui.add(egui::DragValue::new(&mut s.connections_per_thread).range(1..=200));
-            ui.end_row();
 
-            ui.label("Global connection timeout");
-            ui.add(
-                egui::DragValue::new(&mut s.connection_timeout)
-                    .range(1..=999)
-                    .suffix(" s"),
-            );
-            ui.end_row();
 
-            ui.label("Delay between connection retries");
-            ui.add(
-                egui::DragValue::new(&mut s.connection_retry_delay)
-                    .range(1..=999)
-                    .suffix(" s"),
-            );
-            ui.end_row();
 
-            ui.label("XPAT connection timeout");
-            ui.add(
-                egui::DragValue::new(&mut s.xpat_timeout)
-                    .range(1..=9999)
-                    .suffix(" s"),
-            );
-            ui.end_row();
 
             ui.label("Retry count");
             ui.add(egui::DragValue::new(&mut s.retry_count).range(0..=999));
@@ -315,17 +311,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
             );
             ui.end_row();
 
-            ui.label("Grace period");
-            ui.add(
-                egui::DragValue::new(&mut s.grace_period)
-                    .range(0..=1440)
-                    .suffix(" min"),
-            );
-            ui.end_row();
 
-            ui.label("Connected while idle");
-            ui.checkbox(&mut s.connected_while_idle, "");
-            ui.end_row();
         });
     ui.add_space(8.0);
     ui.label(
@@ -359,13 +345,6 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
             dir_row(ui, "Temporary folder", &mut s.temp_dir);
             dir_row(ui, "Unrar folder", &mut s.unrar_dir);
 
-            ui.label("Maximal download path length");
-            ui.add(
-                egui::DragValue::new(&mut s.max_path_length)
-                    .range(0..=100_000)
-                    .suffix(" characters"),
-            );
-            ui.end_row();
 
             ui.label("If free space on destination drive gets below");
             ui.horizontal(|ui| {
@@ -388,7 +367,6 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
 
             ui.label("Cleanup");
             ui.horizontal(|ui| {
-                ui.checkbox(&mut s.cleanup_queue, "Download queue");
                 ui.checkbox(&mut s.par2_checking, "Par2 list");
             });
             ui.end_row();
@@ -397,16 +375,13 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
             ui.checkbox(&mut s.skip_existing, "");
             ui.end_row();
 
-            ui.label("Prompt for name when importing");
-            ui.checkbox(&mut s.prompt_for_name, "");
-            ui.end_row();
 
             ui.label("Dblclick toggles expand/collapse");
             ui.checkbox(&mut s.dblclick_expand, "");
             ui.end_row();
         });
     ui.add_space(8.0);
-    ui.label(RichText::new("Use the Categories and Columns buttons at the bottom of the Setup window to edit categories and the queue columns.").size(9.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(9.0).color(theme::TEXT_MUTED));
 }
 
 fn page_download2(ui: &mut Ui, s: &mut Settings) {
@@ -415,18 +390,6 @@ fn page_download2(ui: &mut Ui, s: &mut Settings) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Always add to top");
-            ui.checkbox(&mut s.add_to_top, "Add new collection as first in list");
-            ui.end_row();
-            ui.label("Sort by subject while importing");
-            ui.checkbox(&mut s.sort_nzb, "");
-            ui.end_row();
-            ui.label("Sort rars while importing");
-            ui.checkbox(&mut s.sort_rars, "");
-            ui.end_row();
-            ui.label("Merge collections with same name");
-            ui.checkbox(&mut s.merge_nzb, "");
-            ui.end_row();
             ui.label("Delete NZB file after importing");
             ui.checkbox(&mut s.delete_nzb_after_import, "");
             ui.end_row();
@@ -437,13 +400,6 @@ fn page_download2(ui: &mut Ui, s: &mut Settings) {
             ui.checkbox(&mut s.case_insensitive_filters, "");
             ui.end_row();
         });
-    ui.add_space(8.0);
-    heading(ui, "Pause downloading");
-    ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut s.pause_nzb, "nzb files");
-        ui.checkbox(&mut s.pause_samples, "sample files");
-        ui.checkbox(&mut s.pause_par2, "par2 recovery files");
-    });
 }
 
 fn page_log(ui: &mut Ui, s: &mut Settings) {
@@ -470,12 +426,6 @@ fn page_log(ui: &mut Ui, s: &mut Settings) {
             ui.end_row();
             ui.label("Detailed logging");
             ui.checkbox(&mut s.detailed_log, "");
-            ui.end_row();
-            ui.label("Download history");
-            ui.checkbox(&mut s.download_history, "");
-            ui.end_row();
-            ui.label("Speed and transfered bytes");
-            ui.checkbox(&mut s.speed_and_bytes, "");
             ui.end_row();
             ui.label("Keep download history for last");
             ui.add(
@@ -510,24 +460,18 @@ fn page_misc(ui: &mut Ui, s: &mut Settings) {
             ui.label("Display speed in tray");
             ui.checkbox(&mut s.speed_in_tray, "");
             ui.end_row();
-            ui.label("Progress on taskbar");
-            ui.checkbox(&mut s.progress_taskbar, "");
-            ui.end_row();
             ui.label("Check for new version every");
             ui.add(
                 egui::DragValue::new(&mut s.check_version_minutes)
-                    .range(1..=9999)
-                    .suffix(" min"),
+                    .range(0..=9999)
+                    .suffix(" min (0 = never)"),
             );
             ui.end_row();
-            ui.label("Enable status in XML file");
-            ui.checkbox(&mut s.status_xml, "");
+            ui.label("Install new versions automatically");
+            ui.checkbox(&mut s.auto_update, "when idle");
             ui.end_row();
             ui.label("Clear history on exit");
             ui.checkbox(&mut s.clear_history_on_exit, "");
-            ui.end_row();
-            ui.label("Tray single click restores");
-            ui.checkbox(&mut s.tray_single_click, "");
             ui.end_row();
         });
 }
@@ -552,24 +496,8 @@ fn page_misc2(ui: &mut Ui, s: &mut Settings) {
                     .suffix(" min"),
             );
             ui.end_row();
-            ui.label("Decoder sleep cycle lines");
-            ui.add(egui::DragValue::new(&mut s.decoder_sleep_lines).range(1..=4000));
-            ui.end_row();
             ui.label("Download thread priority");
             ui.add(egui::DragValue::new(&mut s.download_priority).range(0..=5));
-            ui.end_row();
-            ui.label("Decoder thread priority");
-            ui.add(egui::DragValue::new(&mut s.decode_priority).range(0..=5));
-            ui.end_row();
-            ui.label("Par2/Unrar thread priority");
-            ui.add(egui::DragValue::new(&mut s.par2_priority).range(0..=5));
-            ui.end_row();
-            ui.label("Auto cleanup every");
-            ui.add(
-                egui::DragValue::new(&mut s.auto_cleanup_minutes)
-                    .range(0..=50_000)
-                    .suffix(" min"),
-            );
             ui.end_row();
         });
 }
@@ -616,12 +544,6 @@ fn page_nzb(ui: &mut Ui, s: &mut Settings) {
             ui.label("Delete NZB after import");
             ui.checkbox(&mut s.delete_nzb_after_import, "");
             ui.end_row();
-            ui.label("Merge NZBs with the same name");
-            ui.checkbox(&mut s.merge_nzb, "");
-            ui.end_row();
-            ui.label("Sort by subject while importing");
-            ui.checkbox(&mut s.sort_nzb, "");
-            ui.end_row();
         });
 }
 
@@ -631,62 +553,11 @@ fn page_nzb2(ui: &mut Ui, s: &mut Settings) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
-            ui.label("Add new collections to top");
-            ui.checkbox(&mut s.add_to_top, "");
-            ui.end_row();
-            ui.label("Sort rars while importing");
-            ui.checkbox(&mut s.sort_rars, "");
-            ui.end_row();
-            ui.label("Merge collections");
-            ui.checkbox(&mut s.merge_nzb, "");
-            ui.end_row();
             ui.label("Delete NZB after import");
             ui.checkbox(&mut s.delete_nzb_after_import, "");
             ui.end_row();
             ui.label("Case insensitive subject filters");
             ui.checkbox(&mut s.case_insensitive_filters, "");
-            ui.end_row();
-        });
-    ui.add_space(8.0);
-    heading(ui, "Pause downloading");
-    ui.horizontal_wrapped(|ui| {
-        ui.checkbox(&mut s.pause_nzb, "nzb files");
-        ui.checkbox(&mut s.pause_samples, "sample files");
-        ui.checkbox(&mut s.pause_par2, "par2 recovery files");
-    });
-}
-
-fn page_nzb_play(ui: &mut Ui, s: &mut Settings) {
-    heading(ui, "NZB Play");
-    egui::Grid::new("nzbplay_grid")
-        .num_columns(2)
-        .spacing([12.0, 7.0])
-        .show(ui, |ui| {
-            ui.label("Path to player exe file");
-            ui.horizontal(|ui| {
-                ui.add_sized([320.0, 20.0], TextEdit::singleline(&mut s.player_exe));
-                if ui.button("Browse...").clicked() {
-                    if let Some(p) = rfd::FileDialog::new()
-                        .add_filter("Executable", &["exe"])
-                        .pick_file()
-                    {
-                        s.player_exe = p.to_string_lossy().to_string();
-                    }
-                }
-            });
-            ui.end_row();
-            ui.label("Delete rars after extracting");
-            ui.checkbox(&mut s.delete_rars_after_extract, "");
-            ui.end_row();
-            ui.label("Default execute command");
-            ui.add_sized(
-                [320.0, 20.0],
-                TextEdit::singleline(&mut s.default_execute)
-                    .hint_text("Runs after download/PAR2/unrar; {folder}, {name}, {file}"),
-            );
-            ui.end_row();
-            ui.label("Hide execute window");
-            ui.checkbox(&mut s.hide_execute_window, "");
             ui.end_row();
         });
 }
@@ -705,15 +576,6 @@ fn page_par2(ui: &mut Ui, s: &mut Settings) {
             ui.end_row();
             ui.label("Cleanup after PAR2 repair");
             ui.checkbox(&mut s.cleanup_after_repair, "");
-            ui.end_row();
-            ui.label("Delete small PAR2 file");
-            ui.checkbox(&mut s.delete_small_par2, "");
-            ui.end_row();
-            ui.label("Save PAR2 info on exit");
-            ui.checkbox(&mut s.save_par2_info, "");
-            ui.end_row();
-            ui.label("Par2/Unrar thread priority");
-            ui.add(egui::DragValue::new(&mut s.par2_priority).range(0..=5));
             ui.end_row();
         });
 }
@@ -1038,9 +900,6 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
                 ui.checkbox(&mut s.show_tabs[4], "RSS");
             });
             ui.end_row();
-            ui.label("Show tab captions");
-            ui.checkbox(&mut s.show_captions, "");
-            ui.end_row();
             ui.label("Connections panel visible");
             ui.checkbox(&mut s.thread_list_visible, "");
             ui.end_row();
@@ -1061,38 +920,8 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
                     .suffix(" px"),
             );
             ui.end_row();
-            ui.label("Show images");
-            ui.checkbox(&mut s.show_images, "");
-            ui.end_row();
-            ui.label("Small images");
-            ui.checkbox(&mut s.small_images, "");
-            ui.end_row();
         });
     ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(9.0).color(theme::TEXT_MUTED));
-}
-
-fn page_ui2(ui: &mut Ui, s: &mut Settings) {
-    heading(ui, "User interface #2");
-    egui::Grid::new("ui2_grid")
-        .num_columns(2)
-        .spacing([12.0, 6.0])
-        .show(ui, |ui| {
-            ui.label("Auto focus on main control in tabs");
-            ui.checkbox(&mut s.autofocus, "");
-            ui.end_row();
-            ui.label("Use dialog when renaming/changing folders");
-            ui.checkbox(&mut s.alternate_rename, "");
-            ui.end_row();
-            ui.label("Disable undocking");
-            ui.checkbox(&mut s.disable_undocking, "");
-            ui.end_row();
-            ui.label("One click restores from tray");
-            ui.checkbox(&mut s.tray_single_click, "");
-            ui.end_row();
-            ui.label("Save viewed NFO file");
-            ui.checkbox(&mut s.keep_nfo, "");
-            ui.end_row();
-        });
 }
 
 fn server_edit_window(app: &mut App, ctx: &egui::Context) {
@@ -1246,102 +1075,6 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
     }
     if cancel || !open {
         app.show_server_edit = false;
-    }
-}
-
-fn categories_window(app: &mut App, ctx: &egui::Context) {
-    let mut open = app.show_categories;
-    let mut draft = app.category_draft.clone();
-    let mut save = false;
-    let mut cancel = false;
-    egui::Window::new("Categories")
-        .default_pos([140.0, 150.0])
-        .default_size([980.0, 360.0])
-        .min_size([700.0, 280.0])
-        .resizable(true)
-        .collapsible(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ScrollArea::horizontal()
-                .id_salt("categories_scroll")
-                .max_height(300.0)
-                .auto_shrink([false, true])
-                .show(ui, |ui| {
-                    egui::Grid::new("cat_grid")
-                        .num_columns(10)
-                        .spacing([4.0, 3.0])
-                        .striped(true)
-                        .show(ui, |ui| {
-                            for h in [
-                                "Del",
-                                "Name",
-                                "Download folder",
-                                "+Group",
-                                "+Name",
-                                "Unrar",
-                                "Unrar folder",
-                                "+Group",
-                                "+Name",
-                                "Keywords",
-                            ] {
-                                ui.label(RichText::new(h).size(8.8).strong());
-                            }
-                            ui.end_row();
-                            for i in 0..draft.len() {
-                                let c = &mut draft[i];
-                                if ui.add_sized([22.0, 18.0], egui::Button::new("X")).clicked() {
-                                    draft.remove(i);
-                                    break;
-                                }
-                                ui.add_sized([105.0, 20.0], TextEdit::singleline(&mut c.name));
-                                ui.add_sized(
-                                    [165.0, 20.0],
-                                    TextEdit::singleline(&mut c.download_folder),
-                                );
-                                ui.checkbox(&mut c.use_group, "");
-                                ui.checkbox(&mut c.use_name, "");
-                                ui.checkbox(&mut c.unrar, "");
-                                ui.add_sized(
-                                    [165.0, 20.0],
-                                    TextEdit::singleline(&mut c.unrar_folder),
-                                );
-                                ui.checkbox(&mut c.unrar_group, "");
-                                ui.checkbox(&mut c.unrar_name, "");
-                                ui.add_sized([140.0, 20.0], TextEdit::singleline(&mut c.keywords));
-                                ui.end_row();
-                            }
-                        });
-                });
-            ui.add_space(5.0);
-            if ui.button("Add category").clicked() {
-                draft.push(Category {
-                    name: "New category".into(),
-                    download_folder: app.settings.download_dir.clone(),
-                    use_name: true,
-                    ..Category::default()
-                });
-            }
-            ui.separator();
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
-                    save = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    cancel = true;
-                }
-            });
-        });
-    app.category_draft = draft.clone();
-    if save {
-        app.settings.categories = draft.clone();
-        app.setup_draft.categories = draft;
-        app.settings.save();
-        app.show_categories = false;
-        app.log("Setup", "Categories saved.");
-        return;
-    }
-    if cancel || !open {
-        app.show_categories = false;
     }
 }
 
@@ -1651,8 +1384,6 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_columns;
     let mut visible = app.column_visible_draft;
     let mut widths = app.column_width_draft;
-    let mut explorer_visible = app.settings.explorer_columns;
-    let mut explorer_widths = app.settings.explorer_column_widths;
     let mut save = false;
     let mut cancel = false;
     egui::Window::new("Column settings")
@@ -1681,24 +1412,6 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
                     }
                 });
             ui.separator();
-            ui.label(RichText::new("Explorer columns").size(10.0).strong());
-            egui::Grid::new("explorer_columns_grid")
-                .num_columns(3)
-                .spacing([10.0, 5.0])
-                .striped(true)
-                .show(ui, |ui| {
-                    for (i, name) in EXPLORER_COLUMN_NAMES.iter().enumerate() {
-                        ui.checkbox(&mut explorer_visible[i], "");
-                        ui.label(RichText::new(*name).size(9.5));
-                        ui.add(
-                            egui::DragValue::new(&mut explorer_widths[i])
-                                .range(50.0..=800.0)
-                                .suffix(" px"),
-                        );
-                        ui.end_row();
-                    }
-                });
-            ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if ui.button("Save").clicked() {
                     save = true;
@@ -1714,17 +1427,10 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
         if !visible.iter().any(|v| *v) {
             visible[0] = true;
         }
-        if !explorer_visible.iter().any(|v| *v) {
-            explorer_visible[0] = true;
-        }
         app.settings.column_visible = visible;
         app.settings.column_widths = widths;
-        app.settings.explorer_columns = explorer_visible;
-        app.settings.explorer_column_widths = explorer_widths;
         app.setup_draft.column_visible = visible;
         app.setup_draft.column_widths = widths;
-        app.setup_draft.explorer_columns = explorer_visible;
-        app.setup_draft.explorer_column_widths = explorer_widths;
         app.settings.save();
         app.show_columns = false;
         app.toast("Columns updated");
@@ -1932,144 +1638,6 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
             });
         });
     app.show_shutdown = open;
-}
-
-fn explorer_rename_window(app: &mut App, ctx: &egui::Context) {
-    let mut open = app.show_explorer_rename;
-    let mut draft = app.explorer_rename_draft.clone();
-    let mut save = false;
-    let mut cancel = false;
-    egui::Window::new("Rename")
-        .default_pos([430.0, 250.0])
-        .default_size([360.0, 110.0])
-        .resizable(false)
-        .collapsible(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            ui.label("New name");
-            ui.add_sized([330.0, 20.0], TextEdit::singleline(&mut draft));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
-                    save = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    cancel = true;
-                }
-            });
-        });
-    app.explorer_rename_draft = draft.clone();
-    if save {
-        if let Some(target) = app.explorer_rename_target.clone() {
-            let name = draft.trim();
-            let valid = !name.is_empty()
-                && !name
-                    .chars()
-                    .any(|character| matches!(character, '\\' | '/' | ':' | '*' | '?' | '"' | '<' | '>' | '|'));
-            if valid {
-                let parent = target
-                    .parent()
-                    .map(std::path::Path::to_path_buf)
-                    .unwrap_or_default();
-                let new_path = parent.join(name);
-                if new_path.exists() && new_path != target {
-                    app.show_message =
-                        Some(("Rename".into(), "That name already exists.".into()));
-                } else {
-                    match std::fs::rename(&target, &new_path) {
-                        Ok(()) => {
-                            if app.explorer_selected.as_ref() == Some(&target) {
-                                app.explorer_selected = Some(new_path.clone());
-                            }
-                            if app.explorer_selected_set.remove(&target) {
-                                app.explorer_selected_set.insert(new_path.clone());
-                            }
-                            app.log(
-                                "Explorer",
-                                &format!("Renamed {} to {}", target.display(), new_path.display()),
-                            );
-                            app.show_explorer_rename = false;
-                        }
-                        Err(error) => {
-                            app.show_message =
-                                Some(("Rename".into(), format!("Could not rename:\n{error}")));
-                        }
-                    }
-                }
-            }
-        }
-        return;
-    }
-    if cancel || !open {
-        app.show_explorer_rename = false;
-    }
-}
-
-fn split_file_window(app: &mut App, ctx: &egui::Context) {
-    let mut open = app.show_split_file;
-    let mut size = app.split_size_mb;
-    let mut save = false;
-    let mut cancel = false;
-    let target = app.split_file_target.clone();
-    egui::Window::new("Split file")
-        .default_pos([430.0, 260.0])
-        .default_size([420.0, 130.0])
-        .resizable(false)
-        .collapsible(false)
-        .open(&mut open)
-        .show(ctx, |ui| {
-            if let Some(target) = &target {
-                ui.label(target.display().to_string());
-            }
-            ui.horizontal(|ui| {
-                ui.label("Part size");
-                ui.add(
-                    egui::DragValue::new(&mut size)
-                        .range(1..=8192)
-                        .suffix(" MB"),
-                );
-            });
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Split").clicked() {
-                    save = true;
-                }
-                if ui.button("Cancel").clicked() {
-                    cancel = true;
-                }
-            });
-        });
-    app.split_size_mb = size;
-    if save {
-        if let Some(target) = target {
-            let parent = target
-                .parent()
-                .map(std::path::Path::to_path_buf)
-                .unwrap_or_default();
-            let stem = target
-                .file_stem()
-                .map(|stem| stem.to_string_lossy().to_string())
-                .unwrap_or_else(|| "part".into());
-            match crate::files::split_file(
-                &target,
-                size as u64 * 1024 * 1024,
-                &parent,
-                &stem,
-            ) {
-                Ok(parts) => {
-                    app.log(
-                        "Files",
-                        &format!("Split {} into {} parts", target.display(), parts.len()),
-                    );
-                    app.toast(format!("Split into {} parts", parts.len()));
-                }
-                Err(error) => app.show_message = Some(("Split".into(), error)),
-            }
-        }
-        app.show_split_file = false;
-        return;
-    }
-    if cancel || !open {
-        app.show_split_file = false;
-    }
 }
 
 fn execute_command_window(app: &mut App, ctx: &egui::Context) {

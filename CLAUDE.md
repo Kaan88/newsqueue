@@ -34,14 +34,14 @@ Everything that is part of the application lives in `app/`.
 |---|---|
 | `app/src/main.rs` | `App` state, CLI entry, `App::tick()`, eframe `update`, timers, scheduler, worker start/finish, logging, autosave |
 | `app/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
-| `app/src/ui.rs` | Main window, tabs, queue table, status bar, Explorer, PAR2/RSS/Log tabs, queue actions |
-| `app/src/dialogs.rs` | 17 setup pages, server editor, stats/columns, password prompt, shutdown, file join/split and other modal windows |
+| `app/src/ui.rs` | Main window, tabs, queue table, status bar, PAR2/RSS/Log tabs, queue actions |
+| `app/src/dialogs.rs` | 15 setup pages, server editor, stats/columns, password prompt, shutdown, version/update and other modal windows |
 | `app/src/download.rs` | Real NNTP/yEnc downloader: TLS/plain, HTTP CONNECT/SOCKS5, workers, cache, resume, retries |
 | `app/src/container.rs` | Container detection from payload bytes (RAR5 volume numbers, RAR4, ZIP, 7Z, PAR2) used to name obfuscated downloads |
 | `app/src/par2.rs` | PAR2 verify/repair worker using `app/tools/par2.exe` |
 | `app/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
 | `app/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
-| `app/src/files.rs` | File join/split used by queue and Explorer |
+| `app/src/update.rs` | GitHub release check, verified self-update via the silent installer |
 | `app/src/theme.rs` | Measured colours, fonts, icon drawing, widget metrics |
 | `app/src/tray.rs` | Win32 tray icon, off-screen hide/show, taskbar add/remove, tooltip, balloons |
 | `app/src/shutdown.rs` | Queue-drained shutdown/hibernate/sleep/exit plan plus mock backend |
@@ -174,11 +174,12 @@ real power command runs. The UI countdown is 15 seconds and can be aborted.
 
 ## 5. Settings structure
 
-The Setup window has 17 pages in the original order:
+The Setup window has 15 pages in the original order (NZB Play and User
+interface #2 were removed, see `REMOVED.md`):
 
 Download, Download #2, NZB, NZB #2, Servers, Log, Connection, Proxy, Scheduler,
 Par2, Unpack, Miscellaneous, Miscellaneous #2, Miscellaneous #3,
-User interface, User interface #2, NZB Play.
+User interface.
 
 Persisted fields live in `model.rs` `Settings`. New fields need
 `#[serde(default)]` support so existing JSON still loads. Keep the UI checkbox
@@ -188,7 +189,7 @@ Important settings areas:
 
 - Connection/servers, TLS/plain, connections, retries, proxy
 - Download folders, skip-existing, auto-import, delete NZB after import
-- NZB naming/merge/category
+- NZB naming
 - PAR2 checking/repairing and tool options
 - Unrar/unpack options, archive/group/NZB subfolders, password per collection
 - Scheduler, speed limits, startup connect
@@ -244,15 +245,14 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 67 unit/integration tests currently pass.
+- 64 unit/integration tests currently pass.
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.
 - `unrar.rs` has fixtures for plain, single-file and encrypted RAR archives.
 - `par2.rs` generates damaged files and a damaged RAR, repairs with `par2.exe`
   and extracts with `UnRAR.exe`.
-- `main.rs` integration tests cover settings, execute hooks, auto-import, Explorer
-  copy/paste, shutdown mock behaviour and the unrar password prompt/retry.
+- `main.rs` integration tests cover settings, execute hooks, auto-import, shutdown mock behaviour and the unrar password prompt/retry.
 - `tray-verify.ps1` checks the tray icon rect, tooltip speed, balloon API result,
   off-screen minimize, taskbar removal, continued tick/autosave, restore,
   close-to-tray and tray exit.
@@ -269,7 +269,10 @@ you intend to format; do not claim the check passed unless it was run.
 NewsQueue uses independent versions. Current version is **1.0.1**.
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
 `v1.0.1`, which adds content-based naming for obfuscated posts. There is no
-update check and no auto-update; `Version?` is a static dialog.
+`Version?` and a timer (`check_version_minutes`, 0 = never) check GitHub
+releases; with `auto_update` the app installs a newer setup silently when idle.
+Only releases built with the current `install.ps1` (NQ_WAIT_PID/NQ_RELAUNCH)
+can self-update. The repo must be publicly readable for the check to work.
 
 Portable package:
 
@@ -318,7 +321,7 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 - Queue rows use dense 19 px rows, no alternating stripes, gray completed
   progress bars, 10–11 px text.
 - Setup pages use the original order and a roughly 700×580 window.
-- Queue and Explorer rows include a transparent `row_click_overlay`; preserve it
+- Queue rows include a transparent `row_click_overlay`; preserve it
   when editing cells or labels.
 - Keep icons/theme drawn, not copied from the original artwork.
 
@@ -360,8 +363,8 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   thread.
 - Release builds have no console window. Debug builds do.
 - `app/newsqueue-settings.json` and other runtime JSON files are local-only.
-- There is no update check or auto-update. The `Version?` toolbar button shows a
-  static message and `Settings::check_version_minutes` is stored but never read.
+- Self-update never runs from dev builds under `target\`; they only show a notice.
+  `NQ_UPDATE_REPO=owner/name` overrides the repo for testing.
 - The original binaries/evidence are read-only. Use Ghidra/DFM evidence rather
   than guessing measured constants.
 - Keep `MECHANICS.md` and `mechanics.json` in sync when a measured value changes.
@@ -369,7 +372,7 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 ## 11. Current roadmap state and blockers
 
 Done: downloader, PAR2 core chain, unrar options and password prompt, RSS,
-Explorer common actions, real statistics/history,
+real statistics/history, version check/self-update,
 tray, off-screen behaviour, shutdown, portable packaging and installer.
 
 Not done / pending:
@@ -395,7 +398,7 @@ block. The downloader output was byte-exact.
 
 - New setting: `model.rs` field + default, `dialogs.rs` checkbox/field, actual
   behaviour in `tick`/worker, test.
-- New queue action: `UiAction`/`ExplorerAction`, `ui.rs` menu/button,
+- New queue action: `UiAction`, `ui.rs` menu/button,
   `main.rs` handler, test.
 - New network feature: `download.rs`, keep the snapshot/channel pattern.
 - New post-processing: `unrar.rs`/`par2.rs`, keep `UnrarError` classification,

@@ -33,13 +33,13 @@ cargo run -- --screenshot shots/now.png
 
 - `main.rs` — `App` state, CLI entry, key handling, and `App::tick()`: all timers, scheduler, free-space pause, worker start/finish, logging and autosaves flow through here.
 - `model.rs` — persisted types (`Settings`, `Collection`, `Server`), measured constants and formatters, NZB parser, sample data. New persisted fields need defaults (`#[serde(default)]`) so existing JSON still loads.
-- `ui.rs` — main window, tabs, queue table, status bar. Queue and Explorer rows add a transparent `row_click_overlay` so clicks on labels and progress bars reach the row; preserve it when editing columns.
-- `dialogs.rs` — 17 setup pages, server editor, stats/columns and other modal windows.
+- `ui.rs` — main window, tabs, queue table, status bar. Queue rows add a transparent `row_click_overlay` so clicks on labels and progress bars reach the row; preserve it when editing columns.
+- `dialogs.rs` — 15 setup pages, server editor, stats/columns and other modal windows.
 - `download.rs` — real NNTP/yEnc downloader. One active job at a time; all enabled servers are used and the global limit is split across workers. Resume metadata lives in `.nqpart` sidecars, article bodies are cached in memory (bounded by `article_cache_mb`), and connections support HTTP CONNECT/SOCKS5 proxies. Network code runs in std threads with a `Mutex<DownloadSnapshot>`; there is no async runtime.
 - `container.rs` — payload sniffing (RAR5/volume number, RAR4, ZIP, 7Z, PAR2) so downloads whose names carry no extension are still saved and unpacked correctly.
 - `par2.rs` — PAR2 verify/repair worker using `app/tools/par2.exe`; feeds the unrar stage.
 - `rss.rs` — RSS/Atom fetch, filter matching and NZB autodownload using `ureq` with native TLS.
-- `files.rs` — file join/split operations used by queue and Explorer actions.
+- `update.rs` — GitHub release check and verified silent self-update.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit), detects password-protected archives for the UI prompt, and builds archive/group/NZB subfolders. Do not delete the tool.
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
 - `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, off-screen minimize/close-to-tray with the taskbar entry removed, speed tooltip, balloon hints and the shared exit flag. `main.rs` cancels window close unless the tray or shutdown requested exit. `--screenshot` never starts the tray.
@@ -56,4 +56,4 @@ cargo run -- --screenshot shots/now.png
 - `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source. `*.nqpart` files are resume sidecars; keep them until a download finishes.
 - Test Usenet account, RSS API keys are configured only in the local, gitignored `app/newsqueue-settings.json`. Never copy them into source, docs, logs, commits or replies.
 - `cargo run -- --download-test <file.nzb>` and Connect perform real network downloads into the download folder; don't run them unless asked. Use a local NZB such as `Civilization.IV-RELOADED.nzb` or `Love.Under.the.Mistletoe...nzb` (both ignored by git). Missing articles are skipped and mark the collection `Incomplete`; PAR2 repair and RAR extraction are real.
-- For screenshots of specific UI, set `NQ_DEMO_DIALOG` (`setup`, `server`, `stats`, `categories`, `notes`, `about`, `columns`, `pause`, `shutdown`, `unrar-password`), `NQ_DEMO_TAB` (`par2`, `explorer`, `log`, `rss`), `NQ_DEMO_SETUP_PAGE=0..16`, `NQ_DEMO_EXPLORER=<folder>`, or `NQ_DEMO_CONNECT=1`.
+- For screenshots of specific UI, set `NQ_DEMO_DIALOG` (`setup`, `server`, `stats`, `notes`, `about`, `columns`, `pause`, `shutdown`, `unrar-password`), `NQ_DEMO_TAB` (`par2`, `explorer`, `log`, `rss`), `NQ_DEMO_SETUP_PAGE=0..16`, `NQ_DEMO_EXPLORER=<folder>`, or `NQ_DEMO_CONNECT=1`.

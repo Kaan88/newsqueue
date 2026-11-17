@@ -20,12 +20,12 @@ content-based naming for obfuscated posts.
 | Unrar | Done for the common path | Overwrite/rename, strip-root, archive/group/NZB subfolders, auto-rename, delete-empty-folder, password prompt and retry, delete/move patterns, target folder |
 | RSS | Done | Live feed returned 100 items; filters downloaded a real NZB |
 | Search | Removed | Global/Newznab search was cut on 2026-11-18 |
-| Explorer | Done for common use | Multi-select, history, context menu, rename/delete, open-with, drag/drop, clipboard, columns |
+| Explorer | Removed | See `REMOVED.md` |
 | Tray | Done | Off-screen minimize-to-tray with taskbar entry removed, speed tooltip, download/unrar balloons, Show/Exit |
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
 | Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.1` |
-| Verification | Baseline done | 67 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Verification | Baseline done | 64 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a second server |
 
@@ -86,7 +86,7 @@ Obfuscated releases arrive as `Rar!` payloads with random names such as
 
 ### Phase summary
 
-- **Phase 0 - done for the baseline.** 67 tests, mock NNTP tests, screenshot
+- **Phase 0 - done for the baseline.** 64 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real damaged-RAR/PAR2 fixtures,
   an encrypted-RAR fixture and the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
@@ -108,12 +108,10 @@ Obfuscated releases arrive as `Rar!` payloads with random names such as
   stored locally (never committed); a live feed returned 100 items and the
   filter test downloaded one NZB. Global/Newznab search was removed on
   2026-11-18 and is out of scope.
-- **Phase 5 — done for common use.** Explorer has multi-select
-  (Ctrl/Shift), navigation, history, favourites, context menu, delete, rename,
-  open-with, drag/drop copying, clipboard copy/cut/paste and columns.
+- **Phase 5 — removed.** The Explorer tab was cut on 2026-11-18 (`REMOVED.md`).
 - **Phase 6 — mostly done.** Log retention, persistent real history and transfer
-  statistics, category routing, multi-server use, thread priority, player launch,
-  execute hooks, file Join/Split and HTTP/SOCKS5 proxy support are implemented.
+  statistics, multi-server use, thread priority, 
+  execute hooks and HTTP/SOCKS5 proxy support are implemented.
   Native tray show/restore/Exit, off-screen minimize-to-tray with taskbar removal,
   close-to-tray, speed tooltip and download/unrar balloon hints work. Windows
   shutdown, hibernate, sleep and app-exit actions run after the queue drains with
@@ -136,7 +134,7 @@ that NFO, but the PAR2 set covers it, so PAR2 rebuilt it from one recovery
 block. The downloader output was byte-exact.
 
 Current state: usable Windows clone. Strong on layout, queue/status maths, NNTP,
-PAR2, unrar extraction, tray/shutdown behaviour and common Explorer browsing.
+PAR2, unrar extraction, tray/shutdown behaviour and version check/self-update.
 Remaining work is external validation, a little mock/failover coverage and
 optional polish.
 
@@ -200,22 +198,17 @@ live testing.
   execute command) and autodownload decisions.
 - **Done when:** a feed fixture produces the expected accept/deny decisions.
 
-## Phase 5 — Explorer shell parity (M)
+## Phase 5 — Explorer shell parity (removed)
 
-- Rename, multi-select, cut/copy/paste, drag/drop, open-with and shell properties.
-- Full drive/favourites tree with expandable folders and shell namespace.
-- File-type icons, sorting, refresh, filter timer and persisted columns.
-- **Done when:** the common Explorer actions work without falling back to
-  Windows Explorer.
+Cut on 2026-11-18; see `REMOVED.md`.
 
 ## Phase 6 — settings, history and auxiliary features (M)
 
 - Settings are enforced for proxy, thread priorities, auto-import,
-  execute/player, log retention and history.
+  execute, log retention and history.
 - Download history and daily/monthly transfer statistics are real and persisted
   in `newsqueue-history.json` / `newsqueue-stats.json`; demo values only appear
   in screenshot mode.
-- Category keyword/folder rules are applied on import and manual category changes.
 - Windows shutdown/hibernate/sleep/exit runs after a 15-second abortable countdown;
   the mock backend keeps the power calls testable.
 - **Done when:** every visible setting has an observable effect and a test.
@@ -250,10 +243,9 @@ live testing.
    for single-part posts); a mismatch is fetched from another server.
 6. **Mock NNTP read-timeout test** is still missing (failover, 430, CRC and
    dropped-connection paths are covered).
-7. **No update check.** `Version?` shows a static dialog and the
-   `check_version_minutes` setting is stored but never used; there is no
-   auto-update. A real check would query the GitHub releases API and offer the
-   installer.
+7. **Self-update needs public releases.** The check works but the repo is
+   private, so GitHub answers 404. Only releases built after 2026-11-18 can
+   self-update.
 8. **Minor shortcut polish** and any remaining peripheral settings.
 9. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.

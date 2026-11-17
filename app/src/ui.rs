@@ -3,7 +3,6 @@ use eframe::egui::{
     Vec2,
 };
 use egui_extras::{Column, TableBuilder};
-use std::collections::HashSet;
 
 use crate::model::*;
 use crate::theme::{self, Icon};
@@ -13,32 +12,6 @@ use crate::{App, MoveDir, Selection, UiAction};
 enum QueueRowRef {
     Collection(usize),
     File(usize, usize),
-}
-
-#[derive(Clone)]
-struct ExplorerEntry {
-    name: String,
-    path: std::path::PathBuf,
-    is_dir: bool,
-    size: u64,
-    kind: String,
-    modified: String,
-    accessed: String,
-    created: String,
-    readonly: bool,
-}
-
-enum ExplorerAction {
-    OpenParent(std::path::PathBuf),
-    OpenWith(std::path::PathBuf),
-    NewFolder,
-    Properties(std::path::PathBuf),
-    DeleteSelected,
-    Rename(std::path::PathBuf),
-    CopySelected(bool),
-    Paste,
-    JoinSelected,
-    SplitFile(std::path::PathBuf),
 }
 
 pub fn draw(app: &mut App, ctx: &egui::Context) {
@@ -86,7 +59,6 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| match app.active_tab {
             0 => queue_tab(app, ui),
             1 => par2_tab(app, ui),
-            2 => explorer_tab(app, ui),
             3 => log_tab(app, ui),
             _ => rss_tab(app, ui),
         });
@@ -96,7 +68,7 @@ fn normalize_tab(app: &mut App) {
     let visible = [
         app.settings.show_tabs[0],
         app.settings.show_tabs[1],
-        app.settings.show_tabs[2],
+        false, // index 2 was the removed Explorer tab
         app.settings.show_tabs[3],
         app.settings.show_tabs[4],
     ];
@@ -186,27 +158,15 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
         toolbar_sep(ui);
         let r = theme::tool_button(ui, "Home", Icon::Home, false);
         if r.clicked() {
-            app.toast("Home link is not available in this build");
+            app.open_home_page();
         }
         r.on_hover_text("Project home");
-        let r = theme::tool_button(ui, "Forum", Icon::Forum, false);
-        if r.clicked() {
-            app.toast("Forum link is not available in this build");
-        }
-        r.on_hover_text("Community forum");
         let r = theme::tool_button(ui, "Version?", Icon::Version, false);
         if r.clicked() {
-            app.show_message = Some((
-                "Version".into(),
-                format!("{APP_NAME} {VERSION}\nThis is the latest build in this project."),
-            ));
+            app.show_version = true;
+            app.check_for_update(true);
         }
         r.on_hover_text("Check for a new version");
-        let r = theme::tool_button(ui, "Donate", Icon::Donate, false);
-        if r.clicked() {
-            app.toast("This free build does not take donations");
-        }
-        r.on_hover_text("Donate");
         let r = theme::tool_button(ui, "About", Icon::About, false);
         if r.clicked() {
             app.show_about = true;
@@ -225,7 +185,7 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
         r.on_hover_text("Statistics and download history");
         let r = theme::tool_button(ui, "To tray", Icon::Tray, false);
         if r.clicked() {
-            app.toast("Window would be minimized to the tray");
+            app.send_to_tray();
         }
         r.on_hover_text("Minimize to tray");
     });
@@ -251,18 +211,18 @@ fn tabs(app: &mut App, ui: &mut Ui) {
     );
     ui.spacing_mut().item_spacing = Vec2::ZERO;
     ui.horizontal(|ui| {
+        // Tab indices stay fixed (2 was Explorer) so saved settings still load.
         let defs = [
-            ("Download queue", Icon::Queue, 130.0),
-            ("PAR2", Icon::Shield, 78.0),
-            ("Explorer", Icon::Folder, 100.0),
-            ("Log", Icon::Page, 72.0),
-            ("RSS", Icon::Rss, 72.0),
+            (0, "Download queue", Icon::Queue, 130.0),
+            (1, "PAR2", Icon::Shield, 78.0),
+            (3, "Log", Icon::Page, 72.0),
+            (4, "RSS", Icon::Rss, 72.0),
         ];
-        for (i, (caption, icon, width)) in defs.iter().enumerate() {
+        for &(i, caption, icon, width) in defs.iter() {
             if !app.settings.show_tabs[i] {
                 continue;
             }
-            let r = theme::tab_button(ui, caption, *icon, app.active_tab == i, *width);
+            let r = theme::tab_button(ui, caption, icon, app.active_tab == i, width);
             if r.clicked() {
                 app.active_tab = i;
             }
@@ -305,9 +265,6 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     action = Some(UiAction::Move(MoveDir::Bottom))
                 });
                 dq_sep(ui);
-                dq_button(ui, Icon::Join, "Join", || action = Some(UiAction::JoinSplitParts));
-                dq_button(ui, Icon::Split, "Split", || action = Some(UiAction::SplitSelectedFile));
-                dq_sep(ui);
                 dq_button(ui, Icon::Collapse, "Collapse all", || {
                     for c in &mut app.queue {
                         c.expanded = false;
@@ -325,11 +282,8 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                 dq_button(ui, Icon::NoUnrar, "Do not unrar", || {
                     action = Some(UiAction::ToggleUnrar(false))
                 });
-                dq_button(ui, Icon::Key, "Set unrar password", || {
-                    action = Some(UiAction::None)
-                });
                 dq_button(ui, Icon::Folder, "Change unrar folder", || {
-                    action = Some(UiAction::ChangeFolder)
+                    action = Some(UiAction::ChangeUnrarFolder)
                 });
                 dq_sep(ui);
                 dq_button(ui, Icon::Rename, "Rename collection", || {
@@ -338,16 +292,10 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                 dq_button(ui, Icon::Export, "Export selected to NZB", || {
                     action = Some(UiAction::Export)
                 });
-                dq_button(ui, Icon::Export, "Export selected to multiple NZBs", || {
-                    action = Some(UiAction::Export)
-                });
                 dq_button(ui, Icon::Folder, "Change download folder", || {
                     action = Some(UiAction::ChangeFolder)
                 });
                 dq_sep(ui);
-                dq_button(ui, Icon::Play, "Play media file while downloading", || {
-                    action = Some(UiAction::Play)
-                });
                 dq_button(ui, Icon::Key, "Change execute command", || {
                     action = Some(UiAction::SetExecute)
                 });
@@ -782,14 +730,6 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                             ui.close_menu();
                         }
                     });
-                    if ui.button("Join").clicked() {
-                        action = Some(UiAction::JoinSplitParts);
-                        ui.close_menu();
-                    }
-                    if ui.button("Split").clicked() {
-                        action = Some(UiAction::SplitSelectedFile);
-                        ui.close_menu();
-                    }
                     if ui.button("Collapse all").clicked() {
                         action = Some(UiAction::CollapseAll);
                         ui.close_menu();
@@ -834,14 +774,6 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     }
                     if ui.button("Change execute command").clicked() {
                         action = Some(UiAction::SetExecute);
-                        ui.close_menu();
-                    }
-                    if ui.button("Set password").clicked() {
-                        action = Some(UiAction::None);
-                        ui.close_menu();
-                    }
-                    if ui.button("Set category").clicked() {
-                        action = Some(UiAction::SetCategory);
                         ui.close_menu();
                     }
                     ui.separator();
@@ -1177,563 +1109,6 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
     if let Some(s) = new_sel {
         app.selected_par2 = s;
     }
-}
-
-fn explorer_tab(app: &mut App, ui: &mut Ui) {
-    egui::TopBottomPanel::top("explorer_toolbar")
-        .exact_height(34.0)
-        .frame(egui::Frame::none().fill(theme::BG_PALE))
-        .show_inside(ui, |ui| {
-            ui.painter().line_segment(
-                [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                Stroke::new(1.0_f32, theme::BORDER_LIGHT),
-            );
-            ui.horizontal(|ui| {
-                ui.add_space(4.0);
-                let r = theme::small_button(ui, Icon::Back, false);
-                if r.clicked() {
-                    app.explorer_back();
-                }
-                r.on_hover_text("Back");
-                let r = theme::small_button(ui, Icon::Forward, false);
-                if r.clicked() {
-                    app.explorer_forward();
-                }
-                r.on_hover_text("Forward");
-                let r = theme::small_button(ui, Icon::Up, false);
-                if r.clicked() {
-                    app.explorer_up();
-                }
-                r.on_hover_text("Up");
-                let r = theme::small_button(ui, Icon::Refresh, false);
-                if r.clicked() {
-                    app.explorer_selected = None;
-                    app.explorer_selected_set.clear();
-                    app.explorer_anchor = None;
-                    app.toast("Folder refreshed");
-                }
-                r.on_hover_text("Refresh");
-                let r = theme::small_button(ui, Icon::Folder, app.settings.exp_folders_visible);
-                if r.clicked() {
-                    app.settings.exp_folders_visible = !app.settings.exp_folders_visible;
-                }
-                r.on_hover_text("Show/Hide folders panel");
-                ui.add_space(6.0);
-
-                let mut path_text = app.explorer_path_edit.clone();
-                let response = ui.add_sized(
-                    [480.0, 20.0],
-                    TextEdit::singleline(&mut path_text).hint_text("Path"),
-                );
-                response
-                    .clone()
-                    .on_hover_text(app.explorer_path.display().to_string());
-                if response.changed() {
-                    app.explorer_path_edit = path_text.clone();
-                }
-                let enter = response.lost_focus()
-                    && ui.input(|input| input.key_pressed(egui::Key::Enter));
-                if enter {
-                    app.explorer_navigate(std::path::PathBuf::from(path_text.trim()));
-                }
-                if ui.small_button("Go").clicked() {
-                    app.explorer_navigate(std::path::PathBuf::from(path_text.trim()));
-                }
-                ui.menu_button("v", |ui| {
-                    let roots = [
-                        ("Download", app.settings.download_dir.clone()),
-                        ("NZB", app.settings.nzb_dir.clone()),
-                        ("Temp", app.settings.temp_dir.clone()),
-                        ("Unrar", app.settings.unrar_dir.clone()),
-                    ];
-                    for (label, path) in roots {
-                        if ui.button(label).clicked() {
-                            app.explorer_navigate(std::path::PathBuf::from(path));
-                            ui.close_menu();
-                        }
-                    }
-                    if !app.settings.explorer_favorites.is_empty() {
-                        ui.separator();
-                        for path in app.settings.explorer_favorites.clone() {
-                            if ui.button(&path).clicked() {
-                                app.explorer_navigate(std::path::PathBuf::from(path));
-                                ui.close_menu();
-                            }
-                        }
-                    }
-                    ui.separator();
-                    for letter in b'A'..=b'Z' {
-                        let drive = format!("{}:\\", letter as char);
-                        if std::path::Path::new(&drive).is_dir()
-                            && ui.button(&drive).clicked()
-                        {
-                            app.explorer_navigate(std::path::PathBuf::from(drive));
-                            ui.close_menu();
-                        }
-                    }
-                });
-                let r = theme::small_button(ui, Icon::Add, false);
-                if r.clicked() {
-                    let path = app.explorer_path.to_string_lossy().to_string();
-                    if !app.settings.explorer_favorites.contains(&path) {
-                        app.settings.explorer_favorites.push(path);
-                        app.toast("Added to favourites");
-                    }
-                }
-                r.on_hover_text("Add current folder to favourites");
-                let r = theme::small_button(ui, Icon::Trash, false);
-                if r.clicked() {
-                    let path = app.explorer_path.to_string_lossy().to_string();
-                    app.settings.explorer_favorites.retain(|item| item != &path);
-                    app.toast("Removed from favourites");
-                }
-                r.on_hover_text("Remove current folder from favourites");
-
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    ui.add_space(4.0);
-                    ui.add_sized(
-                        [150.0, 20.0],
-                        TextEdit::singleline(&mut app.explorer_filter)
-                            .hint_text("Filter files/folders"),
-                    );
-                    ui.label(RichText::new("Filter").size(10.0));
-                });
-            });
-        });
-
-    if app.settings.exp_folders_visible {
-        let panel = egui::SidePanel::left("explorer_folders")
-            .resizable(true)
-            .default_width(app.settings.exp_folders_width)
-            .width_range(140.0..=400.0)
-            .show_inside(ui, |ui| {
-                ui.painter()
-                    .rect_filled(ui.max_rect(), 0.0, Color32::from_rgb(246, 249, 253));
-                ui.add_space(4.0);
-                ui.label(RichText::new("Folders").size(10.0).strong());
-                ui.separator();
-                let roots = [
-                    ("Download", app.settings.download_dir.clone()),
-                    ("NZB", app.settings.nzb_dir.clone()),
-                    ("Temp", app.settings.temp_dir.clone()),
-                    ("Unrar", app.settings.unrar_dir.clone()),
-                ];
-                for (label, path) in roots {
-                    let path = std::path::PathBuf::from(path);
-                    let selected = app.explorer_path == path;
-                    if ui
-                        .selectable_label(selected, format!("[+] {label}"))
-                        .clicked()
-                    {
-                        app.explorer_navigate(path);
-                    }
-                }
-                if !app.settings.explorer_favorites.is_empty() {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new("Favourites").size(10.0).strong());
-                    for path in app.settings.explorer_favorites.clone() {
-                        let p = std::path::PathBuf::from(&path);
-                        let selected = app.explorer_path == p;
-                        let label = p
-                            .file_name()
-                            .map(|name| name.to_string_lossy().to_string())
-                            .unwrap_or(path);
-                        if ui.selectable_label(selected, format!(" {label}")).clicked() {
-                            app.explorer_navigate(p);
-                        }
-                    }
-                }
-                ui.add_space(4.0);
-                ui.label(RichText::new("This folder").size(10.0).strong());
-                if let Ok(rd) = std::fs::read_dir(&app.explorer_path) {
-                    let mut dirs: Vec<_> = rd
-                        .flatten()
-                        .filter(|entry| entry.path().is_dir())
-                        .collect();
-                    dirs.sort_by_key(|entry| entry.file_name());
-                    for entry in dirs {
-                        let path = entry.path();
-                        let name = entry.file_name().to_string_lossy().to_string();
-                        let selected = app.explorer_path == path;
-                        if ui
-                            .selectable_label(selected, format!("    {name}"))
-                            .clicked()
-                        {
-                            app.explorer_navigate(path);
-                        }
-                    }
-                }
-            });
-        app.settings.exp_folders_width = panel.response.rect.width();
-    }
-
-    let columns: Vec<usize> = app
-        .settings
-        .explorer_columns
-        .iter()
-        .enumerate()
-        .filter(|(_, visible)| **visible)
-        .map(|(index, _)| index)
-        .collect();
-    if columns.is_empty() {
-        ui.centered_and_justified(|ui| {
-            ui.label(
-                RichText::new("No explorer columns are selected. Enable one in Setup > Columns.")
-                    .size(10.0),
-            );
-        });
-        return;
-    }
-
-    let entries = read_explorer(&app.explorer_path, &app.explorer_filter);
-    let widths = app.settings.explorer_column_widths;
-    let mut selection = app.explorer_selected_set.clone();
-    if selection.is_empty() {
-        if let Some(path) = &app.explorer_selected {
-            selection.insert(path.clone());
-        }
-    }
-    let mut primary = app.explorer_selected.clone();
-    let mut anchor = app.explorer_anchor;
-    let mut open_entry: Option<(std::path::PathBuf, bool)> = None;
-    let mut action: Option<ExplorerAction> = None;
-    let (ctrl_down, shift_down) = ui.input(|input| {
-        (
-            input.modifiers.command || input.modifiers.ctrl,
-            input.modifiers.shift,
-        )
-    });
-    let entry_paths: Vec<std::path::PathBuf> =
-        entries.iter().map(|entry| entry.path.clone()).collect();
-
-    let mut table = TableBuilder::new(ui)
-        .striped(false)
-        .resizable(true)
-        .sense(egui::Sense::click())
-        .cell_layout(Layout::left_to_right(Align::Center));
-    for &index in &columns {
-        let mut column = Column::initial(widths[index])
-            .at_least(50.0)
-            .clip(true)
-            .resizable(true);
-        if index == 0 {
-            column = column.at_least(140.0);
-        }
-        table = table.column(column);
-    }
-
-    table
-        .header(19.0, |mut header| {
-            for &index in &columns {
-                header.col(|ui| {
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
-                    ui.painter().line_segment(
-                        [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                        Stroke::new(1.0_f32, theme::BORDER_LIGHT),
-                    );
-                    let layout = if index == 1 {
-                        Layout::right_to_left(Align::Center)
-                    } else {
-                        Layout::left_to_right(Align::Center)
-                    };
-                    ui.with_layout(layout, |ui| {
-                        ui.add(
-                            Label::new(RichText::new(explorer_column_name(index)).size(10.0))
-                                .truncate(),
-                        );
-                    });
-                });
-            }
-        })
-        .body(|body| {
-            body.rows(19.0, entries.len(), |mut row| {
-                let index = row.index();
-                let entry = &entries[index];
-                row.set_selected(selection.contains(entry.path.as_path()));
-                // Labels consume clicks; a transparent overlay makes the whole
-                // row clickable, including the Name/Type/Size text.
-                let mut row_click: Option<egui::Response> = None;
-                for &column in &columns {
-                    row.col(|ui| {
-                        match column {
-                        0 => {
-                            let (rect, _) =
-                                ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
-                            theme::paint_icon(
-                                ui.painter(),
-                                rect,
-                                if entry.is_dir { Icon::Folder } else { Icon::File },
-                                theme::TEXT,
-                            );
-                            ui.add(
-                                Label::new(RichText::new(&entry.name).size(10.0)).truncate(),
-                            );
-                        }
-                        1 => {
-                            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                ui.label(
-                                    RichText::new(if entry.is_dir {
-                                        String::new()
-                                    } else {
-                                        format_size_short(entry.size)
-                                    })
-                                    .size(10.0),
-                                );
-                            });
-                        }
-                        2 => {
-                            ui.add(
-                                Label::new(RichText::new(&entry.kind).size(10.0)).truncate(),
-                            );
-                        }
-                        3 => {
-                            ui.add(
-                                Label::new(RichText::new(&entry.modified).size(9.5)).truncate(),
-                            );
-                        }
-                        4 => {
-                            ui.label(
-                                RichText::new(if entry.readonly { "R" } else { "-" }).size(9.5),
-                            );
-                        }
-                        5 => {
-                            ui.add(
-                                Label::new(RichText::new(&entry.accessed).size(9.5)).truncate(),
-                            );
-                        }
-                        6 => {
-                            ui.add(
-                                Label::new(RichText::new(&entry.created).size(9.5)).truncate(),
-                            );
-                        }
-                        7 => {
-                            ui.add(Label::new(RichText::new(&entry.name).size(9.5)).truncate());
-                        }
-                        _ => {
-                            ui.add(
-                                Label::new(
-                                    RichText::new(entry.path.to_string_lossy()).size(9.0),
-                                )
-                                .truncate(),
-                            );
-                        }
-                        }
-                        row_click_overlay(ui, column + 1, &mut row_click);
-                    });
-                }
-                let response = row_click.unwrap_or_else(|| row.response());
-                if response.clicked() {
-                    let (updated, clicked, new_anchor) = update_explorer_selection(
-                        &entry_paths,
-                        index,
-                        ctrl_down,
-                        shift_down,
-                        anchor,
-                        selection.clone(),
-                    );
-                    selection = updated;
-                    primary = Some(clicked);
-                    anchor = new_anchor;
-                }
-                if response.secondary_clicked() {
-                    if !selection.contains(entry.path.as_path()) {
-                        selection.clear();
-                        selection.insert(entry.path.clone());
-                    }
-                    primary = Some(entry.path.clone());
-                }
-                if response.double_clicked() {
-                    open_entry = Some((entry.path.clone(), entry.is_dir));
-                }
-                response.context_menu(|ui| {
-                    if ui.button("Open").clicked() {
-                        open_entry = Some((entry.path.clone(), entry.is_dir));
-                        ui.close_menu();
-                    }
-                    if ui.button("Open containing folder").clicked() {
-                        action = Some(ExplorerAction::OpenParent(entry.path.clone()));
-                        ui.close_menu();
-                    }
-                    if ui.button("Open with...").clicked() {
-                        action = Some(ExplorerAction::OpenWith(entry.path.clone()));
-                        ui.close_menu();
-                    }
-                    if ui.button("Copy path").clicked() {
-                        ui.ctx()
-                            .copy_text(entry.path.to_string_lossy().to_string());
-                        ui.close_menu();
-                    }
-                    if ui.button("Copy file").clicked() {
-                        action = Some(ExplorerAction::CopySelected(false));
-                        ui.close_menu();
-                    }
-                    if ui.button("Cut file").clicked() {
-                        action = Some(ExplorerAction::CopySelected(true));
-                        ui.close_menu();
-                    }
-                    if app.explorer_clipboard.is_some() && ui.button("Paste").clicked() {
-                        action = Some(ExplorerAction::Paste);
-                        ui.close_menu();
-                    }
-                    if selection.len() > 1 && ui.button("Join selected files...").clicked() {
-                        action = Some(ExplorerAction::JoinSelected);
-                        ui.close_menu();
-                    }
-                    if !entry.is_dir && ui.button("Split file...").clicked() {
-                        action = Some(ExplorerAction::SplitFile(entry.path.clone()));
-                        ui.close_menu();
-                    }
-                    ui.separator();
-                    if ui.button("New folder").clicked() {
-                        action = Some(ExplorerAction::NewFolder);
-                        ui.close_menu();
-                    }
-                    if ui.button("Properties").clicked() {
-                        action = Some(ExplorerAction::Properties(entry.path.clone()));
-                        ui.close_menu();
-                    }
-                    if ui.button("Rename").clicked() {
-                        action = Some(ExplorerAction::Rename(entry.path.clone()));
-                        ui.close_menu();
-                    }
-                    if ui.button("Delete").clicked() {
-                        action = Some(ExplorerAction::DeleteSelected);
-                        ui.close_menu();
-                    }
-                });
-            });
-        });
-
-    if let Some((path, is_dir)) = open_entry {
-        app.explorer_open_entry(path, is_dir);
-    }
-    app.explorer_selected_set = selection;
-    app.explorer_selected = primary;
-    app.explorer_anchor = anchor;
-    match action {
-        Some(ExplorerAction::OpenParent(path)) => app.explorer_open_containing(path),
-        Some(ExplorerAction::OpenWith(path)) => app.explorer_open_with(path),
-        Some(ExplorerAction::NewFolder) => app.explorer_new_folder(),
-        Some(ExplorerAction::Properties(path)) => app.explorer_properties(path),
-        Some(ExplorerAction::DeleteSelected) => app.explorer_delete_selected(),
-        Some(ExplorerAction::Rename(path)) => app.explorer_rename(path),
-        Some(ExplorerAction::CopySelected(cut)) => app.explorer_copy_selected(cut),
-        Some(ExplorerAction::Paste) => app.explorer_paste(),
-        Some(ExplorerAction::JoinSelected) => app.explorer_join_selected(),
-        Some(ExplorerAction::SplitFile(path)) => app.explorer_split_file(path),
-        None => {}
-    }
-}
-
-fn explorer_column_name(index: usize) -> &'static str {
-    EXPLORER_COLUMN_NAMES
-        .get(index)
-        .copied()
-        .unwrap_or("Path")
-}
-
-fn update_explorer_selection(
-    paths: &[std::path::PathBuf],
-    clicked: usize,
-    ctrl: bool,
-    shift: bool,
-    anchor: Option<usize>,
-    mut selection: HashSet<std::path::PathBuf>,
-) -> (HashSet<std::path::PathBuf>, std::path::PathBuf, Option<usize>) {
-    let primary = paths[clicked].clone();
-    if shift {
-        if let Some(anchor) = anchor {
-            let start = anchor.min(clicked);
-            let end = anchor.max(clicked);
-            selection.clear();
-            for path in &paths[start..=end] {
-                selection.insert(path.clone());
-            }
-            return (selection, primary, Some(anchor));
-        }
-    }
-    if ctrl {
-        if !selection.remove(&primary) {
-            selection.insert(primary.clone());
-        }
-        return (selection, primary, Some(clicked));
-    }
-    selection.clear();
-    selection.insert(primary.clone());
-    (selection, primary, Some(clicked))
-}
-
-fn read_explorer(path: &std::path::Path, filter: &str) -> Vec<ExplorerEntry> {
-    let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(path) else {
-        return out;
-    };
-    let f = filter.to_lowercase();
-    for e in rd.flatten() {
-        let name = e.file_name().to_string_lossy().to_string();
-        if !f.is_empty() && !name.to_lowercase().contains(&f) {
-            continue;
-        }
-        let p = e.path();
-        let md = e.metadata().ok();
-        let is_dir = md.as_ref().map(|m| m.is_dir()).unwrap_or(false);
-        let size = md.as_ref().map(|m| m.len()).unwrap_or(0);
-        let modified = md
-            .as_ref()
-            .and_then(|m| m.modified().ok())
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string()
-            })
-            .unwrap_or_default();
-        let accessed = md
-            .as_ref()
-            .and_then(|m| m.accessed().ok())
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string()
-            })
-            .unwrap_or_default();
-        let created = md
-            .as_ref()
-            .and_then(|m| m.created().ok())
-            .map(|t| {
-                chrono::DateTime::<chrono::Local>::from(t)
-                    .format("%Y-%m-%d %H:%M")
-                    .to_string()
-            })
-            .unwrap_or_default();
-        let readonly = md
-            .as_ref()
-            .map(|m| m.permissions().readonly())
-            .unwrap_or(false);
-        let kind = if is_dir {
-            "Folder".to_string()
-        } else {
-            p.extension()
-                .map(|s| format!("{} file", s.to_string_lossy().to_uppercase()))
-                .unwrap_or_else(|| "File".into())
-        };
-        out.push(ExplorerEntry {
-            name,
-            path: p,
-            is_dir,
-            size,
-            kind,
-            modified,
-            accessed,
-            created,
-            readonly,
-        });
-    }
-    out.sort_by(|a, b| {
-        b.is_dir
-            .cmp(&a.is_dir)
-            .then(a.name.to_lowercase().cmp(&b.name.to_lowercase()))
-    });
-    out
 }
 
 fn log_tab(app: &mut App, ui: &mut Ui) {
@@ -2182,39 +1557,3 @@ fn draw_speed_graph(ui: &Ui, rect: egui::Rect, app: &App) {
     ));
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::path::PathBuf;
-
-    #[test]
-    fn explorer_selection_supports_click_ctrl_and_shift() {
-        let paths = vec![
-            PathBuf::from("a"),
-            PathBuf::from("b"),
-            PathBuf::from("c"),
-            PathBuf::from("d"),
-        ];
-        let empty = HashSet::new();
-        let (selection, primary, anchor) =
-            update_explorer_selection(&paths, 1, false, false, None, empty);
-        assert_eq!(selection.len(), 1);
-        assert_eq!(primary, PathBuf::from("b"));
-        assert_eq!(anchor, Some(1));
-
-        let (selection, _, _) =
-            update_explorer_selection(&paths, 2, true, false, anchor, selection);
-        assert_eq!(selection.len(), 2);
-        assert!(selection.contains(&PathBuf::from("c")));
-
-        let (selection, _, _) =
-            update_explorer_selection(&paths, 2, true, false, anchor, selection);
-        assert_eq!(selection.len(), 1);
-
-        let (selection, primary, anchor) =
-            update_explorer_selection(&paths, 3, false, true, Some(0), selection);
-        assert_eq!(selection.len(), 4);
-        assert_eq!(primary, PathBuf::from("d"));
-        assert_eq!(anchor, Some(0));
-    }
-}

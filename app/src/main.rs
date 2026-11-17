@@ -3,7 +3,6 @@
 mod container;
 mod dialogs;
 mod download;
-mod files;
 mod model;
 mod par2;
 mod rss;
@@ -12,12 +11,13 @@ mod theme;
 mod tray;
 mod ui;
 mod unrar;
+mod update;
 
 use chrono::{Datelike, Local, Timelike};
 use eframe::egui;
 use model::*;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -45,15 +45,11 @@ pub enum UiAction {
     Move(MoveDir),
     ChangeFolder,
     Export,
-    SetCategory,
     ToggleUnrar(bool),
     UnpackNow,
     ChangeUnrarFolder,
     SetExecute,
-    JoinSplitParts,
-    SplitSelectedFile,
     OpenFolder,
-    Play,
     Eta,
     Rename,
     CollapseAll,
@@ -230,11 +226,16 @@ pub struct App {
     pub setup_server_selected: Option<usize>,
     pub server_draft: Server,
     pub server_edit_error: String,
-    pub show_categories: bool,
-    pub category_draft: Vec<Category>,
     pub show_stats: bool,
     pub stats_tab: usize,
     pub show_about: bool,
+    pub show_version: bool,
+    pub update_rx: Option<std::sync::mpsc::Receiver<update::UpdateEvent>>,
+    pub update_status: String,
+    pub update_available: Option<update::Release>,
+    pub update_notified: String,
+    pub update_installing: bool,
+    pub next_update_check: Option<Instant>,
     pub show_notes: bool,
     pub notes_draft: String,
     pub show_columns: bool,
@@ -274,24 +275,9 @@ pub struct App {
     pub shutdown_exit_requested: bool,
     pub shutdown_exit_sent: bool,
     pub repair_until: Option<(usize, Instant)>,
-    pub explorer_path: PathBuf,
-    pub explorer_path_edit: String,
-    pub explorer_selected: Option<PathBuf>,
-    pub explorer_selected_set: HashSet<PathBuf>,
-    pub explorer_anchor: Option<usize>,
-    pub explorer_history: Vec<PathBuf>,
-    pub explorer_forward: Vec<PathBuf>,
-    pub explorer_filter: String,
-    pub show_explorer_rename: bool,
-    pub explorer_rename_draft: String,
-    pub explorer_rename_target: Option<PathBuf>,
     pub show_execute_command: bool,
     pub execute_command_draft: String,
     pub execute_command_target: Option<usize>,
-    pub show_split_file: bool,
-    pub split_file_target: Option<PathBuf>,
-    pub split_size_mb: u32,
-    pub explorer_clipboard: Option<(Vec<PathBuf>, bool)>,
     pub toast: Option<(String, Instant)>,
     pub daily_transfer: [f64; 24],
     pub monthly_transfer: [f64; 12],
@@ -352,9 +338,6 @@ impl App {
                 stats.longest_uptime_secs,
             )
         };
-        let explorer_path = PathBuf::from(&settings.download_dir);
-        let explorer_path_text = explorer_path.to_string_lossy().to_string();
-        let _ = std::fs::create_dir_all(&explorer_path);
         let thread_height = settings.thread_list_height;
         let show_threads = settings.thread_list_visible;
         let status_mode_speed = settings.speed_bytes_mode;
@@ -369,7 +352,6 @@ impl App {
         let column_visible_draft = settings.column_visible;
         let column_width_draft = settings.column_widths;
         let setup_draft = settings.clone();
-        let category_draft = settings.categories.clone();
         let history = if demo {
             sample_history()
         } else {
@@ -427,11 +409,16 @@ impl App {
             setup_server_selected: None,
             server_draft: Server::default(),
             server_edit_error: String::new(),
-            show_categories: false,
-            category_draft,
             show_stats: false,
             stats_tab: 0,
             show_about: false,
+            show_version: false,
+            update_rx: None,
+            update_status: String::new(),
+            update_available: None,
+            update_notified: String::new(),
+            update_installing: false,
+            next_update_check: Some(Instant::now() + Duration::from_secs(15)),
             show_notes: false,
             notes_draft,
             show_columns: false,
@@ -471,24 +458,9 @@ impl App {
             shutdown_exit_requested: false,
             shutdown_exit_sent: false,
             repair_until: None,
-            explorer_path,
-            explorer_path_edit: explorer_path_text,
-            explorer_selected: None,
-            explorer_selected_set: HashSet::new(),
-            explorer_anchor: None,
-            explorer_history: Vec::new(),
-            explorer_forward: Vec::new(),
-            explorer_filter: String::new(),
-            show_explorer_rename: false,
-            explorer_rename_draft: String::new(),
-            explorer_rename_target: None,
             show_execute_command: false,
             execute_command_draft: String::new(),
             execute_command_target: None,
-            show_split_file: false,
-            split_file_target: None,
-            split_size_mb: 100,
-            explorer_clipboard: None,
             toast: None,
             daily_transfer: daily,
             monthly_transfer: monthly,
@@ -531,7 +503,6 @@ impl App {
             Ok("stats") => app.show_stats = true,
             Ok("shutdown") => app.show_shutdown = true,
             Ok("unrar-password") => app.show_unrar_password = true,
-            Ok("categories") => app.show_categories = true,
             Ok("notes") => app.show_notes = true,
             Ok("about") => app.show_about = true,
             Ok("columns") => app.show_columns = true,
@@ -541,18 +512,10 @@ impl App {
         if let Ok(tab) = std::env::var("NQ_DEMO_TAB") {
             app.active_tab = match tab.as_str() {
                 "par2" => 1,
-                "explorer" => 2,
                 "log" => 3,
                 "rss" => 4,
                 _ => 0,
             };
-        }
-        if let Ok(path) = std::env::var("NQ_DEMO_EXPLORER") {
-            let path = PathBuf::from(path);
-            if path.is_dir() {
-                app.explorer_path = path;
-                app.explorer_path_edit = app.explorer_path.to_string_lossy().to_string();
-            }
         }
         if std::env::var("NQ_DEMO_CONNECT").is_ok() {
             app.connect();
@@ -920,18 +883,6 @@ impl App {
         }
     }
 
-    fn matching_category(&self, subject: &str, group: &str) -> Option<Category> {
-        let haystack = format!("{subject}\n{group}").to_ascii_lowercase();
-        self.settings.categories.iter().find(|category| {
-            category
-                .keywords
-                .split(['|', ';', ','])
-                .map(str::trim)
-                .filter(|keyword| !keyword.is_empty())
-                .any(|keyword| haystack.contains(&keyword.to_ascii_lowercase()))
-        }).cloned()
-    }
-
     fn add_nzb_from_parsed(&mut self, nzb: ParsedNzb, source: String, filter_paused: bool) -> u64 {
         let files: Vec<QueueFile> = nzb
             .files
@@ -946,31 +897,17 @@ impl App {
             .collect();
         let id = self.queue.iter().map(|collection| collection.id).max().unwrap_or(0) + 1;
         let paused = self.paused || filter_paused;
-        let category = self.matching_category(&nzb.name, &nzb.group);
         let group = if nzb.group.is_empty() {
             "alt.binaries.misc".to_string()
         } else {
             nzb.group.clone()
         };
-        let folder = category
-            .as_ref()
-            .map(|category| category.download_folder.clone())
-            .filter(|folder| !folder.trim().is_empty())
-            .unwrap_or_else(|| {
-                PathBuf::from(&self.settings.download_dir)
+        let folder = PathBuf::from(&self.settings.download_dir)
                     .join(sanitize_folder(&nzb.name))
                     .to_string_lossy()
-                    .to_string()
-            });
-        let unrar = category.as_ref().map(|category| category.unrar).unwrap_or(true);
-        let unrar_folder = category
-            .as_ref()
-            .map(|category| category.unrar_folder.clone())
-            .unwrap_or_default();
-        let category_name = category
-            .as_ref()
-            .map(|category| category.name.clone())
-            .unwrap_or_else(|| "Default".into());
+                    .to_string();
+        let unrar = true;
+        let unrar_folder = String::new();
         let collection = Collection {
             id,
             subject: nzb.name.clone(),
@@ -998,7 +935,6 @@ impl App {
             files,
             posted_on: nzb.posted_on.clone(),
             delete_archives: false,
-            category: category_name,
             password: String::new(),
             source,
         };
@@ -1034,31 +970,17 @@ impl App {
                     .collect();
                 let id = self.queue.iter().map(|c| c.id).max().unwrap_or(0) + 1;
                 let paused = self.paused;
-                let category = self.matching_category(&nzb.name, &nzb.group);
                 let group = if nzb.group.is_empty() {
                     "alt.binaries.misc".to_string()
                 } else {
                     nzb.group.clone()
                 };
-                let folder = category
-                    .as_ref()
-                    .map(|category| category.download_folder.clone())
-                    .filter(|folder| !folder.trim().is_empty())
-                    .unwrap_or_else(|| {
-                        PathBuf::from(&self.settings.download_dir)
+                let folder = PathBuf::from(&self.settings.download_dir)
                             .join(sanitize_folder(&nzb.name))
                             .to_string_lossy()
-                            .to_string()
-                    });
-                let unrar = category.as_ref().map(|category| category.unrar).unwrap_or(true);
-                let unrar_folder = category
-                    .as_ref()
-                    .map(|category| category.unrar_folder.clone())
-                    .unwrap_or_default();
-                let category_name = category
-                    .as_ref()
-                    .map(|category| category.name.clone())
-                    .unwrap_or_else(|| "Default".into());
+                            .to_string();
+                let unrar = true;
+                let unrar_folder = String::new();
                 let collection = Collection {
                     id,
                     subject: nzb.name.clone(),
@@ -1086,7 +1008,6 @@ impl App {
                     files,
                     posted_on: nzb.posted_on.clone(),
                     delete_archives: false,
-                    category: category_name,
                     password: String::new(),
                     source: path.to_string_lossy().to_string(),
                 };
@@ -1134,322 +1055,118 @@ impl App {
         self.toast("Opening unrar folder");
     }
 
-    pub fn explorer_navigate(&mut self, path: PathBuf) {
-        if path == self.explorer_path {
+    /// Asks GitHub for the latest release. `manual` comes from the Version?
+    /// dialog and reports "up to date" too.
+    pub fn check_for_update(&mut self, manual: bool) {
+        if self.screenshot_path.is_some() || self.update_rx.is_some() {
             return;
         }
-        if !path.is_dir() {
-            self.toast("Folder does not exist");
-            return;
+        self.update_status = "Checking for a new version...".into();
+        if manual {
+            self.show_version = true;
         }
-        self.explorer_history.push(self.explorer_path.clone());
-        self.explorer_forward.clear();
-        self.explorer_path = path;
-        self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
-        self.explorer_selected = None;
-        self.explorer_selected_set.clear();
-        self.explorer_anchor = None;
+        self.update_rx = Some(update::spawn_check());
     }
 
-    pub fn explorer_back(&mut self) {
-        if let Some(previous) = self.explorer_history.pop() {
-            let current = std::mem::replace(&mut self.explorer_path, previous);
-            self.explorer_forward.push(current);
-            self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
-            self.explorer_selected = None;
-            self.explorer_selected_set.clear();
-            self.explorer_anchor = None;
-        }
-    }
-
-    pub fn explorer_forward(&mut self) {
-        if let Some(next) = self.explorer_forward.pop() {
-            let current = std::mem::replace(&mut self.explorer_path, next);
-            self.explorer_history.push(current);
-            self.explorer_path_edit = self.explorer_path.to_string_lossy().to_string();
-            self.explorer_selected = None;
-            self.explorer_selected_set.clear();
-            self.explorer_anchor = None;
-        }
-    }
-
-    pub fn explorer_up(&mut self) {
-        if let Some(parent) = self.explorer_path.parent().map(Path::to_path_buf) {
-            self.explorer_navigate(parent);
-        }
-    }
-
-    pub fn explorer_open_entry(&mut self, path: PathBuf, is_dir: bool) {
-        if is_dir {
-            self.explorer_navigate(path);
-        } else {
-            shell_open(&path);
-            self.log("Explorer", &format!("Opened {}", path.display()));
-        }
-    }
-
-    pub fn explorer_open_containing(&mut self, path: PathBuf) {
-        if let Some(parent) = path.parent() {
-            shell_open(parent);
-            self.log("Explorer", &format!("Opened {}", parent.display()));
-        }
-    }
-
-    pub fn explorer_join_selected(&mut self) {
-        let mut paths = self.explorer_selected_paths();
-        if paths.len() < 2 {
-            self.toast("Select at least two files to join");
-            return;
-        }
-        files::sort_split_paths(&mut paths);
-        let Some(output) = rfd::FileDialog::new()
-            .set_file_name("joined.bin")
-            .save_file()
-        else {
+    /// Downloads, verifies and installs the available release, then exits so
+    /// the installer can replace this copy and start the new one.
+    pub fn update_now(&mut self) {
+        let Some(release) = self.update_available.clone() else {
             return;
         };
-        match files::join_files(&paths, &output) {
-            Ok(bytes) => {
-                self.log(
-                    "Explorer",
-                    &format!("Joined {} files into {} ({} bytes)", paths.len(), output.display(), bytes),
-                );
-                self.toast("Files joined");
-            }
-            Err(error) => self.show_message = Some(("Join".into(), error)),
-        }
-    }
-
-    pub fn explorer_split_file(&mut self, path: PathBuf) {
-        self.split_file_target = Some(path);
-        self.show_split_file = true;
-    }
-
-    fn explorer_selected_paths(&self) -> Vec<PathBuf> {
-        let mut paths: Vec<PathBuf> = self.explorer_selected_set.iter().cloned().collect();
-        if paths.is_empty() {
-            if let Some(path) = &self.explorer_selected {
-                paths.push(path.clone());
-            }
-        }
-        paths.sort();
-        paths
-    }
-
-    pub fn explorer_copy_selected(&mut self, cut: bool) {
-        let paths = self.explorer_selected_paths();
-        if paths.is_empty() {
-            self.toast("Select an item first");
+        if self.update_rx.is_some() || self.update_installing {
             return;
         }
-        let count = paths.len();
-        self.explorer_clipboard = Some((paths, cut));
-        self.toast(if cut {
-            format!("Cut {count} item(s)")
-        } else {
-            format!("Copied {count} item(s)")
-        });
-        self.log(
-            "Explorer",
-            &format!("{} {count} item(s)", if cut { "Cut" } else { "Copied" }),
-        );
+        if update::install_dir().is_none() {
+            self.update_status = format!(
+                "{} {} is available. This is a development build; get it from the release page.",
+                APP_NAME, release.version
+            );
+            return;
+        }
+        self.update_installing = true;
+        self.update_status = format!("Downloading {} {}...", APP_NAME, release.version);
+        self.log("Update", &format!("Downloading version {}.", release.version));
+        self.update_rx = Some(update::spawn_download(release));
     }
 
-    pub fn explorer_paste(&mut self) {
-        let Some((sources, cut)) = self.explorer_clipboard.clone() else {
+    fn poll_update(&mut self) {
+        let due = self
+            .next_update_check
+            .is_some_and(|at| Instant::now() >= at);
+        if due {
+            self.next_update_check = match self.settings.check_version_minutes {
+                0 => None,
+                minutes => Some(Instant::now() + Duration::from_secs(u64::from(minutes) * 60)),
+            };
+            if self.settings.check_version_minutes > 0 {
+                self.check_for_update(false);
+            }
+        }
+        // Install by itself only when nothing is being downloaded or unpacked.
+        let idle = self.active_dl.is_none() && self.active_par2.is_none() && self.active_unrar.is_none();
+        if self.settings.auto_update
+            && idle
+            && !self.update_installing
+            && self.update_rx.is_none()
+            && self.update_available.is_some()
+            && update::install_dir().is_some()
+        {
+            self.update_now();
+        }
+        let Some(rx) = self.update_rx.take() else {
             return;
         };
-        let mut pasted = Vec::new();
-        let mut failures = Vec::new();
-        for source in sources {
-            if !source.exists() {
-                failures.push(format!("{} no longer exists", source.display()));
-                continue;
+        let event = match rx.try_recv() {
+            Ok(event) => event,
+            Err(std::sync::mpsc::TryRecvError::Empty) => {
+                self.update_rx = Some(rx);
+                return;
             }
-            let Some(name) = source.file_name() else {
-                continue;
-            };
-            let destination = unique_destination(self.explorer_path.join(name));
-            if destination == source {
-                continue;
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                update::UpdateEvent::Failed("The update worker stopped unexpectedly".into())
             }
-            let result = if cut {
-                std::fs::rename(&source, &destination)
-            } else if source.is_dir() {
-                copy_directory(&source, &destination)
-            } else {
-                std::fs::copy(&source, &destination).map(|_| ())
-            };
-            match result {
-                Ok(()) => pasted.push(destination),
-                Err(error) => failures.push(format!("{}: {error}", source.display())),
-            }
-        }
-        if cut {
-            self.explorer_clipboard = None;
-        }
-        if !pasted.is_empty() {
-            self.explorer_selected_set = pasted.iter().cloned().collect();
-            self.explorer_selected = pasted.first().cloned();
-            self.explorer_anchor = None;
-            self.log("Explorer", &format!("Pasted {} item(s)", pasted.len()));
-            self.toast(format!("Pasted {} item(s)", pasted.len()));
-        }
-        if !failures.is_empty() {
-            self.show_message = Some(("Explorer".into(), format!("Paste failed:\n{}", failures.join("\n"))));
-        }
-    }
-
-    pub fn explorer_drop_paths(&mut self, paths: Vec<PathBuf>) {        let mut copied = 0;
-        for source in paths {
-            if !source.exists() {
-                continue;
-            }
-            let Some(name) = source.file_name() else {
-                continue;
-            };
-            let destination = unique_destination(self.explorer_path.join(name));
-            let result = if source.is_dir() {
-                copy_directory(&source, &destination)
-            } else {
-                std::fs::copy(&source, &destination).map(|_| ())
-            };
-            match result {
-                Ok(()) => copied += 1,
-                Err(error) => self.log(
-                    "Error",
-                    &format!("Explorer drop failed for {}: {error}", source.display()),
-                ),
-            }
-        }
-        if copied > 0 {
-            self.toast(format!("Added {copied} item(s)"));
-            self.log("Explorer", &format!("Dropped {copied} item(s)"));
-        }
-    }
-    pub fn explorer_open_with(&mut self, path: PathBuf) {        let Some(program) = rfd::FileDialog::new()
-            .add_filter("Programs", &["exe", "com", "bat", "cmd"])
-            .pick_file()
-        else {
-            return;
         };
-        match std::process::Command::new(&program).arg(&path).spawn() {
-            Ok(_) => self.log(
-                "Explorer",
-                &format!("Opened {} with {}", path.display(), program.display()),
-            ),
-            Err(error) => {
-                self.show_message = Some((
-                    "Explorer".into(),
-                    format!("Could not open file:\n{error}"),
-                ));
+        match event {
+            update::UpdateEvent::UpToDate(latest) => {
+                self.update_available = None;
+                self.update_status = format!("{APP_NAME} {VERSION} is up to date (latest release: {latest}).");
             }
-        }
-    }
-
-    pub fn explorer_rename(&mut self, path: PathBuf) {
-        self.explorer_rename_draft = path
-            .file_name()
-            .map(|name| name.to_string_lossy().to_string())
-            .unwrap_or_default();
-        self.explorer_rename_target = Some(path);
-        self.show_explorer_rename = true;
-    }
-
-    pub fn explorer_new_folder(&mut self) {
-        let mut name = "New folder".to_string();
-        let mut index = 1;
-        while self.explorer_path.join(&name).exists() {
-            name = format!("New folder ({index})");
-            index += 1;
-        }
-        let path = self.explorer_path.join(&name);
-        match std::fs::create_dir(&path) {
-            Ok(()) => {
-                self.explorer_selected = Some(path.clone());
-                self.explorer_selected_set.clear();
-                self.explorer_selected_set.insert(path.clone());
-                self.explorer_anchor = None;
-                self.log("Explorer", &format!("Created {}", path.display()));
-                self.toast("Folder created");
-            }
-            Err(error) => {
-                self.show_message = Some(("Explorer".into(), format!("Could not create folder:\n{error}")));
-            }
-        }
-    }
-
-    pub fn explorer_properties(&mut self, path: PathBuf) {
-        let metadata = std::fs::metadata(&path);
-        let mut lines = vec![path.display().to_string()];
-        match metadata {
-            Ok(meta) => {
-                if meta.is_dir() {
-                    lines.push("Type: Folder".into());
-                } else {
-                    lines.push(format!("Size: {} bytes", meta.len()));
-                    lines.push("Type: File".into());
+            update::UpdateEvent::Available(release) => {
+                self.update_status = format!("{APP_NAME} {} is available (you have {VERSION}).", release.version);
+                if self.update_notified != release.version {
+                    self.update_notified = release.version.clone();
+                    self.log("Update", &format!("Version {} is available.", release.version));
+                    self.toast(format!("NewsQueue {} is available", release.version));
+                    tray::notify("Update available", &format!("NewsQueue {} is available", release.version));
                 }
-                if let Ok(modified) = meta.modified() {
-                    let modified = chrono::DateTime::<chrono::Local>::from(modified);
-                    lines.push(format!("Modified: {}", modified.format("%Y-%m-%d %H:%M")));
-                }
-                if meta.permissions().readonly() {
-                    lines.push("Attributes: Read-only".into());
+                self.update_available = Some(release);
+            }
+            update::UpdateEvent::Downloaded(release, setup) => {
+                let Some(dir) = update::install_dir() else {
+                    self.update_installing = false;
+                    return;
+                };
+                match update::launch_installer(&setup, &dir) {
+                    Ok(()) => {
+                        self.log("Update", &format!("Installing version {}; restarting.", release.version));
+                        self.update_status = format!("Installing {} {}...", APP_NAME, release.version);
+                        // Same exit path as the shutdown "Exit" action: saves
+                        // state on drop and closes the window.
+                        self.shutdown_exit_requested = true;
+                    }
+                    Err(error) => {
+                        self.update_installing = false;
+                        self.update_status = error.clone();
+                        self.log("Error", &error);
+                    }
                 }
             }
-            Err(error) => lines.push(format!("Cannot read metadata: {error}")),
-        }
-        self.show_message = Some(("Properties".into(), lines.join("\n")));
-    }
-
-    pub fn explorer_delete_selected(&mut self) {
-        let paths = self.explorer_selected_paths();
-        if paths.is_empty() {
-            return;
-        }
-        let description = if paths.len() == 1 {
-            format!(
-                "Delete {}?",
-                paths[0]
-                    .file_name()
-                    .map(|name| name.to_string_lossy().to_string())
-                    .unwrap_or_else(|| paths[0].display().to_string())
-            )
-        } else {
-            format!("Delete {} selected items?", paths.len())
-        };
-        let answer = rfd::MessageDialog::new()
-            .set_title("Delete")
-            .set_description(description)
-            .set_buttons(rfd::MessageButtons::YesNo)
-            .show();
-        if !matches!(answer, rfd::MessageDialogResult::Yes) {
-            return;
-        }
-        let mut deleted = 0;
-        let mut failures = Vec::new();
-        for path in &paths {
-            let result = match std::fs::symlink_metadata(path) {
-                Ok(meta) if meta.is_dir() => std::fs::remove_dir_all(path),
-                Ok(_) => std::fs::remove_file(path),
-                Err(error) => Err(error),
-            };
-            match result {
-                Ok(()) => deleted += 1,
-                Err(error) => failures.push(format!("{}: {error}", path.display())),
+            update::UpdateEvent::Failed(error) => {
+                self.update_installing = false;
+                self.update_status = error.clone();
+                self.log("Error", &error);
             }
-        }
-        self.explorer_selected = None;
-        self.explorer_selected_set.clear();
-        self.explorer_anchor = None;
-        self.log("Explorer", &format!("Deleted {deleted} item(s)"));
-        self.toast(format!("Deleted {deleted} item(s)"));
-        if !failures.is_empty() {
-            self.show_message = Some((
-                "Explorer".into(),
-                format!("Some items could not be deleted:\n{}", failures.join("\n")),
-            ));
         }
     }
 
@@ -2026,37 +1743,6 @@ impl App {
                 }
             }
             UiAction::Export => self.export_selected(),
-            UiAction::SetCategory => {
-                if let Some(sel) = self.selected {
-                    if let Some(c) = self.queue.get_mut(sel.collection) {
-                        if self.settings.categories.is_empty() {
-                            c.category = "Default".into();
-                        } else {
-                            let current = self
-                                .settings
-                                .categories
-                                .iter()
-                                .position(|category| category.name == c.category)
-                                .unwrap_or(usize::MAX);
-                            let next = if current == usize::MAX {
-                                0
-                            } else {
-                                (current + 1) % self.settings.categories.len()
-                            };
-                            let category = &self.settings.categories[next];
-                            c.category = category.name.clone();
-                            if !category.download_folder.trim().is_empty() {
-                                c.folder = category.download_folder.clone();
-                            }
-                            c.unrar = category.unrar;
-                            if !category.unrar_folder.trim().is_empty() {
-                                c.unrar_folder = category.unrar_folder.clone();
-                            }
-                        }
-                    }
-                }
-                self.toast("Category changed");
-            }
             UiAction::ToggleUnrar(v) => {
                 if let Some(sel) = self.selected {
                     let mut start = false;
@@ -2093,59 +1779,7 @@ impl App {
                     }
                 }
             }
-            UiAction::JoinSplitParts => {
-                if let Some(collection) = self.selected_collection() {
-                    let folder = PathBuf::from(&collection.folder);
-                    match files::join_split_parts(&folder) {
-                        Ok(Some(path)) => {
-                            self.log("Queue", &format!("Joined split parts to {}", path.display()));
-                            self.toast("Parts joined");
-                        }
-                        Ok(None) => self.toast("No numbered split parts found"),
-                        Err(error) => self.show_message = Some(("Join".into(), error)),
-                    }
-                }
-            }
-            UiAction::SplitSelectedFile => {
-                if let Some(collection) = self.selected_collection() {
-                    let target = collection.files.iter().find_map(|file| {
-                        let path = PathBuf::from(&collection.folder).join(&file.name);
-                        path.is_file().then_some(path)
-                    });
-                    if let Some(target) = target {
-                        self.split_file_target = Some(target);
-                        self.show_split_file = true;
-                    } else {
-                        self.toast("No downloaded file to split");
-                    }
-                }
-            }
             UiAction::OpenFolder => self.open_download_folder(),
-            UiAction::Play => {
-                let Some(collection) = self.selected_collection() else {
-                    self.toast("Select a queue item first");
-                    return;
-                };
-                if self.settings.player_exe.trim().is_empty() {
-                    self.toast("No media player configured");
-                    return;
-                }
-                let path = collection.files.iter().find_map(|file| {
-                    let path = PathBuf::from(&collection.folder).join(&file.name);
-                    path.is_file().then_some(path)
-                });
-                let Some(path) = path else {
-                    self.toast("No downloaded file to play");
-                    return;
-                };
-                match std::process::Command::new(&self.settings.player_exe)
-                    .arg(&path)
-                    .spawn()
-                {
-                    Ok(_) => self.log("Main", &format!("Playing {}", path.display())),
-                    Err(error) => self.toast(format!("Cannot start player: {error}")),
-                }
-            }
             UiAction::Eta => {
                 if let Some(c) = self.selected_collection() {
                     let msg = if self.speed_bps > 0.0 {
@@ -2198,6 +1832,7 @@ impl App {
         self.poll_unrar();
         self.poll_par2();
         self.poll_rss();
+        self.poll_update();
         if self.rss_timer
             && self.rss_rx.is_none()
             && now.duration_since(self.rss_last_refresh)
@@ -2625,10 +2260,16 @@ impl App {
             self.toggle_pause();
         }
         if f2 {
-            self.active_tab = self.active_tab.saturating_sub(1);
+            self.active_tab = match self.active_tab {
+                3 => 1,
+                tab => tab.saturating_sub(1),
+            };
         }
         if f3 {
-            self.active_tab = (self.active_tab + 1).min(4);
+            self.active_tab = match self.active_tab {
+                1 => 3,
+                tab => (tab + 1).min(4),
+            };
         }
         if f9 {
             self.show_threads = !self.show_threads;
@@ -2669,8 +2310,6 @@ impl App {
                 self.show_about = false;
             } else if self.show_stats {
                 self.show_stats = false;
-            } else if self.show_categories {
-                self.show_categories = false;
             } else if self.show_server_edit {
                 self.show_server_edit = false;
             } else if self.show_setup {
@@ -2709,6 +2348,33 @@ impl App {
                 .max(self.session_start.elapsed().as_secs()),
         };
         save_transfer_stats(&stats);
+    }
+
+    /// Toolbar "To tray": the same off-screen hide the minimize path uses, so
+    /// downloads keep ticking while the window is away.
+    pub fn send_to_tray(&mut self) {
+        if self.screenshot_path.is_some() {
+            return;
+        }
+        match tray::main_window_handle() {
+            Some(handle) if tray::ready() => {
+                tray::hide_main_window(handle);
+                self.tray_hidden = true;
+                self.log("Main", "Minimized to tray.");
+            }
+            _ => self.toast("The tray icon is not ready yet"),
+        }
+    }
+
+    /// Toolbar "Home": the project page in the default browser.
+    pub fn open_home_page(&mut self) {
+        #[cfg(target_os = "windows")]
+        let result = std::process::Command::new("explorer").arg(HOME_URL).spawn();
+        #[cfg(not(target_os = "windows"))]
+        let result = std::process::Command::new("xdg-open").arg(HOME_URL).spawn();
+        if let Err(error) = result {
+            self.toast(format!("Cannot open {HOME_URL}: {error}"));
+        }
     }
 
     fn handle_tray(&mut self, ctx: &egui::Context) {
@@ -2823,17 +2489,6 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         self.handle_keys(ctx);
-        let dropped: Vec<PathBuf> = ctx.input(|input| {
-            input
-                .raw
-                .dropped_files
-                .iter()
-                .filter_map(|file| file.path.clone())
-                .collect()
-        });
-        if !dropped.is_empty() && self.active_tab == 2 {
-            self.explorer_drop_paths(dropped);
-        }
         ui::draw(self, ctx);
         dialogs::draw(self, ctx);
         self.handle_screenshot(ctx);
@@ -2954,81 +2609,6 @@ fn hook_env_value(value: &str) -> String {
         .collect()
 }
 
-/// Open a file or folder with the Windows shell, matching a double-click in
-/// Explorer. Uses ShellExecuteW so commas and quotes in paths are safe.
-#[cfg(target_os = "windows")]
-fn shell_open(path: &Path) {
-    use std::os::windows::ffi::OsStrExt;
-    let wide: Vec<u16> = path
-        .as_os_str()
-        .encode_wide()
-        .chain(std::iter::once(0))
-        .collect();
-    #[link(name = "shell32")]
-    extern "system" {
-        fn ShellExecuteW(
-            hwnd: *mut std::ffi::c_void,
-            operation: *const u16,
-            file: *const u16,
-            parameters: *const u16,
-            directory: *const u16,
-            show: i32,
-        ) -> isize;
-    }
-    unsafe {
-        ShellExecuteW(
-            std::ptr::null_mut(),
-            std::ptr::null(),
-            wide.as_ptr(),
-            std::ptr::null(),
-            std::ptr::null(),
-            1,
-        );
-    }
-}
-
-#[cfg(not(target_os = "windows"))]
-fn shell_open(path: &Path) {
-    let _ = std::process::Command::new("xdg-open").arg(path).spawn();
-}
-
-fn unique_destination(path: PathBuf) -> PathBuf {
-    if !path.exists() {
-        return path;
-    }
-    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
-    let stem = path
-        .file_stem()
-        .unwrap_or_default()
-        .to_string_lossy()
-        .to_string();
-    let extension = path
-        .extension()
-        .map(|extension| format!(".{}", extension.to_string_lossy()))
-        .unwrap_or_default();
-    for index in 1..10_000 {
-        let candidate = parent.join(format!("{stem} ({index}){extension}"));
-        if !candidate.exists() {
-            return candidate;
-        }
-    }
-    path
-}
-
-fn copy_directory(source: &Path, destination: &Path) -> std::io::Result<()> {
-    std::fs::create_dir_all(destination)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let target = destination.join(entry.file_name());
-        if entry.file_type()?.is_dir() {
-            copy_directory(&entry.path(), &target)?;
-        } else {
-            std::fs::copy(entry.path(), target)?;
-        }
-    }
-    Ok(())
-}
-
 fn parse_screenshot_arg() -> Option<String> {
     let args: Vec<String> = std::env::args().collect();
     let mut i = 1;
@@ -3099,6 +2679,32 @@ fn main() -> eframe::Result<()> {
             }
             Err(error) => {
                 eprintln!("rss test failed: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if args.iter().any(|a| a == "--update-test") {
+        // Checks GitHub for a newer release; never downloads or installs.
+        match update::spawn_check().recv() {
+            Ok(update::UpdateEvent::UpToDate(latest)) => {
+                println!("{APP_NAME} {VERSION} is up to date (latest release {latest})");
+                return Ok(());
+            }
+            Ok(update::UpdateEvent::Available(release)) => {
+                println!(
+                    "Version {} is available: setup {} / sha256 {}",
+                    release.version,
+                    if release.setup_url.is_empty() { "missing" } else { "found" },
+                    if release.sha256_url.is_empty() { "missing" } else { "found" }
+                );
+                return Ok(());
+            }
+            Ok(other) => {
+                eprintln!("update test failed: {other:?}");
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("update test failed: {error}");
                 std::process::exit(1);
             }
         }
@@ -3208,38 +2814,6 @@ fn main() -> eframe::Result<()> {
 #[cfg(test)]
 mod integration_tests {
     use super::*;
-
-    #[test]
-    fn explorer_navigation_creates_and_reports_folders() {
-        let root = std::env::temp_dir().join(format!(
-            "newsqueue-explorer-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        let first = root.join("first");
-        let second = root.join("second");
-        std::fs::create_dir_all(&first).unwrap();
-        std::fs::create_dir_all(&second).unwrap();
-
-        let mut app = App::new(Settings::default(), Some("unused.png".into()));
-        app.explorer_navigate(first.clone());
-        assert_eq!(app.explorer_path, first);
-        app.explorer_navigate(second.clone());
-        assert_eq!(app.explorer_path, second);
-        app.explorer_back();
-        assert_eq!(app.explorer_path, first);
-        app.explorer_forward();
-        assert_eq!(app.explorer_path, second);
-        app.explorer_new_folder();
-        let created = app.explorer_selected.clone().unwrap();
-        assert!(created.is_dir());
-        app.explorer_properties(created.clone());
-        assert!(app.show_message.is_some());
-        let _ = std::fs::remove_dir_all(root);
-    }
 
     #[test]
     fn transfer_stats_reset_daily_on_a_new_day_and_monthly_on_a_new_year() {
@@ -3529,66 +3103,6 @@ mod integration_tests {
             .logs
             .iter()
             .any(|entry| entry.message.contains("Countdown cancelled")));
-    }
-
-    #[test]
-    fn explorer_multi_copy_pastes_all_selected_files() {
-        let root = std::env::temp_dir().join(format!(
-            "newsqueue-multi-copy-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        let source = root.join("source");
-        let destination = root.join("destination");
-        std::fs::create_dir_all(&source).unwrap();
-        std::fs::create_dir_all(&destination).unwrap();
-        let first = source.join("one.txt");
-        let second = source.join("two.txt");
-        std::fs::write(&first, "one").unwrap();
-        std::fs::write(&second, "two").unwrap();
-        let mut app = App::new(Settings::default(), Some("unused.png".into()));
-        app.explorer_path = source;
-        app.explorer_selected_set.insert(first);
-        app.explorer_selected_set.insert(second);
-        app.explorer_copy_selected(false);
-        app.explorer_path = destination.clone();
-        app.explorer_paste();
-        assert_eq!(
-            std::fs::read_to_string(destination.join("one.txt")).unwrap(),
-            "one"
-        );
-        assert_eq!(
-            std::fs::read_to_string(destination.join("two.txt")).unwrap(),
-            "two"
-        );
-        let _ = std::fs::remove_dir_all(root);
-    }
-
-    #[test]
-    fn explorer_drop_copies_files() {
-        let root = std::env::temp_dir().join(format!(
-            "newsqueue-drop-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .map(|d| d.as_nanos())
-                .unwrap_or(0)
-        ));
-        let source = root.join("source.txt");
-        let destination = root.join("destination");
-        std::fs::create_dir_all(&destination).unwrap();
-        std::fs::write(&source, "dropped").unwrap();
-        let mut app = App::new(Settings::default(), Some("unused.png".into()));
-        app.explorer_path = destination.clone();
-        app.explorer_drop_paths(vec![source]);
-        assert_eq!(
-            std::fs::read_to_string(destination.join("source.txt")).unwrap(),
-            "dropped"
-        );
-        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

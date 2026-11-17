@@ -35,6 +35,15 @@ try {
         Fail "Uninstaller is missing: $uninstallSource"
     }
 
+    # A self-update starts this installer and then exits; give that process
+    # up to a minute to close before checking for running copies.
+    if (-not [string]::IsNullOrWhiteSpace($env:NQ_WAIT_PID)) {
+        try {
+            Wait-Process -Id ([int]$env:NQ_WAIT_PID) -Timeout 60 -ErrorAction Stop
+        } catch {
+        }
+    }
+
     $running = Get-Process -Name newsqueue -ErrorAction SilentlyContinue | Where-Object {
         $_.Path -and $_.Path.StartsWith($InstallDir, [System.StringComparison]::OrdinalIgnoreCase)
     }
@@ -120,6 +129,9 @@ try {
 
     if (-not $silentInstall) {
         [void]$shell.Popup("NewsQueue $version was installed to`n$InstallDir", 0, 'NewsQueue Setup', 64)
+    }
+    if ($env:NQ_RELAUNCH -eq '1') {
+        Start-Process -FilePath $exe -WorkingDirectory $InstallDir
     }
     exit 0
 } catch {
