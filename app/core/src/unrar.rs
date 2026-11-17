@@ -162,7 +162,8 @@ pub fn extract(
         command.arg(format!("-p{}", options.password));
     }
     command.arg(&archive);
-    let dest_arg = format!("{}\\", dest.display());
+    // UnRAR treats a trailing separator as "extract into this folder".
+    let dest_arg = format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR);
     command.arg(&dest_arg);
 
     let output = command
