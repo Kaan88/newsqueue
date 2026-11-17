@@ -1,6 +1,9 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+use newsqueue_core::command::{Applied, Command};
+pub use newsqueue_core::command::MoveDir;
 use newsqueue_core::engine::*;
+use newsqueue_core::host::{EngineHost, TICK_INTERVAL};
 use newsqueue_core::{download, model, par2, rss, unrar};
 mod dialogs;
 mod shutdown;
@@ -20,13 +23,6 @@ pub struct Selection {
     pub file: Option<usize>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MoveDir {
-    Top,
-    Up,
-    Down,
-    Bottom,
-}
 
 #[derive(Clone, Debug)]
 pub enum UiAction {
@@ -62,7 +58,7 @@ pub enum UiAction {
 
 
 pub struct App {
-    pub engine: Engine,
+    pub engine: EngineHost,
     pub setup_draft: Settings,
     pub selected: Option<Selection>,
     pub selected_par2: Option<usize>,
@@ -131,13 +127,13 @@ pub struct App {
 impl std::ops::Deref for App {
     type Target = Engine;
     fn deref(&self) -> &Engine {
-        &self.engine
+        &*self.engine
     }
 }
 
 impl std::ops::DerefMut for App {
     fn deref_mut(&mut self) -> &mut Engine {
-        &mut self.engine
+        &mut *self.engine
     }
 }
 
@@ -155,7 +151,10 @@ impl App {
         let column_visible_draft = settings.column_visible;
         let column_width_draft = settings.column_widths;
         let setup_draft = settings.clone();
-        let engine = Engine::new(settings, demo);
+        let mut engine = EngineHost::new(Engine::new(settings, demo));
+        if !demo {
+            engine.start(TICK_INTERVAL);
+        }
         let mut app = Self {
             engine,
             setup_draft,
@@ -295,83 +294,36 @@ impl App {
 
 
 
+    pub fn selected_id(&self) -> Option<u64> {
+        self.selected_collection().map(|c| c.id)
+    }
+
     pub fn pause_selected(&mut self, pause: bool) {
-        let Some(sel) = self.selected else { return };
-        let active_id = self.active_dl.as_ref().map(|a| a.id);
-        let mut changed: Option<(String, bool)> = None;
-        if let Some(c) = self.queue.get_mut(sel.collection) {
-            if pause {
-                if c.status != ItemStatus::Completed {
-                    c.status = ItemStatus::Paused;
-                    changed = Some((c.subject.clone(), true));
-                }
-            } else if c.status == ItemStatus::Paused {
-                // Only the item that already has a worker should be marked
-                // Downloading; anything else goes back to Queued or it would
-                // never be picked up by the starter.
-                let id = c.id;
-                c.status = if active_id == Some(id) {
-                    ItemStatus::Downloading
-                } else {
-                    ItemStatus::Queued
-                };
-                changed = Some((c.subject.clone(), false));
-            }
-        }
-        if let Some((subject, paused)) = changed {
-            self.log(
-                "Queue",
-                &format!("{}: {subject}", if paused { "Paused" } else { "Unpaused" }),
-            );
+        if let Some(id) = self.selected_id() {
+            self.engine.apply(Command::Pause(id, pause));
         }
     }
 
     pub fn delete_selected(&mut self) {
-        let Some(sel) = self.selected else { return };
-        if sel.collection < self.queue.len() {
-            let c = self.queue.remove(sel.collection);
-            self.log("Queue", &format!("Deleted: {}", c.subject));
-            self.selected = None;
+        if let Some(id) = self.selected_id() {
+            if self.engine.apply(Command::Delete(id)) == Applied::Removed {
+                self.selected = None;
+            }
         }
     }
 
     pub fn move_selected(&mut self, dir: MoveDir) {
-        let Some(sel) = self.selected else { return };
-        let i = sel.collection;
-        if i >= self.queue.len() {
-            return;
-        }
-        let j = match dir {
-            MoveDir::Top => 0,
-            MoveDir::Up => i.saturating_sub(1),
-            MoveDir::Down => (i + 1).min(self.queue.len() - 1),
-            MoveDir::Bottom => self.queue.len() - 1,
-        };
-        if i != j {
-            let item = self.queue.remove(i);
-            self.queue.insert(j, item);
-            self.selected = Some(Selection {
-                collection: j,
-                file: None,
-            });
+        let Some(id) = self.selected_id() else { return };
+        if let Applied::MovedTo(j) = self.engine.apply(Command::Move(id, dir)) {
+            self.selected = Some(Selection { collection: j, file: None });
         }
     }
 
-    pub fn cleanup(&mut self) {
-        let before = self.queue.len();
-        self.queue.retain(|c| c.status != ItemStatus::Completed);
-        let removed = before - self.queue.len();
-        self.par2.retain(|p| p.status != "OK");
-        self.log(
-            "Main",
-            &format!("Cleanup removed {removed} completed queue entries."),
-        );
-        self.toast(format!("Cleanup: {removed} removed"));
-    }
 
     pub fn toggle_expand(&mut self, index: usize) {
-        if let Some(c) = self.queue.get_mut(index) {
-            c.expanded = !c.expanded;
+        if let Some(c) = self.queue.get(index) {
+            let (id, v) = (c.id, !c.expanded);
+            self.engine.apply(Command::SetExpanded(id, v));
         }
     }
 
@@ -651,23 +603,9 @@ impl App {
             self.toast("Enter an unpack password");
             return;
         }
-        let password = self.unrar_password_draft.clone();
         self.show_unrar_password = false;
-        let subject = self
-            .queue
-            .iter()
-            .find(|c| c.id == id)
-            .map(|c| c.subject.clone())
-            .unwrap_or_else(|| format!("collection {id}"));
-        if let Some(collection) = self.queue.iter_mut().find(|c| c.id == id) {
-            collection.password = password;
-            collection.status = ItemStatus::Completed;
-        }
-        self.log(
-            "Unrar",
-            &format!("Retrying unpack with the supplied password: {subject}"),
-        );
-        self.start_unrar(id);
+        let password = self.unrar_password_draft.clone();
+        self.engine.apply(Command::SubmitPassword(id, password));
     }
 
     pub fn cancel_unrar_password(&mut self) {
@@ -681,27 +619,21 @@ impl App {
             .find(|c| c.id == id)
             .map(|c| c.subject.clone())
             .unwrap_or_else(|| format!("collection {id}"));
-        if let Some(collection) = self.queue.iter_mut().find(|c| c.id == id) {
-            collection.status = ItemStatus::Error;
-        }
-        self.log(
-            "Unrar",
-            &format!("Unpack cancelled: a password is required for {subject}."),
-        );
+        self.engine.apply(Command::CancelPassword(id));
         self.show_message = Some((
             "Unrar password".into(),
-            format!("{subject}\n\nUnpack cancelled because no password was supplied."),
+            format!("{subject}
+
+Unpack cancelled because no password was supplied."),
         ));
     }
 
     pub fn unpack_selected(&mut self) {
-        let Some(sel) = self.selected else {
-            self.toast("Select a queue item first");
-            return;
-        };
-        if let Some(c) = self.queue.get(sel.collection) {
-            let id = c.id;
-            self.start_unrar(id);
+        match self.selected_id() {
+            Some(id) => {
+                self.engine.apply(Command::Unpack(id));
+            }
+            None => self.toast("Select a queue item first"),
         }
     }
 
@@ -714,44 +646,25 @@ impl App {
             UiAction::DeleteSelected => self.delete_selected(),
             UiAction::Move(d) => self.move_selected(d),
             UiAction::ChangeFolder => {
-                let mut changed = None;
-                if let Some(sel) = self.selected {
+                if let Some(id) = self.selected_id() {
                     if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        if let Some(c) = self.queue.get_mut(sel.collection) {
-                            c.folder = path.to_string_lossy().to_string();
-                            changed = Some(c.subject.clone());
-                        }
+                        let folder = path.to_string_lossy().to_string();
+                        self.engine.apply(Command::SetFolder(id, folder));
                     }
-                }
-                if let Some(subject) = changed {
-                    self.log("Queue", &format!("Download folder changed for {subject}"));
                 }
             }
             UiAction::Export => self.export_selected(),
             UiAction::ToggleUnrar(v) => {
-                if let Some(sel) = self.selected {
-                    let mut start = false;
-                    if let Some(c) = self.queue.get_mut(sel.collection) {
-                        c.unrar = v;
-                        start = v && c.status == ItemStatus::Completed;
-                    }
-                    if start {
-                        if let Some(c) = self.queue.get(sel.collection) {
-                            let id = c.id;
-                            self.start_unrar(id);
-                        }
-                    }
+                if let Some(id) = self.selected_id() {
+                    self.engine.apply(Command::SetUnrar(id, v));
                 }
             }
             UiAction::UnpackNow => self.unpack_selected(),
             UiAction::ChangeUnrarFolder => {
-                if let Some(sel) = self.selected {
+                if let Some(id) = self.selected_id() {
                     if let Some(path) = rfd::FileDialog::new().pick_folder() {
-                        if let Some(c) = self.queue.get_mut(sel.collection) {
-                            c.unrar_folder = path.to_string_lossy().to_string();
-                            let subject = c.subject.clone();
-                            self.log("Queue", &format!("Unrar folder changed for {subject}"));
-                        }
+                        let folder = path.to_string_lossy().to_string();
+                        self.engine.apply(Command::SetUnrarFolder(id, folder));
                     }
                 }
             }
@@ -790,14 +703,10 @@ impl App {
                 }
             }
             UiAction::CollapseAll => {
-                for c in &mut self.queue {
-                    c.expanded = false;
-                }
+                self.engine.apply(Command::SetAllExpanded(false));
             }
             UiAction::ExpandAll => {
-                for c in &mut self.queue {
-                    c.expanded = true;
-                }
+                self.engine.apply(Command::SetAllExpanded(true));
             }
             UiAction::None => {}
         }
@@ -810,7 +719,9 @@ impl App {
     pub fn tick(&mut self) {
         let now = Instant::now();
         tray::set_options(self.settings.speed_in_tray, self.settings.tray_balloon);
-        self.engine.tick();
+        if !self.engine.threaded() {
+            self.engine.tick();
+        }
         tray::set_speed(self.engine.speed_bps, self.settings.speed_bytes_mode);
         self.handle_engine_events();
         self.poll_update();
@@ -1084,6 +995,7 @@ impl App {
 
 impl Drop for App {
     fn drop(&mut self) {
+        self.engine.checkout();
         if self.screenshot_path.is_none() {
             self.settings.save();
             save_queue_state(&self.queue);
@@ -1098,6 +1010,8 @@ impl Drop for App {
 
 impl eframe::App for App {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // The engine thread ticks it between frames; this frame uses it directly.
+        self.engine.checkout();
         self.frame += 1;
         self.handle_tray(ctx);
         self.tick();
@@ -1117,6 +1031,7 @@ impl eframe::App for App {
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+        self.engine.checkin();
     }
 }
 

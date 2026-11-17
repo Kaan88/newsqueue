@@ -9,3 +9,5 @@ pub mod par2;
 pub mod rss;
 pub mod unrar;
 pub mod engine;
+pub mod command;
+pub mod host;

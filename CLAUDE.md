@@ -42,6 +42,8 @@ runs both (`default-members`).
 |---|---|
 | `app/src/main.rs` | `App` state, CLI entry, `App::tick()`, eframe `update`, timers, scheduler, worker start/finish, logging, autosave |
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
+| `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
+| `app/core/src/host.rs` | `EngineHost`: engine timer thread; the UI `checkout()`s it per frame and `checkin()`s after |
 | `app/core/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
 | `app/src/ui.rs` | Main window, tabs, queue table, status bar, PAR2/RSS/Log tabs, queue actions |
 | `app/src/dialogs.rs` | 15 setup pages, server editor, stats/columns, password prompt, shutdown, version/update and other modal windows |
@@ -263,7 +265,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 64 unit/integration tests currently pass (40 in core, 24 in desktop).
+- 66 unit/integration tests currently pass (42 in core, 24 in desktop).
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.

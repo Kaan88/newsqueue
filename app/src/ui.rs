@@ -131,9 +131,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
         );
         if r.clicked() {
             app.settings.scheduler_enabled = !app.settings.scheduler_enabled;
+            let on = app.settings.scheduler_enabled;
             app.engine.log(
                 "Scheduler",
-                if app.engine.settings.scheduler_enabled {
+                if on {
                     "Scheduler enabled."
                 } else {
                     "Scheduler disabled."
@@ -889,11 +890,11 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                             // progress path rather than failing.
                             p.status = "Repairing".into();
                             p.info = "Repairing...".into();
+                            let name = p.name.clone();
                             app.engine.repair_until = Some((
                                 i,
                                 std::time::Instant::now() + std::time::Duration::from_secs(6),
                             ));
-                            let name = p.name.clone();
                             app.log("PAR2", &format!("Repair started: {name}"));
                         }
                     } else {
@@ -1217,9 +1218,10 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                 let r = theme::small_button(ui, Icon::Scheduler, app.rss_timer);
                 if r.clicked() {
                     app.rss_timer = !app.rss_timer;
+                    let on = app.rss_timer;
                     app.engine.log(
                         "RSS",
-                        if app.engine.rss_timer {
+                        if on {
                             "RSS timer enabled."
                         } else {
                             "RSS timer disabled."

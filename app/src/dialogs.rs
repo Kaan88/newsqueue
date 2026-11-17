@@ -1464,17 +1464,11 @@ fn rename_window(app: &mut App, ctx: &egui::Context) {
             });
         });
     if save {
-        let folder = std::path::PathBuf::from(&app.settings.download_dir)
-            .join(sanitize_folder(&app.rename_draft))
-            .to_string_lossy()
-            .to_string();
-        if let Some(i) = app.rename_index {
-            if let Some(c) = app.engine.queue.get_mut(i) {
-                c.subject = app.rename_draft.clone();
-                c.folder = folder;
-            }
+        if let Some(id) = app.rename_index.and_then(|i| app.queue.get(i)).map(|c| c.id) {
+            let subject = app.rename_draft.clone();
+            app.engine
+                .apply(newsqueue_core::command::Command::Rename(id, subject));
         }
-        app.log("Queue", "Collection renamed.");
         app.show_rename = false;
         return;
     }
@@ -1673,11 +1667,9 @@ fn execute_command_window(app: &mut App, ctx: &egui::Context) {
         });
     app.execute_command_draft = draft.clone();
     if save {
-        if let Some(index) = app.execute_command_target {
-            if let Some(collection) = app.queue.get_mut(index) {
-                collection.execute = draft;
-                collection.execute_done = false;
-            }
+        if let Some(id) = app.execute_command_target.and_then(|i| app.queue.get(i)).map(|c| c.id) {
+            app.engine
+                .apply(newsqueue_core::command::Command::SetExecute(id, draft));
         }
         app.show_execute_command = false;
         return;
