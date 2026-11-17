@@ -85,7 +85,7 @@ try {
     $main = [IntPtr]::Zero
     for ($i = 0; $i -lt 100; $i++) {
         Start-Sleep -Milliseconds 200
-        $main = [TrayTest]::FindWindowByTitle([IntPtr]::Zero, 'NewsQueue 1.0.2')
+        $main = [TrayTest]::FindWindowByTitle([IntPtr]::Zero, 'NewsQueue 1.0.3')
         if ($main -ne [IntPtr]::Zero) { break }
     }
     if ($main -eq [IntPtr]::Zero) { throw 'main window not found' }
@@ -113,7 +113,7 @@ try {
         }
     }
     if (-not $tooltip) { throw 'tray tooltip was not updated' }
-    if ($tooltip -notlike 'NewsQueue 1.0.2*MiB/s*') { throw "unexpected tray tooltip: $tooltip" }
+    if ($tooltip -notlike 'NewsQueue 1.0.3*MiB/s*') { throw "unexpected tray tooltip: $tooltip" }
     Write-Output "tray tooltip='$tooltip'"
 
     # The balloon test message asks the tray thread to issue a real

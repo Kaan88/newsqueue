@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.2'
+$version = '1.0.3'
 Push-Location $root
 try {
     if (-not $SkipPackage) {

@@ -5,7 +5,7 @@
 A from-scratch Rust + egui desktop Usenet downloader modelled on the behaviour
 of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
 
-NewsQueue uses its own versioning: the current release is **1.0.2**.
+NewsQueue uses its own versioning: the current release is **1.0.3**.
 
 ## Features
 
@@ -76,7 +76,7 @@ Build the per-user installer:
 .\build-installer.ps1
 ```
 
-This writes `app/dist/NewsQueue-1.0.2-Setup.exe` and a `.sha256` checksum. The
+This writes `app/dist/NewsQueue-1.0.3-Setup.exe` and a `.sha256` checksum. The
 installer copies the app and tools to `%LOCALAPPDATA%\Programs\NewsQueue`,
 creates Start Menu and Desktop shortcuts, registers Add/Remove Programs, and
 includes an uninstaller. It does not need administrator rights.
