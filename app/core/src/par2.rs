@@ -183,6 +183,13 @@ fn find_par2_exe() -> Option<PathBuf> {
         PathBuf::from("par2.exe"),
         PathBuf::from(r"C:\Program Files\par2cmdline\par2.exe"),
     ];
+    let mut candidates = candidates.to_vec();
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("par2.exe"));
+            candidates.push(dir.join("par2"));
+        }
+    }
     candidates.into_iter().find(|path| path.is_file())
 }
 
@@ -200,9 +207,12 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn damages_and_repairs_a_file() {
+        if find_par2_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         let root = std::env::temp_dir().join(format!(
             "newsqueue-par2-{}-{}",
             std::process::id(),
@@ -244,9 +254,12 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn repairs_a_damaged_rar_and_then_unrars_it() {
+        if find_par2_exe().is_none() || crate::unrar::unrar_available() == false {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         let root = std::env::temp_dir().join(format!(
             "newsqueue-par2-rar-{}-{}",
             std::process::id(),

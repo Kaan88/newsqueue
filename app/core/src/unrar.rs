@@ -234,6 +234,11 @@ fn split_patterns(value: &str) -> Vec<String> {
         .collect()
 }
 
+/// Whether an UnRAR executable can be found.
+pub fn unrar_available() -> bool {
+    find_unrar_exe().is_some()
+}
+
 fn find_unrar_exe() -> Option<PathBuf> {
     if let Ok(value) = std::env::var("NQ_UNRAR") {
         let path = PathBuf::from(value);
@@ -249,10 +254,11 @@ fn find_unrar_exe() -> Option<PathBuf> {
         PathBuf::from(r"C:\Program Files\WinRAR\UnRAR.exe"),
         PathBuf::from(r"C:\Program Files (x86)\WinRAR\UnRAR.exe"),
     ];
-    if let Ok(path) = std::env::var("PATH") {
-        for dir in path.split(';') {
-            candidates.push(Path::new(dir).join("UnRAR.exe"));
-            candidates.push(Path::new(dir).join("unrar.exe"));
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            candidates.push(dir.join("UnRAR.exe"));
+            candidates.push(dir.join("unrar.exe"));
+            candidates.push(dir.join("unrar"));
         }
     }
     candidates.into_iter().find(|path| path.is_file())
@@ -644,9 +650,12 @@ mod tests {
         assert!(path.ends_with(std::path::Path::new("alt.binaries.test").join("Test.Release")));
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn auto_renames_single_file_and_removes_empty_folders() {
+        if find_unrar_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         let root = std::env::temp_dir().join(format!(
             "newsqueue-unrar-rename-{}-{}",
             std::process::id(),
@@ -684,9 +693,12 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn extracts_an_archive_that_arrived_without_an_extension() {
+        if find_unrar_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         // Obfuscated posts deliver `Rar!` payloads with random names such as
         // `1xnkjchunrcod4zjpbnri` and no extension at all.
         let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
@@ -761,9 +773,12 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn extracts_a_rar_and_strips_the_root_folder() {
+        if find_unrar_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
@@ -809,9 +824,12 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn archive_name_subfolder_uses_the_first_volume_stem() {
+        if find_unrar_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
@@ -839,9 +857,12 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
-    #[cfg(target_os = "windows")]
     #[test]
     fn password_protected_archive_prompts_then_extracts_with_the_password() {
+        if find_unrar_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
         let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
