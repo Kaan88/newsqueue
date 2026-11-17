@@ -8,8 +8,9 @@ not a source-code or artwork copy.
 
 Self-update confirmed working by the user (1.0.2 → 1.0.3). Engine split
 started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
-`Engine`/`Command`/`Snapshot` from GUI_PLAN Phase 0 are not done yet. The
-Linux build of core is not verified yet.
+`Engine`/`Command`/`Snapshot` from GUI_PLAN Phase 0 are not done yet. Core
+builds and passes all 40 tests on Debian 13 (x86_64) with distro `par2` and
+`unrar`; the unrar destination separator was a Linux bug and is fixed.
 
 Current app version: **1.0.3** (2026-11-18, UI refresh; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
