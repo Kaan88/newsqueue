@@ -32,19 +32,23 @@ build-output file names and carry no label.
 
 ## 2. Repository layout
 
-Everything that is part of the application lives in `app/`.
+Everything that is part of the application lives in `app/`. It is a Cargo
+workspace: `app/` is the desktop package (`newsqueue`, egui + Win32) and
+`app/core` is `newsqueue-core` (engine, no UI/Win32; modules `model`,
+`container`, `download`, `unrar`, `par2`, `rss`). Plain `cargo test` in `app/`
+runs both (`default-members`).
 
 | Path | Purpose |
 |---|---|
 | `app/src/main.rs` | `App` state, CLI entry, `App::tick()`, eframe `update`, timers, scheduler, worker start/finish, logging, autosave |
-| `app/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
+| `app/core/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
 | `app/src/ui.rs` | Main window, tabs, queue table, status bar, PAR2/RSS/Log tabs, queue actions |
 | `app/src/dialogs.rs` | 15 setup pages, server editor, stats/columns, password prompt, shutdown, version/update and other modal windows |
-| `app/src/download.rs` | Real NNTP/yEnc downloader: TLS/plain, HTTP CONNECT/SOCKS5, workers, cache, resume, retries |
-| `app/src/container.rs` | Container detection from payload bytes (RAR5 volume numbers, RAR4, ZIP, 7Z, PAR2) used to name obfuscated downloads |
-| `app/src/par2.rs` | PAR2 verify/repair worker using `app/tools/par2.exe` |
-| `app/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
-| `app/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
+| `app/core/src/download.rs` | Real NNTP/yEnc downloader: TLS/plain, HTTP CONNECT/SOCKS5, workers, cache, resume, retries |
+| `app/core/src/container.rs` | Container detection from payload bytes (RAR5 volume numbers, RAR4, ZIP, 7Z, PAR2) used to name obfuscated downloads |
+| `app/core/src/par2.rs` | PAR2 verify/repair worker using `app/tools/par2.exe` |
+| `app/core/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
+| `app/core/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
 | `app/src/update.rs` | GitHub release check, verified self-update via the silent installer |
 | `app/src/theme.rs` | Measured colours, fonts, icon drawing, widget metrics |
 | `app/src/tray.rs` | Win32 tray icon, off-screen hide/show, taskbar add/remove, tooltip, balloons |
@@ -249,7 +253,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 64 unit/integration tests currently pass.
+- 64 unit/integration tests currently pass (40 in core, 24 in desktop).
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.

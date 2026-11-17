@@ -1,16 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod container;
+use newsqueue_core::{download, model, par2, rss, unrar};
 mod dialogs;
-mod download;
-mod model;
-mod par2;
-mod rss;
 mod shutdown;
 mod theme;
 mod tray;
 mod ui;
-mod unrar;
 mod update;
 
 use chrono::{Datelike, Local, Timelike};

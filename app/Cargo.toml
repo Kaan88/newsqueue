@@ -3,7 +3,12 @@ name = "newsqueue"
 version = "1.0.3"
 edition = "2021"
 
+[workspace]
+members = [".", "core"]
+default-members = [".", "core"]
+
 [dependencies]
+newsqueue-core = { path = "core" }
 eframe = "0.29"
 egui_extras = "0.29"
 image = { version = "0.25", default-features = false, features = ["png"] }
@@ -11,9 +16,7 @@ rfd = "0.14"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-quick-xml = "0.36"
 chrono = "0.4"
-fs2 = "0.4"
 native-tls = "0.2"
 ureq = { version = "2.12", default-features = false, features = ["native-tls", "gzip", "charset"] }
 

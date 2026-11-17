@@ -6,6 +6,11 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-18)
 
+Self-update confirmed working by the user (1.0.2 → 1.0.3). Engine split
+started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
+`Engine`/`Command`/`Snapshot` from GUI_PLAN Phase 0 are not done yet. The
+Linux build of core is not verified yet.
+
 Current app version: **1.0.3** (2026-11-18, UI refresh; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds

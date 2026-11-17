@@ -659,7 +659,7 @@ mod tests {
         let dest = root.join("dest");
         fs::create_dir_all(&source).unwrap();
         fs::create_dir_all(source.join("empty")).unwrap();
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
             .join("single.rar");
@@ -689,7 +689,7 @@ mod tests {
     fn extracts_an_archive_that_arrived_without_an_extension() {
         // Obfuscated posts deliver `Rar!` payloads with random names such as
         // `1xnkjchunrcod4zjpbnri` and no extension at all.
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
             .join("tiny.rar");
@@ -764,7 +764,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn extracts_a_rar_and_strips_the_root_folder() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
             .join("tiny.rar");
@@ -812,7 +812,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn archive_name_subfolder_uses_the_first_volume_stem() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
             .join("tiny.rar");
@@ -842,7 +842,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn password_protected_archive_prompts_then_extracts_with_the_password() {
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
             .join("encrypted.rar");

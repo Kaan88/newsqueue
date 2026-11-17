@@ -256,7 +256,7 @@ mod tests {
                 .unwrap_or(0)
         ));
         fs::create_dir_all(&root).unwrap();
-        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        let fixture = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/.."))
             .join("tests")
             .join("fixtures")
             .join("tiny.rar");

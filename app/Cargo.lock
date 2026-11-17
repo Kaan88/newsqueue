@@ -2100,14 +2100,26 @@ dependencies = [
  "eframe",
  "egui_extras",
  "embed-resource",
- "fs2",
  "image",
  "native-tls",
- "quick-xml 0.36.2",
+ "newsqueue-core",
  "rfd",
  "serde",
  "serde_json",
  "sha2",
+ "ureq",
+]
+
+[[package]]
+name = "newsqueue-core"
+version = "1.0.3"
+dependencies = [
+ "chrono",
+ "fs2",
+ "native-tls",
+ "quick-xml 0.36.2",
+ "serde",
+ "serde_json",
  "ureq",
 ]
 
