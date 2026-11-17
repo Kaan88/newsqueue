@@ -319,6 +319,7 @@ fn run_job(
     let mut paths: Vec<Option<PathBuf>> = vec![None; job.files.len()];
     let mut skipped = vec![false; job.files.len()];
     let mut expected_sizes: Vec<Option<u64>> = vec![None; job.files.len()];
+    let mut used_names: HashSet<String> = HashSet::new();
     let mut done_bytes: u64 = 0;
 
     for (index, file) in job.files.iter().enumerate() {
@@ -401,6 +402,9 @@ fn run_job(
                 name = renamed;
             }
         }
+        // Two files of one job must never share a path, or parallel workers
+        // write into each other's file. Later duplicates get " (2)", " (3)".
+        let name = unique_name(&name, &mut used_names);
         let path = PathBuf::from(&job.folder).join(&name);
         paths[index] = Some(path.clone());
         if job.skip_existing
@@ -870,13 +874,19 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                     Ok(mut connection) => match connection.body(&task.id) {
                         Ok(body) => {
                             nntp = Some(connection);
-                            if let Ok(mut cache) = ctx.cache.lock() {
-                                cache.insert(task.id.clone(), body.clone());
+                            let decoded = decode_yenc(&body);
+                            // Only a body that decoded cleanly is cached, so a
+                            // corrupt copy is never served to another server's
+                            // retry.
+                            if decoded.is_ok() {
+                                if let Ok(mut cache) = ctx.cache.lock() {
+                                    cache.insert(task.id.clone(), body);
+                                }
                             }
-                            decode_yenc(&body).map(|(_, begin, data)| (begin, data))
+                            decoded.map(|(_, begin, data)| (begin, data))
                         }
                         Err(error) => {
-                            if error.starts_with("Article not found") {
+                            if unavailable(&error) {
                                 nntp = Some(connection);
                             }
                             Err(error)
@@ -888,7 +898,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             match attempt {
                 Ok(value) => break Ok(value),
                 Err(error)
-                    if !error.starts_with("Article not found")
+                    if !unavailable(&error)
                         && attempts < ctx.retry_count
                         && !ctx.stop.load(Ordering::Relaxed) =>
                 {
@@ -901,8 +911,8 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         let (begin, data) = match decoded {
             Ok(value) => value,
             Err(e) => {
-                if e.starts_with("Article not found") {
-                    // Another server may still have it. If none does, it is
+                if unavailable(&e) {
+                    // Another server may still have it (or a good copy). If none does, it is
                     // counted missing and PAR2 can repair the hole.
                     task.tried.push(ctx.server_index);
                     finish_task(ctx, Some(task));
@@ -1004,16 +1014,21 @@ fn lookup_body(
                 let body = connection.body(id);
                 let reusable = match &body {
                     Ok(_) => true,
-                    Err(error) => error.starts_with("Article not found"),
+                    Err(error) => unavailable(error),
                 };
                 if reusable {
                     connections[index] = Some(connection);
                 }
-                body
+                // A body whose checksum fails counts like a 430 so the next
+                // server is asked for a good copy.
+                body.and_then(|body| match decode_yenc(&body) {
+                    Err(error) if unavailable(&error) => Err(error),
+                    _ => Ok(body),
+                })
             });
             match result {
                 Ok(body) => return Ok(Some(body)),
-                Err(error) if error.starts_with("Article not found") => {
+                Err(error) if unavailable(&error) => {
                     not_found = true;
                     break;
                 }
@@ -1390,7 +1405,7 @@ impl Nntp {
     fn body(&mut self, id: &str) -> Result<Vec<u8>, String> {
         let response = self.command(&format!("BODY <{id}>"))?;
         if response.starts_with("430") {
-            return Err(format!("Article not found: {id}"));
+            return Err(format!("{ARTICLE_NOT_FOUND}: {id}"));
         }
         if !(response.starts_with("222") || response.starts_with("220")) {
             return Err(format!("Server refused article: {}", reply_code(&response)));
@@ -1495,6 +1510,31 @@ fn safe_file_name(name: &str, fallback: &str) -> String {
     }
 }
 
+/// Returns `name`, or `stem (n).ext` when an earlier file of the job already
+/// took it. Windows paths are case-insensitive, so the check is too.
+fn unique_name(name: &str, used: &mut HashSet<String>) -> String {
+    if used.insert(name.to_lowercase()) {
+        return name.to_string();
+    }
+    let path = Path::new(name);
+    let stem = path
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().to_string())
+        .unwrap_or_else(|| name.to_string());
+    let extension = path
+        .extension()
+        .map(|extension| format!(".{}", extension.to_string_lossy()))
+        .unwrap_or_default();
+    let mut counter = 2;
+    loop {
+        let candidate = format!("{stem} ({counter}){extension}");
+        if used.insert(candidate.to_lowercase()) {
+            return candidate;
+        }
+        counter += 1;
+    }
+}
+
 fn ybegin_name(line: &[u8]) -> String {
     let text = String::from_utf8_lossy(line);
     if let Some(pos) = text.find("name=") {
@@ -1563,6 +1603,7 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
     let mut name = String::new();
     let mut begin = None;
     let mut started = false;
+    let mut yend = None;
     // Line breaks inside a yEnc body are not part of the data, so join the
     // encoded lines first. An escape sequence may be split across two lines.
     let mut encoded = Vec::with_capacity(body.len());
@@ -1579,6 +1620,7 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
             continue;
         }
         if line.starts_with(b"=yend") {
+            yend = Some(String::from_utf8_lossy(line).to_string());
             break;
         }
         if line.starts_with(b"=ypart") {
@@ -1610,7 +1652,64 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
             i += 1;
         }
     }
+    // `pcrc32` covers this part; `crc32` alone (single-part posts) covers the
+    // whole file, which is then this article. A multi-part `crc32` is the
+    // whole-file value and cannot be checked here.
+    if let Some(trailer) = yend {
+        let field = |key: &str| {
+            trailer
+                .split_whitespace()
+                .find_map(|token| token.strip_prefix(key))
+                .and_then(|value| u32::from_str_radix(value.trim(), 16).ok())
+        };
+        let expected = field("pcrc32=").or_else(|| if begin.is_none() { field("crc32=") } else { None });
+        if let Some(expected) = expected {
+            let actual = crc32(&out);
+            if actual != expected {
+                return Err(format!(
+                    "{CRC_MISMATCH}: expected {expected:08x}, got {actual:08x}"
+                ));
+            }
+        }
+    }
     Ok((name, begin, out))
+}
+
+const ARTICLE_NOT_FOUND: &str = "Article not found";
+const CRC_MISMATCH: &str = "Article CRC mismatch";
+
+/// True for errors where another server may still have a good copy: a 430,
+/// or a body whose yEnc checksum does not match.
+fn unavailable(error: &str) -> bool {
+    error.starts_with(ARTICLE_NOT_FOUND) || error.starts_with(CRC_MISMATCH)
+}
+
+/// CRC-32 (IEEE 802.3, the polynomial yEnc uses).
+fn crc32(data: &[u8]) -> u32 {
+    const TABLE: [u32; 256] = {
+        let mut table = [0u32; 256];
+        let mut index = 0;
+        while index < 256 {
+            let mut value = index as u32;
+            let mut bit = 0;
+            while bit < 8 {
+                value = if value & 1 != 0 {
+                    0xEDB8_8320 ^ (value >> 1)
+                } else {
+                    value >> 1
+                };
+                bit += 1;
+            }
+            table[index] = value;
+            index += 1;
+        }
+        table
+    };
+    let mut crc = 0xFFFF_FFFFu32;
+    for byte in data {
+        crc = TABLE[((crc ^ u32::from(*byte)) & 0xff) as usize] ^ (crc >> 8);
+    }
+    !crc
 }
 
 #[cfg(test)]
@@ -2151,6 +2250,90 @@ mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         root
+    }
+
+    /// `yenc_part` with a `pcrc32` trailer computed over `crc_of`.
+    fn yenc_part_crc(data: &[u8], total: usize, begin: usize, crc_of: &[u8]) -> Vec<u8> {
+        let body = yenc_part(data, total, begin);
+        let text = String::from_utf8_lossy(&body).to_string();
+        let trailer = format!("=yend size={}", data.len());
+        text.replace(
+            &trailer,
+            &format!("{trailer} part=1 pcrc32={:08x}", crc32(crc_of)),
+        )
+        .into_bytes()
+    }
+
+    #[test]
+    fn crc32_matches_the_reference_value() {
+        assert_eq!(crc32(b"123456789"), 0xcbf4_3926);
+        assert_eq!(crc32(b""), 0);
+    }
+
+    #[test]
+    fn decode_checks_the_part_crc() {
+        let good = yenc_part_crc(b"ABCDE", 10, 1, b"ABCDE");
+        assert_eq!(decode_yenc(&good).unwrap().2, b"ABCDE");
+        let bad = yenc_part_crc(b"ABCDE", 10, 1, b"ABCDX");
+        let error = decode_yenc(&bad).unwrap_err();
+        assert!(error.starts_with(CRC_MISMATCH), "{error}");
+        // A single-part post may carry only crc32= for the whole file.
+        let single = b"=ybegin line=128 size=1 name=a.bin\n*\n=yend size=1 crc32=d202ef8d\n";
+        assert_eq!(decode_yenc(single).unwrap().2, vec![0]);
+        let wrong = b"=ybegin line=128 size=1 name=a.bin\n*\n=yend size=1 crc32=00000001\n";
+        assert!(decode_yenc(wrong).is_err());
+    }
+
+    #[test]
+    fn a_corrupt_article_is_fetched_from_the_next_server() {
+        let root = temp_root("crc-failover");
+        let primary = mock_server(vec![
+            ("p1".into(), yenc_part_crc(b"ABCDE", 10, 1, b"ABCDE")),
+            ("p2".into(), yenc_part_crc(b"FGHIX", 10, 6, b"FGHIJ")),
+        ]);
+        let backup = mock_server(vec![
+            ("p1".into(), yenc_part_crc(b"ABCDE", 10, 1, b"ABCDE")),
+            ("p2".into(), yenc_part_crc(b"FGHIJ", 10, 6, b"FGHIJ")),
+        ]);
+        let mut job = two_part_job(&root);
+        job.cache_mb = 1;
+        let servers = vec![local_server(primary, 1), local_server(backup, 1)];
+        let active = spawn(job, servers, 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn files_with_the_same_name_get_separate_paths() {
+        let root = temp_root("dupe-names");
+        let port = mock_server(vec![
+            ("a".into(), yenc_body(b"first")),
+            ("b".into(), yenc_body(b"second")),
+        ]);
+        let mut job = mock_job(&root, Vec::new(), 0);
+        job.files = ["a", "b"]
+            .iter()
+            .map(|id| DownloadFile {
+                name: "Same.Name.bin".into(),
+                bytes: 6,
+                segments: vec![Segment {
+                    number: 1,
+                    bytes: 6,
+                    id: (*id).into(),
+                }],
+            })
+            .collect();
+        let active = spawn(job, vec![local_server(port, 2)], 0.0);
+        let snapshot = wait_for(&active);
+        assert_ne!(snapshot.stage, Stage::Error, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("Same.Name.bin")).unwrap(), b"first");
+        assert_eq!(fs::read(root.join("Same.Name (2).bin")).unwrap(), b"second");
+        let mut used = HashSet::new();
+        assert_eq!(unique_name("x.rar", &mut used), "x.rar");
+        assert_eq!(unique_name("X.RAR", &mut used), "X (2).RAR");
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

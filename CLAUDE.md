@@ -244,9 +244,10 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 60 unit/integration tests currently pass.
-- `download.rs` has a mock NNTP server used for success, missing-article and
-  article-cache tests.
+- 69 unit/integration tests currently pass.
+- `download.rs` has a mock NNTP server used for success, missing-article,
+  article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
+  tests.
 - `unrar.rs` has fixtures for plain, single-file and encrypted RAR archives.
 - `par2.rs` generates damaged files and a damaged RAR, repairs with `par2.exe`
   and extracts with `UnRAR.exe`.
@@ -335,6 +336,13 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   needed escaping (~1.6% of a random payload, invisible to length checks). Keep
   `decodes_yenc_escapes` and `downloads_binary_articles_with_yenc_escapes`
   passing; the latter round-trips all 256 byte values through a mock server.
+- An article that a server answers 430 for, or whose yEnc `pcrc32` does not
+  match, is handed to workers of servers that have not tried it; it counts as
+  missing only when no living server can try it. Failed connections are
+  replaced before a retry. Files of one job never share a path (`unique_name`).
+- Execute hooks get `{folder}`/`{name}`/`{file}` through `NQ_FOLDER`/`NQ_NAME`/
+  `NQ_FILE` environment variables inside quotes; never paste them into the
+  shell line as text.
 - Missing articles are not fatal; they must mark the collection `Incomplete` and
   allow PAR2 repair.
 - Obfuscated posts can carry random names with no extension. Never trust the
@@ -366,7 +374,6 @@ tray, off-screen behaviour, shutdown, portable packaging and installer.
 
 Not done / pending:
 
-- Add dedicated mock NNTP timeout/retry/failover tests.
 - Optional code signing, shortcut polish and a per-setting checklist.
 
 Blocked on user-supplied data:

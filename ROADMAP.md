@@ -25,7 +25,7 @@ content-based naming for obfuscated posts.
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
 | Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.1` |
-| Verification | Baseline done | 60 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Verification | Baseline done | 69 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a valid PAR2 release, a Newznab endpoint/key and a second server |
 
@@ -86,15 +86,16 @@ Obfuscated releases arrive as `Rar!` payloads with random names such as
 
 ### Phase summary
 
-- **Phase 0 - done for the baseline.** 60 tests, mock NNTP tests, screenshot
+- **Phase 0 - done for the baseline.** 69 tests, mock NNTP tests, screenshot
   checks, a golden tab/dialog screenshot set, real damaged-RAR/PAR2 fixtures,
   an encrypted-RAR fixture and the user-provided NZB fixtures exist.
 - **Phase 1 — done for the core path.** Missing articles no longer abort a job;
   resume sidecars (`.nqpart`) preserve downloaded articles across restarts; all
   enabled servers are used; watched-folder auto-import, retry/backoff, thread
   priority, article cache and execute hooks work; mock NNTP tests cover success,
-  cache reuse and missing-article completion. Live failover still needs a second
-  server. Timeout/failover mock coverage is still on the list.
+  cache reuse, missing-article completion, 430/CRC failover to another server,
+  reconnect-on-retry and duplicate-name handling. Live failover still needs a
+  second server.
 - **Phase 2 — done for the core chain.** `app/tools/par2.exe` verifies and
   repairs real sets. A damaged RAR is repaired and then extracted in tests.
   Download → PAR2 → unrar is wired through `App::poll_par2`.
@@ -237,8 +238,8 @@ live testing.
    repair → unrar validation; the repair logic itself is covered by generated
    damaged-RAR fixtures.
 2. **A second Usenet server account.** Multi-server scheduling is implemented,
-   but live failover needs a second account. Mock retry/timeout/failover tests can
-   close part of this gap without credentials.
+   but live failover needs a second account. Mock 430/CRC failover and
+   reconnect tests cover the logic.
 
 ### Blocked on external services
 
@@ -251,12 +252,10 @@ live testing.
 
 ### Not blocked
 
-5. **Mock NNTP retry/timeout/failover tests.** The downloader code supports
-   retries, backoff and multiple servers; dedicated scripted mock coverage is
-   still worthwhile.
-6. **Downloads are not self-verifying.** Add a checksum-on-complete option or a
-   per-article `=yend size` cross-check so a decode regression cannot pass on
-   length alone.
+5. **Downloads are verified per article** by the yEnc `pcrc32` (or `crc32`
+   for single-part posts); a mismatch is fetched from another server.
+6. **Mock NNTP read-timeout test** is still missing (failover, 430, CRC and
+   dropped-connection paths are covered).
 7. **No update check.** `Version?` shows a static dialog and the
    `check_version_minutes` setting is stored but never used; there is no
    auto-update. A real check would query the GitHub releases API and offer the
@@ -267,7 +266,7 @@ live testing.
 
 ## Suggested next order
 
-1. Add mock NNTP timeout/retry/failover tests.
+1. Add a mock NNTP read-timeout test.
 2. Re-test the `Civilization.IV` / `Love.Under.the.Mistletoe` NZBs now that the
    decoder is fixed; use one with a valid PAR2 set for live repair validation.
 3. Configure a live Newznab endpoint/key and verify search → add → download.
