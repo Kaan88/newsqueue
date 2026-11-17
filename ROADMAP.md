@@ -257,6 +257,48 @@ Cut on 2026-11-18; see `REMOVED.md`.
 9. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.
 
+## Planned features (future)
+
+Features common in SABnzbd/NZBGet that NewsQueue lacks, in priority order.
+None are started. Categories stay cut (see `REMOVED.md`).
+
+### High value
+
+1. **On-demand PAR2.** Download the small index `.par2` first and hold back
+   the `.volNN+NN.par2` recovery files; after verify, fetch only as many
+   recovery blocks as the damage needs. Saves the 5–15% of each job that is
+   usually unused recovery data.
+2. **Archive password from the NZB.** Read `<meta type="password">` in the
+   NZB head and the `{{password}}` suffix in the NZB file name; store it on
+   the collection so unrar never prompts for it.
+3. **7z and ZIP extraction.** `container.rs` already detects both; add an
+   extractor (vendored `7z.exe` on Windows, `7zip` on Linux) beside UnRAR.
+4. **Abort hopeless jobs and pre-check.** Stop a job once missing articles
+   exceed the available PAR2 recovery blocks, and optionally `STAT` articles
+   before downloading to reject incomplete posts early.
+5. **Direct unpack.** Start UnRAR on a multi-volume set while later volumes
+   are still downloading, so extraction finishes soon after the download.
+
+### Medium value
+
+6. **Duplicate detection.** Warn or skip when an NZB name or title matches
+   an item in history.
+7. **Post-success cleanup.** After a clean extract, delete `.par2`, `.sfv`,
+   `.nzb`, `.nfo` and sample files (each optional, configurable patterns).
+8. **Retry from History.** History keeps enough to re-queue a failed or
+   incomplete job with one click.
+9. **Notifications.** Webhook, ntfy/Pushover and email on completed/failed
+   jobs; needed once the engine runs headless in Docker.
+10. **Per-server quota and retention.** A data cap per server and skipping a
+    server for posts older than its retention.
+
+### With the Docker/web work
+
+11. **Web API with authentication** (GUI_PLAN Phase 1), which also enables
+    phone control and scripting.
+12. **Pattern-based move/rename** of finished output (a small, category-free
+    version of SABnzbd sorting).
+
 ## Suggested next order
 
 1. Add a mock NNTP read-timeout test.
