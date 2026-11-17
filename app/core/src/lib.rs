@@ -8,3 +8,4 @@ pub mod model;
 pub mod par2;
 pub mod rss;
 pub mod unrar;
+pub mod engine;

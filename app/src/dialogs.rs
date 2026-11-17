@@ -1469,7 +1469,7 @@ fn rename_window(app: &mut App, ctx: &egui::Context) {
             .to_string_lossy()
             .to_string();
         if let Some(i) = app.rename_index {
-            if let Some(c) = app.queue.get_mut(i) {
+            if let Some(c) = app.engine.queue.get_mut(i) {
                 c.subject = app.rename_draft.clone();
                 c.folder = folder;
             }
