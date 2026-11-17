@@ -14,20 +14,86 @@ use std::collections::HashMap;
 use std::ops::RangeInclusive;
 use std::sync::Arc;
 
-pub(crate) const PANEL: Color32 = Color32::from_rgb(0x22, 0x22, 0x25);
-const BAND: Color32 = Color32::from_rgb(0x2b, 0x2b, 0x2f);
-const BAND_HOVER: Color32 = Color32::from_rgb(0x34, 0x34, 0x3a);
-const BAND_PRESSED: Color32 = Color32::from_rgb(0x25, 0x25, 0x28);
-const EDGE: Color32 = Color32::from_rgb(0x0c, 0x0c, 0x0d);
-const LIGHT_LINE: Color32 = Color32::from_rgb(0x38, 0x38, 0x3d);
-pub(crate) const TX: Color32 = Color32::from_rgb(0xe5, 0xe5, 0xe7);
-pub(crate) const DIM: Color32 = Color32::from_rgb(0xa8, 0xa8, 0xaf);
-pub(crate) const FAINT: Color32 = Color32::from_rgb(0x8e, 0x8e, 0x96);
 /// Text on the accent.
-const INK: Color32 = Color32::from_rgb(0x06, 0x27, 0x2c);
 /// The accent, Caustica teal `#60CAD8`.
-pub(crate) const ACCENT: Color32 = Color32::from_rgb(0x60, 0xca, 0xd8);
-const ACC: Color32 = ACCENT;
+
+
+// ---------------------------------------------------------------------------------------------
+// Light or dark. NewsQueue adds a light variant of the board; every colour below is a pair.
+
+static LIGHT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+/// True while the light variant is in use.
+pub(crate) fn is_light() -> bool {
+    LIGHT.load(std::sync::atomic::Ordering::Relaxed)
+}
+/// Switches the variant; the atlas redraws itself on the next frame.
+pub(crate) fn set_light(light: bool) {
+    LIGHT.store(light, std::sync::atomic::Ordering::Relaxed);
+}
+/// `dark` or `light`, by the variant in use.
+pub(crate) fn pick(dark: Color32, light: Color32) -> Color32 {
+    if is_light() { light } else { dark }
+}
+#[allow(non_snake_case)]
+pub(crate) fn PANEL() -> Color32 {
+    pick(Color32::from_rgb(0x22, 0x22, 0x25), Color32::from_rgb(0xf3, 0xf3, 0xf5))
+}
+#[allow(non_snake_case)]
+pub(crate) fn BAND() -> Color32 {
+    pick(Color32::from_rgb(0x2b, 0x2b, 0x2f), Color32::from_rgb(0xe7, 0xe7, 0xeb))
+}
+#[allow(non_snake_case)]
+pub(crate) fn BAND_HOVER() -> Color32 {
+    pick(Color32::from_rgb(0x34, 0x34, 0x3a), Color32::from_rgb(0xdd, 0xdd, 0xe2))
+}
+#[allow(non_snake_case)]
+pub(crate) fn BAND_PRESSED() -> Color32 {
+    pick(Color32::from_rgb(0x25, 0x25, 0x28), Color32::from_rgb(0xe2, 0xe2, 0xe6))
+}
+#[allow(non_snake_case)]
+pub(crate) fn EDGE() -> Color32 {
+    pick(Color32::from_rgb(0x0c, 0x0c, 0x0d), Color32::from_rgb(0xa4, 0xa5, 0xac))
+}
+#[allow(non_snake_case)]
+pub(crate) fn LIGHT_LINE() -> Color32 {
+    pick(Color32::from_rgb(0x38, 0x38, 0x3d), Color32::from_rgb(0xff, 0xff, 0xff))
+}
+#[allow(non_snake_case)]
+pub(crate) fn TX() -> Color32 {
+    pick(Color32::from_rgb(0xe5, 0xe5, 0xe7), Color32::from_rgb(0x1c, 0x1c, 0x1f))
+}
+#[allow(non_snake_case)]
+pub(crate) fn DIM() -> Color32 {
+    pick(Color32::from_rgb(0xa8, 0xa8, 0xaf), Color32::from_rgb(0x50, 0x50, 0x58))
+}
+#[allow(non_snake_case)]
+pub(crate) fn FAINT() -> Color32 {
+    pick(Color32::from_rgb(0x8e, 0x8e, 0x96), Color32::from_rgb(0x6c, 0x6c, 0x74))
+}
+#[allow(non_snake_case)]
+pub(crate) fn INK() -> Color32 {
+    pick(Color32::from_rgb(0x06, 0x27, 0x2c), Color32::from_rgb(0xff, 0xff, 0xff))
+}
+#[allow(non_snake_case)]
+pub(crate) fn ACCENT() -> Color32 {
+    pick(Color32::from_rgb(0x60, 0xca, 0xd8), Color32::from_rgb(0x12, 0x8c, 0x9e))
+}
+#[allow(non_snake_case)]
+pub(crate) fn DEEP() -> Color32 {
+    pick(Color32::from_rgb(0x1a, 0x1a, 0x1c), Color32::from_rgb(0xe6, 0xe6, 0xea))
+}
+#[allow(non_snake_case)]
+pub(crate) fn TAB_HOVER() -> Color32 {
+    pick(Color32::from_rgb(0x24, 0x24, 0x27), Color32::from_rgb(0xec, 0xec, 0xf0))
+}
+#[allow(non_snake_case)]
+fn ACC() -> Color32 {
+    ACCENT()
+}
+#[allow(non_snake_case)]
+pub(crate) fn EDGE_LINE() -> Color32 {
+    EDGE()
+}
 
 /// A control's height, and a row's (the control plus 4 points).
 pub(crate) const CONTROL: f32 = 24.;
@@ -173,16 +239,16 @@ pub(super) fn style(s: &mut egui::Style) {
     s.spacing.button_padding = vec2(9., 3.);
     let v = &mut s.visuals;
     v.disabled_alpha = 0.42;
-    v.selection.bg_fill = ACC.gamma_multiply(0.45);
-    v.selection.stroke = egui::Stroke::new(1_f32, TX);
-    v.hyperlink_color = ACC;
+    v.selection.bg_fill = ACC().gamma_multiply(0.45);
+    v.selection.stroke = egui::Stroke::new(1_f32, TX());
+    v.hyperlink_color = ACC();
     // What egui still draws itself (a radio, a text field, a menu-bar button, a window) in
     // the board's flat colours: the middle of a gradient, the border, the recess.
-    v.panel_fill = PANEL;
+    v.panel_fill = PANEL();
     // egui builds a tooltip (and any popup nobody gave a frame) from these: the board's `.tip`.
     // Menus, combos, windows and cards paint their own chrome and never read them.
-    v.window_fill = Color32::from_rgb(0x0f, 0x0f, 0x10);
-    v.window_stroke = egui::Stroke::new(1_f32, Color32::from_rgb(0x3a, 0x3a, 0x3f));
+    v.window_fill = pick(Color32::from_rgb(0x0f, 0x0f, 0x10), Color32::from_rgb(0xfb, 0xfb, 0xfc));
+    v.window_stroke = egui::Stroke::new(1_f32, pick(Color32::from_rgb(0x3a, 0x3a, 0x3f), Color32::from_rgb(0xc4, 0xc5, 0xcb)));
     v.window_corner_radius = 6.into();
     v.menu_corner_radius = 3.into();
     v.popup_shadow = egui::Shadow {
@@ -193,28 +259,28 @@ pub(super) fn style(s: &mut egui::Style) {
     };
     s.spacing.menu_margin = egui::Margin::symmetric(8, 4);
     let v = &mut s.visuals;
-    v.extreme_bg_color = Color32::from_rgb(0x14, 0x14, 0x16);
-    v.faint_bg_color = BAND;
+    v.extreme_bg_color = pick(Color32::from_rgb(0x14, 0x14, 0x16), Color32::from_rgb(0xff, 0xff, 0xff));
+    v.faint_bg_color = BAND();
     let radius = egui::CornerRadius::same(4);
-    let edge = egui::Stroke::new(1_f32, EDGE);
+    let edge = egui::Stroke::new(1_f32, EDGE());
     let w = &mut v.widgets;
-    w.noninteractive.fg_stroke.color = TX;
-    w.noninteractive.bg_stroke = egui::Stroke::new(1_f32, LIGHT_LINE);
-    w.noninteractive.bg_fill = PANEL;
+    w.noninteractive.fg_stroke.color = TX();
+    w.noninteractive.bg_stroke = egui::Stroke::new(1_f32, LIGHT_LINE());
+    w.noninteractive.bg_fill = PANEL();
     w.noninteractive.corner_radius = radius;
     for (state, fill, text) in [
-        (&mut w.inactive, Color32::from_rgb(0x3a, 0x3a, 0x3f), TX),
+        (&mut w.inactive, pick(Color32::from_rgb(0x3a, 0x3a, 0x3f), Color32::from_rgb(0xe4, 0xe4, 0xe8)), TX()),
         (
             &mut w.hovered,
-            Color32::from_rgb(0x44, 0x44, 0x4a),
-            Color32::WHITE,
+            pick(Color32::from_rgb(0x44, 0x44, 0x4a), Color32::from_rgb(0xd8, 0xd8, 0xde)),
+            pick(Color32::WHITE, TX()),
         ),
         (
             &mut w.active,
-            Color32::from_rgb(0x2c, 0x2c, 0x30),
-            Color32::WHITE,
+            pick(Color32::from_rgb(0x2c, 0x2c, 0x30), Color32::from_rgb(0xcc, 0xcc, 0xd2)),
+            pick(Color32::WHITE, TX()),
         ),
-        (&mut w.open, Color32::from_rgb(0x2c, 0x2c, 0x30), TX),
+        (&mut w.open, pick(Color32::from_rgb(0x2c, 0x2c, 0x30), Color32::from_rgb(0xdd, 0xdd, 0xe2)), TX()),
     ] {
         state.bg_fill = fill;
         state.weak_bg_fill = fill;
@@ -237,13 +303,13 @@ fn bare(s: &mut egui::Style) {
         w.bg_fill = Color32::TRANSPARENT;
         w.weak_bg_fill = Color32::TRANSPARENT;
         w.bg_stroke = egui::Stroke::NONE;
-        w.fg_stroke.color = TX;
+        w.fg_stroke.color = TX();
         w.expansion = 0.;
     }
     v.extreme_bg_color = Color32::TRANSPARENT;
     v.text_edit_bg_color = Some(Color32::TRANSPARENT);
     v.selection.stroke = egui::Stroke::NONE;
-    v.text_cursor.stroke.color = TX;
+    v.text_cursor.stroke.color = TX();
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -258,7 +324,7 @@ struct Shadow {
     spread: f32,
     color: [f32; 4],
 }
-const fn shadow(dy: f32, blur: f32, spread: f32, rgb: Color32, alpha: f32) -> Shadow {
+fn shadow(dy: f32, blur: f32, spread: f32, rgb: Color32, alpha: f32) -> Shadow {
     Shadow {
         dy,
         blur,
@@ -271,12 +337,14 @@ const fn shadow(dy: f32, blur: f32, spread: f32, rgb: Color32, alpha: f32) -> Sh
         ],
     }
 }
-const fn black(dy: f32, blur: f32, alpha: f32) -> Shadow {
+fn black(dy: f32, blur: f32, alpha: f32) -> Shadow {
+    let alpha = if is_light() { alpha * 0.32 } else { alpha };
     shadow(dy, blur, 0., Color32::BLACK, alpha)
 }
 /// A one-point line of white: under the top edge as an inset shadow (the highlight), under
 /// the bottom edge as an outer one.
-const fn white(alpha: f32) -> Shadow {
+fn white(alpha: f32) -> Shadow {
+    let alpha = if is_light() { (alpha * 10.).min(0.9) } else { alpha };
     shadow(1., 0., 0., Color32::WHITE, alpha)
 }
 /// A box in points; the lengths are scaled by the pixels per point when it is drawn.
@@ -387,7 +455,7 @@ fn for_linear_blend(c: [f32; 4]) -> [f32; 4] {
     if !(0.002..0.998).contains(&a) {
         return c;
     }
-    let backdrop = rgba(PANEL);
+    let backdrop = rgba(PANEL());
     let (mut num, mut den) = (0., 0.);
     let mut straight = [0.; 3];
     for k in 0..3 {
@@ -585,7 +653,7 @@ impl Look {
         }
     }
 }
-const fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
+fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
     const fn channel(a: u8, b: u8, t: f32) -> u8 {
         (a as f32 + (b as f32 - a as f32) * t + 0.5) as u8
     }
@@ -598,13 +666,13 @@ const fn mix(a: Color32, b: Color32, t: f32) -> Color32 {
 fn spec(look: Look, seg: Seg) -> Spec {
     let rgb = Color32::from_rgb;
     let flat = |c: Color32| (c, c);
-    let raised = (rgb(0x3b, 0x3c, 0x41), rgb(0x2f, 0x30, 0x34));
-    let on = (rgb(0x1b, 0x1c, 0x1e), rgb(0x22, 0x23, 0x26));
-    let accent = (mix(ACC, Color32::WHITE, 0.14), ACC);
+    let raised = (pick(rgb(0x3b, 0x3c, 0x41), rgb(0xff, 0xff, 0xff)), pick(rgb(0x2f, 0x30, 0x34), rgb(0xea, 0xea, 0xee)));
+    let on = (pick(rgb(0x1b, 0x1c, 0x1e), rgb(0xd6, 0xd7, 0xdc)), pick(rgb(0x22, 0x23, 0x26), rgb(0xe0, 0xe1, 0xe5)));
+    let accent = (mix(ACC(), Color32::WHITE, 0.14), ACC());
     let metal = (rgb(0xe2, 0xe2, 0xe6), rgb(0xa6, 0xa6, 0xad));
     let metal_pressed = (rgb(0xa6, 0xa6, 0xad), rgb(0xc9, 0xc9, 0xce));
-    let field = rgb(0x14, 0x14, 0x16);
-    let well = rgb(0x12, 0x12, 0x14);
+    let field = pick(rgb(0x14, 0x14, 0x16), rgb(0xff, 0xff, 0xff));
+    let well = pick(rgb(0x12, 0x12, 0x14), rgb(0xdc, 0xdd, 0xe1));
     let highlight = white(0.08);
     let solo = seg == Seg::Solo;
     let mut s = Spec {
@@ -614,7 +682,7 @@ fn spec(look: Look, seg: Seg) -> Spec {
             Seg::Middle => [0.; 4],
             Seg::Last => [0., 4., 4., 0.],
         },
-        border: Some(EDGE),
+        border: Some(EDGE()),
         fill: raised,
         gain: 1.,
         hole: 0.,
@@ -632,7 +700,7 @@ fn spec(look: Look, seg: Seg) -> Spec {
     match look {
         Look::Raised | Look::RaisedHover | Look::FlatHover => {
             if look == Look::RaisedHover {
-                s.fill = (rgb(0x46, 0x47, 0x4d), rgb(0x38, 0x39, 0x3e));
+                s.fill = (pick(rgb(0x46, 0x47, 0x4d), rgb(0xff, 0xff, 0xff)), pick(rgb(0x38, 0x39, 0x3e), rgb(0xf2, 0xf3, 0xf6)));
             }
             s.inset = vec![highlight];
             if look != Look::FlatHover {
@@ -640,7 +708,7 @@ fn spec(look: Look, seg: Seg) -> Spec {
             }
         }
         Look::Pressed => {
-            s.fill = (rgb(0x27, 0x28, 0x2b), rgb(0x2d, 0x2e, 0x32));
+            s.fill = (pick(rgb(0x27, 0x28, 0x2b), rgb(0xdc, 0xdd, 0xe1)), pick(rgb(0x2d, 0x2e, 0x32), rgb(0xe5, 0xe6, 0xe9)));
             s.inset = vec![black(1., 3., 0.6)];
         }
         Look::On | Look::OnHover | Look::OnPressed => {
@@ -673,14 +741,14 @@ fn spec(look: Look, seg: Seg) -> Spec {
         }
         Look::Field | Look::FieldHover | Look::FieldFocus => {
             s.fill = flat(if look == Look::FieldHover {
-                rgb(0x19, 0x19, 0x1c)
+                pick(rgb(0x19, 0x19, 0x1c), rgb(0xfa, 0xfa, 0xfc))
             } else {
                 field
             });
             s.inset = vec![black(1., 2., 0.6)];
             if look == Look::FieldFocus {
-                s.border = Some(ACC);
-                s.outer = vec![shadow(0., 0., 1., ACC, 1.)];
+                s.border = Some(ACC());
+                s.outer = vec![shadow(0., 0., 1., ACC(), 1.)];
             } else {
                 s.outer = vec![white(0.05)];
             }
@@ -706,7 +774,7 @@ fn spec(look: Look, seg: Seg) -> Spec {
         Look::Check | Look::CheckHover => {
             s.radius = [3.; 4];
             s.fill = flat(if look == Look::CheckHover {
-                rgb(0x1d, 0x1d, 0x20)
+                pick(rgb(0x1d, 0x1d, 0x20), rgb(0xf4, 0xf4, 0xf7))
             } else {
                 field
             });
@@ -723,7 +791,7 @@ fn spec(look: Look, seg: Seg) -> Spec {
         Look::Radio | Look::RadioHover => {
             s.radius = [8.; 4];
             s.fill = flat(if look == Look::RadioHover {
-                rgb(0x1d, 0x1d, 0x20)
+                pick(rgb(0x1d, 0x1d, 0x20), rgb(0xf4, 0xf4, 0xf7))
             } else {
                 field
             });
@@ -739,7 +807,7 @@ fn spec(look: Look, seg: Seg) -> Spec {
         Look::Track | Look::TrackOn => {
             s.radius = [8.; 4];
             s.fill = flat(if look == Look::TrackOn {
-                mix(ACC, Color32::BLACK, 0.3)
+                mix(ACC(), Color32::BLACK, 0.3)
             } else {
                 well
             });
@@ -760,16 +828,16 @@ fn spec(look: Look, seg: Seg) -> Spec {
         }
         Look::Popup => {
             s.radius = [5.; 4];
-            s.fill = flat(rgb(0x2a, 0x2a, 0x2e));
+            s.fill = flat(pick(rgb(0x2a, 0x2a, 0x2e), rgb(0xfb, 0xfb, 0xfc)));
             s.inset = vec![highlight];
             s.outer = vec![black(14., 36., 0.7)];
         }
         Look::Card | Look::CardHover => {
             s.radius = [5.; 4];
             s.fill = flat(if look == Look::CardHover {
-                BAND_HOVER
+                BAND_HOVER()
             } else {
-                BAND
+                BAND()
             });
             s.inset = vec![highlight];
             s.outer = vec![black(1., 2., 0.35)];
@@ -778,18 +846,18 @@ fn spec(look: Look, seg: Seg) -> Spec {
             s.radius = [radius as f32; 4];
             s.border = None;
             s.fill = flat(Color32::TRANSPARENT);
-            s.outer = vec![shadow(0., 0., 1.5, ACC, 1.)];
+            s.outer = vec![shadow(0., 0., 1.5, ACC(), 1.)];
         }
         Look::RingPrimary => {
             s.border = None;
             s.fill = flat(Color32::TRANSPARENT);
-            s.outer = vec![shadow(0., 0., 2., PANEL, 1.), shadow(0., 0., 3.5, ACC, 1.)];
+            s.outer = vec![shadow(0., 0., 2., PANEL(), 1.), shadow(0., 0., 3.5, ACC(), 1.)];
         }
         Look::Outline(radius) => {
             s.radius = [radius as f32; 4];
             s.border = None;
             s.fill = flat(Color32::TRANSPARENT);
-            s.outer = vec![shadow(0., 0., 3., ACC, 1.)];
+            s.outer = vec![shadow(0., 0., 3., ACC(), 1.)];
             s.hole = 1.5;
         }
     }
@@ -815,6 +883,8 @@ struct Atlas {
     ppp: f32,
     /// Drawn for blending in linear light (`blend_in_linear_light`).
     linear: bool,
+    /// Drawn in the light variant.
+    light: bool,
     side: usize,
     pixels: Vec<Color32>,
     /// The shelf being filled: the next free corner and the shelf's height.
@@ -832,6 +902,7 @@ impl Atlas {
         Self {
             ppp: 0.,
             linear: false,
+            light: false,
             side: 512,
             pixels: vec![],
             cursor: [1; 3],
@@ -855,9 +926,10 @@ impl Atlas {
             self.side = (self.side * 2).min(4096);
             self.pixels.clear();
         }
-        if self.ppp != ppp || self.linear != linear || self.pixels.is_empty() {
+        if self.ppp != ppp || self.linear != linear || self.light != is_light() || self.pixels.is_empty() {
             self.ppp = ppp;
             self.linear = linear;
+            self.light = is_light();
             self.clear();
         }
         if let Some(e) = self.entries.get(&key) {
@@ -1121,7 +1193,7 @@ impl<'a> Push<'a> {
         if self.chevron { 6. + 2. + 16. } else { 0. }
     }
     fn natural_width(&self, ui: &Ui) -> f32 {
-        let text = line(ui, self.text, self.font(), TX, f32::INFINITY);
+        let text = line(ui, self.text, self.font(), TX(), f32::INFINITY);
         (text.size().x + 2. * self.pad + self.arrow()).ceil()
     }
     fn show(self, ui: &mut Ui) -> Response {
@@ -1135,9 +1207,9 @@ impl<'a> Push<'a> {
         }
         let press = paint_push(ui, rect, &r, self.chrome, self.on, self.held, self.seg);
         let color = match (self.chrome, self.on) {
-            (Chrome::Primary, _) => INK,
-            (_, true) => ACC,
-            _ => TX,
+            (Chrome::Primary, _) => INK(),
+            (_, true) => ACC(),
+            _ => TX(),
         };
         // Pressed content sits half a point lower.
         let down = 0.5 * press;
@@ -1156,7 +1228,7 @@ impl<'a> Push<'a> {
         );
         if self.chevron {
             let centre = pos2(rect.right() - self.pad - 8., rect.center().y + down);
-            stroke_icon(ui, centre, &CHEVRON_DOWN, 0., 1.2, FAINT);
+            stroke_icon(ui, centre, &CHEVRON_DOWN, 0., 1.2, FAINT());
         }
         r
     }
@@ -1560,13 +1632,13 @@ fn item_row(
     arrow: bool,
     open: bool,
 ) -> Response {
-    let label = line(ui, text, sans(13.5), TX, f32::INFINITY);
+    let label = line(ui, text, sans(13.5), TX(), f32::INFINITY);
     let key_width = if arrow {
         8. + 16.
     } else if key.is_empty() {
         0.
     } else {
-        line(ui, key, mono(11.), FAINT, f32::INFINITY).size().x + 24.
+        line(ui, key, mono(11.), FAINT(), f32::INFINITY).size().x + 24.
     };
     let natural = label.size().x + 18. + key_width;
     let width = if ui.is_sizing_pass() {
@@ -1583,9 +1655,9 @@ fn item_row(
         let hover = if open { 1. } else { hover };
         if hover > 0. {
             ui.painter()
-                .rect_filled(rect, 3., ACC.gamma_multiply(hover));
+                .rect_filled(rect, 3., ACC().gamma_multiply(hover));
         }
-        let color = blend(if selected { ACC } else { TX }, INK, hover);
+        let color = blend(if selected { ACC() } else { TX() }, INK(), hover);
         let label = line(ui, text, sans(13.5), color, f32::INFINITY);
         ui.painter().galley(
             pos2(rect.left() + 9., rect.center().y - label.size().y / 2.),
@@ -1594,10 +1666,10 @@ fn item_row(
         );
         if arrow {
             let centre = pos2(rect.right() - 9. - 8., rect.center().y);
-            let color = blend(FAINT, INK, hover);
+            let color = blend(FAINT(), INK(), hover);
             stroke_icon(ui, centre, &CHEVRON_RIGHT, 0., 1.2, color);
         } else if !key.is_empty() {
-            let color = blend(FAINT, INK, hover);
+            let color = blend(FAINT(), INK(), hover);
             let key = line(ui, key, mono(11.), color, f32::INFINITY);
             ui.painter().galley(
                 pos2(
@@ -1642,8 +1714,8 @@ pub(crate) fn separator(ui: &mut Ui) {
             color,
         );
     };
-    row(y - 1., EDGE);
-    row(y, LIGHT_LINE);
+    row(y - 1., EDGE());
+    row(y, LIGHT_LINE());
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -1762,7 +1834,7 @@ fn swatch(ui: &mut Ui, color: Color32, open: bool) -> Response {
     r.widget_info(|| egui::WidgetInfo::labeled(egui::Role::ColorWell, ui.is_enabled(), "Color"));
     if ui.is_rect_visible(rect) {
         let (hover, _) = hover_press(ui, &r);
-        let edge = blend(EDGE, LIGHT_LINE, hover);
+        let edge = blend(EDGE(), LIGHT_LINE(), hover);
         ui.painter().rect_filled(rect, 4., color);
         ui.painter().rect_stroke(
             rect,
@@ -1864,7 +1936,7 @@ fn picker(ui: &mut Ui, hsva: &mut egui::ecolor::Hsva) -> bool {
         painter.rect_stroke(
             square,
             0.,
-            egui::Stroke::new(1_f32, EDGE),
+            egui::Stroke::new(1_f32, EDGE()),
             egui::StrokeKind::Outside,
         );
         let at = pos2(
@@ -1894,7 +1966,7 @@ fn picker(ui: &mut Ui, hsva: &mut egui::ecolor::Hsva) -> bool {
         painter.rect_stroke(
             strip,
             0.,
-            egui::Stroke::new(1_f32, EDGE),
+            egui::Stroke::new(1_f32, EDGE()),
             egui::StrokeKind::Outside,
         );
         let x = strip.left() + hsva.h * strip.width();
@@ -1919,11 +1991,11 @@ fn picker(ui: &mut Ui, hsva: &mut egui::ecolor::Hsva) -> bool {
         let width = (PICKER - 2. * 4. - 3. * 14.) / 3.;
         for (name, byte) in ["R", "G", "B"].into_iter().zip(&mut bytes) {
             let (rect, _) = ui.allocate_exact_size(vec2(14., CONTROL), Sense::hover());
-            let label = line(ui, name, sans(11.), FAINT, f32::INFINITY);
+            let label = line(ui, name, sans(11.), FAINT(), f32::INFINITY);
             ui.painter().galley(
                 pos2(rect.left(), rect.center().y - label.size().y / 2.),
                 label,
-                FAINT,
+                FAINT(),
             );
             drag_value_sized(
                 ui,
@@ -1957,23 +2029,23 @@ pub(crate) fn card<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> egui::Inne
 /// deep shadow. `Window` adds the highlight under the top edge.
 pub(crate) fn window_frame() -> egui::Frame {
     egui::Frame::NONE
-        .fill(PANEL)
-        .stroke(egui::Stroke::new(1_f32, EDGE))
+        .fill(PANEL())
+        .stroke(egui::Stroke::new(1_f32, EDGE()))
         .corner_radius(6)
         .inner_margin(egui::Margin::same(10))
         .shadow(egui::Shadow {
             offset: [0, 14],
             blur: 36,
             spread: 0,
-            color: Color32::from_black_alpha(180),
+            color: Color32::from_black_alpha(if is_light() { 60 } else { 180 }),
         })
 }
 /// The frame of a window that fills a part of the screen (the scenes and assets browsers): the
 /// panel colour and edge, no padding or shadow.
 pub(crate) fn panel_frame() -> egui::Frame {
     egui::Frame::NONE
-        .fill(PANEL)
-        .stroke(egui::Stroke::new(1_f32, EDGE))
+        .fill(PANEL())
+        .stroke(egui::Stroke::new(1_f32, EDGE()))
 }
 /// The face of a browser card over `rect`: the band-coloured tile, lighter under the pointer,
 /// with the accent ring while `selected`. Draw it first; the thumbnail goes on top.
@@ -1992,7 +2064,7 @@ pub(crate) fn heading(ui: &mut Ui, text: &str) -> Response {
         egui::TextFormat {
             font_id: semibold(11.),
             extra_letter_spacing: 0.66,
-            color: FAINT,
+            color: FAINT(),
             ..Default::default()
         },
     );
@@ -2005,7 +2077,7 @@ pub(crate) fn menu_heading(ui: &mut Ui, text: &str) {
         egui::TextFormat {
             font_id: semibold(11.),
             extra_letter_spacing: 0.66,
-            color: FAINT,
+            color: FAINT(),
             ..Default::default()
         },
     );
@@ -2015,7 +2087,7 @@ pub(crate) fn menu_heading(ui: &mut Ui, text: &str) {
     ui.painter().galley(
         pos2(rect.left() + 9., rect.center().y - label.size().y / 2.),
         label,
-        FAINT,
+        FAINT(),
     );
 }
 /// A progress bar: the accent fill in a recessed groove, `text` (a size, a percentage) in
@@ -2030,7 +2102,7 @@ pub(crate) fn bar(ui: &mut Ui, fraction: f32, width: f32, height: f32, text: &st
             ui.painter().rect_filled(
                 Rect::from_min_size(inner.min, vec2(full, inner.height())),
                 2.,
-                mix(ACC, Color32::BLACK, 0.22),
+                mix(ACC(), Color32::BLACK, 0.22),
             );
         }
         if !text.is_empty() {
@@ -2039,7 +2111,7 @@ pub(crate) fn bar(ui: &mut Ui, fraction: f32, width: f32, height: f32, text: &st
                 egui::Align2::CENTER_CENTER,
                 text,
                 mono(11.),
-                TX,
+                TX(),
             );
         }
     }
@@ -2073,7 +2145,7 @@ fn restyle_collapse_arrow(ctx: &egui::Context, layer: egui::LayerId, window: Rec
                 .iter()
                 .map(|q| centre.to_pos2() + turn * (vec2(q[0] - 12., q[1] - 12.) * (16. / 24.)))
                 .collect();
-            c.shape = Shape::line(line, egui::Stroke::new(1.2, DIM));
+            c.shape = Shape::line(line, egui::Stroke::new(1.2, DIM()));
         });
     });
 }
@@ -2145,7 +2217,7 @@ pub(crate) fn checkbox_label(
     check(ui, on, &plain(text))
 }
 fn check(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
-    let label = (!text.is_empty()).then(|| line(ui, text, sans(13.5), TX, f32::INFINITY));
+    let label = (!text.is_empty()).then(|| line(ui, text, sans(13.5), TX(), f32::INFINITY));
     let width = 15. + label.as_ref().map_or(0., |l| 8. + l.size().x.ceil());
     let (rect, mut r) = ui.allocate_exact_size(vec2(width, CONTROL), Sense::click());
     if r.clicked() {
@@ -2176,7 +2248,7 @@ fn check(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
             .iter()
             .map(|p| square.center() + vec2(p[0] - 12., p[1] - 12.) * (11. / 24.))
             .collect();
-        let stroke = egui::Stroke::new(3.2 * 11. / 24., INK.gamma_multiply(checked));
+        let stroke = egui::Stroke::new(3.2 * 11. / 24., INK().gamma_multiply(checked));
         ui.painter().add(Shape::line(tick, stroke));
     }
     if focused(&r) {
@@ -2186,7 +2258,7 @@ fn check(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
         ui.painter().galley(
             pos2(square.right() + 8., rect.center().y - label.size().y / 2.),
             label,
-            TX,
+            TX(),
         );
     }
     r
@@ -2194,7 +2266,7 @@ fn check(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
 /// A radio button with its label: one of a set, on when `on`. The caller acts on the click.
 pub(crate) fn radio(ui: &mut Ui, on: bool, text: impl Into<egui::WidgetText>) -> Response {
     let text = plain(text);
-    let label = (!text.is_empty()).then(|| line(ui, &text, sans(13.5), TX, f32::INFINITY));
+    let label = (!text.is_empty()).then(|| line(ui, &text, sans(13.5), TX(), f32::INFINITY));
     let width = 15. + label.as_ref().map_or(0., |l| 8. + l.size().x.ceil());
     let (rect, r) = ui.allocate_exact_size(vec2(width, CONTROL), Sense::click());
     r.widget_info(|| {
@@ -2220,7 +2292,7 @@ pub(crate) fn radio(ui: &mut Ui, on: bool, text: impl Into<egui::WidgetText>) ->
     }
     if chosen > 0. {
         ui.painter()
-            .circle_filled(disc.center(), 3., INK.gamma_multiply(chosen));
+            .circle_filled(disc.center(), 3., INK().gamma_multiply(chosen));
     }
     if focused(&r) {
         paint(ui, Look::Outline(8), Seg::Solo, disc, 1.);
@@ -2229,7 +2301,7 @@ pub(crate) fn radio(ui: &mut Ui, on: bool, text: impl Into<egui::WidgetText>) ->
         ui.painter().galley(
             pos2(disc.right() + 8., rect.center().y - label.size().y / 2.),
             label,
-            TX,
+            TX(),
         );
     }
     r
@@ -2540,7 +2612,7 @@ pub(crate) fn slider(ui: &mut Ui, a: SliderArgs<'_>) -> (Response, Rect) {
             ui.painter().rect_filled(
                 Rect::from_min_max(pos2(groove.left() + 1., y - 2.), pos2(x, y + 2.)),
                 2.,
-                mix(ACC, Color32::BLACK, 0.22),
+                mix(ACC(), Color32::BLACK, 0.22),
             );
         }
         let thumb = Rect::from_center_size(pos2(x, y), vec2(10., 16.));
@@ -2695,11 +2767,11 @@ fn logarithmic_zero_cutoff(min: f64, max: f64) -> f64 {
 pub(crate) fn title(ui: &mut Ui, text: &str) {
     ui.add_space(4.);
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), CONTROL), Sense::hover());
-    let text = line(ui, text, semibold(14.), TX, rect.width());
+    let text = line(ui, text, semibold(14.), TX(), rect.width());
     ui.painter().galley(
         pos2(rect.left(), rect.center().y - text.size().y / 2.),
         text,
-        TX,
+        TX(),
     );
     ui.add_space(8.);
 }
@@ -2715,11 +2787,11 @@ pub(crate) fn title_with(ui: &mut Ui, text: &str, add: impl FnOnce(&mut Ui)) {
     );
     add(&mut right);
     let room = right.min_rect().left() - rect.left() - 8.;
-    let text = line(ui, text, semibold(14.), TX, room);
+    let text = line(ui, text, semibold(14.), TX(), room);
     ui.painter().galley(
         pos2(rect.left(), rect.center().y - text.size().y / 2.),
         text,
-        TX,
+        TX(),
     );
     ui.add_space(8.);
 }
@@ -2766,7 +2838,7 @@ pub(crate) fn fold_with<R>(
     if clip.is_positive() {
         let painter = ui.painter().with_clip_rect(clip);
         let (hover, press) = hover_press(ui, &r);
-        let fill = blend(blend(BAND, BAND_HOVER, hover), BAND_PRESSED, press);
+        let fill = blend(blend(BAND(), BAND_HOVER(), hover), BAND_PRESSED(), press);
         painter.rect_filled(band, 0., fill);
         let row = |top: f32, color| {
             painter.rect_filled(
@@ -2775,13 +2847,13 @@ pub(crate) fn fold_with<R>(
                 color,
             );
         };
-        row(band.top(), LIGHT_LINE);
-        row(band.bottom() - 1., EDGE);
+        row(band.top(), LIGHT_LINE());
+        row(band.bottom() - 1., EDGE());
         if focused(&r) {
             painter.rect_stroke(
                 band,
                 0.,
-                egui::Stroke::new(1.5, ACC),
+                egui::Stroke::new(1.5, ACC()),
                 egui::StrokeKind::Inside,
             );
         }
@@ -2799,13 +2871,13 @@ pub(crate) fn fold_with<R>(
                 .map(|p| centre + rot * (vec2(p[0] - 12., p[1] - 12.) * (16. / 24.)))
                 .collect()
         };
-        painter.add(Shape::line(turned, egui::Stroke::new(1.2, FAINT)));
+        painter.add(Shape::line(turned, egui::Stroke::new(1.2, FAINT())));
         let mut job = egui::text::LayoutJob::single_section(
             title.to_uppercase(),
             egui::TextFormat {
                 font_id: semibold(11.),
                 extra_letter_spacing: 0.66,
-                color: TX,
+                color: TX(),
                 ..Default::default()
             },
         );
@@ -2815,10 +2887,10 @@ pub(crate) fn fold_with<R>(
         painter.galley(
             pos2(rect.left() + 22., rect.center().y - name.size().y / 2.),
             name,
-            TX,
+            TX(),
         );
         if !preview.is_empty() {
-            let text = painter.layout_no_wrap(preview, mono(11.), DIM);
+            let text = painter.layout_no_wrap(preview, mono(11.), DIM());
             // Right-aligned; what does not fit beside the title is cut off at its left.
             let room = Rect::from_min_max(
                 pos2(name_right + 12., clip.top()),
@@ -2831,7 +2903,7 @@ pub(crate) fn fold_with<R>(
                         rect.center().y - text.size().y / 2.,
                     ),
                     text,
-                    DIM,
+                    DIM(),
                 );
             }
         }
@@ -2861,7 +2933,7 @@ pub(crate) fn disclosure<R>(
     use egui::collapsing_header::CollapsingState;
     let id = ui.make_persistent_id(salt);
     let mut state = CollapsingState::load_with_default_open(ui.ctx(), id, default_open);
-    let label = line(ui, text, sans(13.5), DIM, f32::INFINITY);
+    let label = line(ui, text, sans(13.5), DIM(), f32::INFINITY);
     let width = 16. + 2. + label.size().x.ceil();
     let (rect, r) = ui.allocate_exact_size(vec2(width, CONTROL), Sense::click());
     let r = r.on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -2884,9 +2956,9 @@ pub(crate) fn disclosure<R>(
             &CHEVRON_RIGHT,
             turn * std::f32::consts::FRAC_PI_2,
             1.2,
-            blend(FAINT, TX, hover),
+            blend(FAINT(), TX(), hover),
         );
-        let color = blend(DIM, TX, hover);
+        let color = blend(DIM(), TX(), hover);
         let label = line(ui, text, sans(13.5), color, f32::INFINITY);
         ui.painter().galley(
             pos2(rect.left() + 18., rect.center().y - label.size().y / 2.),
@@ -2941,7 +3013,7 @@ pub(crate) fn chevron_toggle(
             ui,
             pos2(rect.left() + 8., rect.center().y),
             turn,
-            blend(FAINT, TX, hover),
+            blend(FAINT(), TX(), hover),
         );
         if focused(&r) {
             paint(ui, Look::Ring(4), Seg::Solo, rect, 1.);
@@ -2966,7 +3038,7 @@ pub(crate) fn group_row(ui: &mut Ui, open: bool, text: &str, color: Color32) -> 
             ui,
             pos2(rect.left() + 8., rect.center().y),
             turn,
-            blend(FAINT, TX, hover),
+            blend(FAINT(), TX(), hover),
         );
         let color = blend(color, Color32::WHITE, hover * 0.5);
         let label = line(ui, text, sans(13.5), color, f32::INFINITY);
@@ -2989,7 +3061,7 @@ pub(crate) fn band_title(ui: &mut Ui, open: bool, text: &str) -> Response {
         egui::TextFormat {
             font_id: semibold(11.),
             extra_letter_spacing: 0.66,
-            color: TX,
+            color: TX(),
             ..Default::default()
         },
     );
@@ -3010,12 +3082,12 @@ pub(crate) fn band_title(ui: &mut Ui, open: bool, text: &str) -> Response {
             ui,
             pos2(rect.left() + 8., rect.center().y),
             turn,
-            blend(FAINT, TX, hover),
+            blend(FAINT(), TX(), hover),
         );
         ui.painter().galley(
             pos2(rect.left() + 22., rect.center().y - name.size().y / 2.),
             name,
-            TX,
+            TX(),
         );
         if focused(&r) {
             paint(ui, Look::Ring(4), Seg::Solo, rect, 1.);
@@ -3030,7 +3102,7 @@ pub(crate) fn band_title(ui: &mut Ui, open: bool, text: &str) -> Response {
 /// Every control in every state, as on the board's sheet (`--ui-skin-sheet`): the way to
 /// compare the skin with the board, since a headless capture has no pointer to hover with.
 pub(crate) fn sheet(ctx: &egui::Context) {
-    let frame = egui::Frame::new().fill(PANEL).inner_margin(24.);
+    let frame = egui::Frame::new().fill(PANEL()).inner_margin(24.);
     let area = egui::Area::new(egui::Id::unique("skin sheet"))
         .anchor(egui::Align2::LEFT_TOP, [60., 50.])
         .order(egui::Order::Foreground);
@@ -3071,7 +3143,7 @@ fn sheet_rows(ui: &mut Ui) {
     let caps = |text: &str| {
         egui::RichText::new(text.to_uppercase())
             .font(sans(11.))
-            .color(FAINT)
+            .color(FAINT())
     };
     type Draw<'a> = &'a dyn Fn(&mut Ui, usize);
     let value = Cell::new(0.4);
@@ -3157,8 +3229,8 @@ fn sheet_rows(ui: &mut Ui) {
             let (rect, r) = ui.allocate_exact_size(vec2(26., CONTROL), Sense::click());
             let down = button_chrome(ui, rect, &r, column == 3, column == 1);
             let centre = rect.center() + vec2(0., down);
-            stroke_icon(ui, centre, &[[12., 5.], [12., 19.]], 0., 1.7, TX);
-            stroke_icon(ui, centre, &[[5., 12.], [19., 12.]], 0., 1.7, TX);
+            stroke_icon(ui, centre, &[[12., 5.], [12., 19.]], 0., 1.7, TX());
+            stroke_icon(ui, centre, &[[5., 12.], [19., 12.]], 0., 1.7, TX());
         }),
         ("Section header", &|ui, _| {
             ui.allocate_ui(vec2(150., 26.), |ui| {
@@ -3177,7 +3249,7 @@ fn sheet_rows(ui: &mut Ui) {
             }
             ui.end_row();
             for (name, draw) in rows {
-                ui.label(egui::RichText::new(name).color(DIM));
+                ui.label(egui::RichText::new(name).color(DIM()));
                 for (column, (_, state, enabled)) in states.into_iter().enumerate() {
                     ui.push_id(column, |ui| {
                         ui.add_enabled_ui(enabled, |ui| forced(state, || draw(ui, column)));
@@ -3312,11 +3384,8 @@ fn sheet_rows(ui: &mut Ui) {
 // The frame around the viewport: top bar, tool rail, tab strip, status bar.
 
 /// The status bar's and the tab strip's ground.
-pub(crate) const DEEP: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1c);
 /// A tab under the pointer.
-pub(crate) const TAB_HOVER: Color32 = Color32::from_rgb(0x24, 0x24, 0x27);
 /// The dark line between regions.
-pub(crate) const EDGE_LINE: Color32 = EDGE;
 
 /// A vertical two-colour gradient over `rect`.
 pub(crate) fn gradient(painter: &egui::Painter, rect: Rect, top: Color32, bottom: Color32) {
@@ -3343,8 +3412,8 @@ pub(crate) fn top_bar_ground(painter: &egui::Painter, rect: Rect) {
     gradient(
         painter,
         rect,
-        Color32::from_rgb(0x2c, 0x2c, 0x30),
-        Color32::from_rgb(0x24, 0x24, 0x27),
+        pick(Color32::from_rgb(0x2c, 0x2c, 0x30), Color32::from_rgb(0xfa, 0xfa, 0xfb)),
+        pick(Color32::from_rgb(0x24, 0x24, 0x27), Color32::from_rgb(0xe9, 0xe9, 0xed)),
     );
     painter.hline(
         rect.x_range(),
@@ -3354,13 +3423,13 @@ pub(crate) fn top_bar_ground(painter: &egui::Painter, rect: Rect) {
     painter.hline(
         rect.x_range(),
         rect.bottom() - 0.5,
-        egui::Stroke::new(1_f32, EDGE),
+        egui::Stroke::new(1_f32, EDGE()),
     );
 }
 /// A section band's ground (`.outl`, a fold's header): the band colour, the highlight at the
 /// top, the dark line at the bottom.
 pub(crate) fn band_ground(painter: &egui::Painter, rect: Rect) {
-    painter.rect_filled(rect, 0., BAND);
+    painter.rect_filled(rect, 0., BAND());
     painter.hline(
         rect.x_range(),
         rect.top() + 0.5,
@@ -3369,7 +3438,7 @@ pub(crate) fn band_ground(painter: &egui::Painter, rect: Rect) {
     painter.hline(
         rect.x_range(),
         rect.bottom() - 0.5,
-        egui::Stroke::new(1_f32, EDGE),
+        egui::Stroke::new(1_f32, EDGE()),
     );
 }
 /// A group separator in a row of controls (`.vr`): a dark line beside a light one, 18 points
@@ -3380,9 +3449,9 @@ pub(crate) fn rule_v(ui: &mut Ui, height: f32) {
     let y = rect.center().y;
     let span = y - 9.0..=y + 9.0;
     ui.painter()
-        .vline(x - 0.5, span.clone(), egui::Stroke::new(1_f32, EDGE));
+        .vline(x - 0.5, span.clone(), egui::Stroke::new(1_f32, EDGE()));
     ui.painter()
-        .vline(x + 0.5, span, egui::Stroke::new(1_f32, LIGHT_LINE));
+        .vline(x + 0.5, span, egui::Stroke::new(1_f32, LIGHT_LINE()));
 }
 /// The same across a column (the tool rail's), `width` points wide.
 pub(crate) fn rule_h(ui: &mut Ui, width: f32) {
@@ -3390,9 +3459,9 @@ pub(crate) fn rule_h(ui: &mut Ui, width: f32) {
     let y = rect.center().y;
     let span = rect.center().x - 10.0..=rect.center().x + 10.0;
     ui.painter()
-        .hline(span.clone(), y - 0.5, egui::Stroke::new(1_f32, EDGE));
+        .hline(span.clone(), y - 0.5, egui::Stroke::new(1_f32, EDGE()));
     ui.painter()
-        .hline(span, y + 0.5, egui::Stroke::new(1_f32, LIGHT_LINE));
+        .hline(span, y + 0.5, egui::Stroke::new(1_f32, LIGHT_LINE()));
 }
 /// The chrome of one button in a joined set (an icon button the caller draws itself):
 /// like `button_chrome`, raised, with `seg` saying which corners are round. Returns how far
@@ -3416,37 +3485,37 @@ pub(crate) fn tab_chrome(
     let (hover, press) = hover_press(ui, response);
     let painter = ui.painter();
     if open {
-        painter.rect_filled(rect, 0., PANEL);
-        let stroke = egui::Stroke::new(1_f32, EDGE);
+        painter.rect_filled(rect, 0., PANEL());
+        let stroke = egui::Stroke::new(1_f32, EDGE());
         if across {
             painter.rect_filled(
                 Rect::from_min_size(rect.min, vec2(rect.width(), 2.)),
                 0.,
-                ACC,
+                ACC(),
             );
             painter.vline(rect.right() - 0.5, rect.y_range(), stroke);
         } else {
             painter.rect_filled(
                 Rect::from_min_size(rect.min, vec2(2., rect.height())),
                 0.,
-                ACC,
+                ACC(),
             );
             painter.hline(rect.x_range(), rect.bottom() - 0.5, stroke);
         }
     } else if hover > 0. {
-        painter.rect_filled(rect, 0., TAB_HOVER.gamma_multiply(hover));
+        painter.rect_filled(rect, 0., TAB_HOVER().gamma_multiply(hover));
     }
     if focused(response) {
         paint(ui, Look::Ring(0), Seg::Solo, rect.shrink(1.5), 1.);
     }
-    let color = if open { ACC } else { blend(FAINT, TX, hover) };
+    let color = if open { ACC() } else { blend(FAINT(), TX(), hover) };
     (0.5 * press, color)
 }
 
 /// A read-only number in a recessed field (the top bar's sample counter): mono text in the
 /// dim colour, the field's chrome behind it.
 pub(crate) fn readout(ui: &mut Ui, text: &str) -> Response {
-    let galley = line(ui, text, mono(12.5), DIM, f32::INFINITY);
+    let galley = line(ui, text, mono(12.5), DIM(), f32::INFINITY);
     let width = (galley.size().x + 16.).ceil();
     let (rect, r) = ui.allocate_exact_size(vec2(width, CONTROL), Sense::hover());
     if ui.is_rect_visible(rect) {
@@ -3454,14 +3523,14 @@ pub(crate) fn readout(ui: &mut Ui, text: &str) -> Response {
         ui.painter().galley(
             pos2(rect.left() + 8., rect.center().y - galley.size().y / 2.),
             galley,
-            DIM,
+            DIM(),
         );
     }
     r
 }
 /// The width `readout` takes for `text`.
 pub(crate) fn readout_width(ui: &Ui, text: &str) -> f32 {
-    (line(ui, text, mono(12.5), DIM, f32::INFINITY).size().x + 16.).ceil()
+    (line(ui, text, mono(12.5), DIM(), f32::INFINITY).size().x + 16.).ceil()
 }
 /// A progress bar in the status bar: the recess of a slider's rail with the accent filling it.
 pub(crate) fn progress(ui: &mut Ui, fraction: f32, width: f32) -> Response {
@@ -3477,7 +3546,7 @@ pub(crate) fn progress(ui: &mut Ui, fraction: f32, width: f32) -> Response {
         );
         if fill.width() > 0.5 {
             ui.painter()
-                .rect_filled(fill, 2., mix(ACC, Color32::BLACK, 0.22));
+                .rect_filled(fill, 2., mix(ACC(), Color32::BLACK, 0.22));
         }
     }
     r
@@ -3490,7 +3559,7 @@ pub(crate) fn recess(ui: &Ui, rect: Rect) {
 }
 /// The accent darkened the way the slider's fill is.
 pub(crate) fn accent_fill() -> Color32 {
-    mix(ACC, Color32::BLACK, 0.22)
+    mix(ACC(), Color32::BLACK, 0.22)
 }
 
 #[cfg(test)]
@@ -3507,9 +3576,9 @@ mod tests {
         let image = raster(&s, w, h, pad, 1., false);
         let at = |x: usize, y: usize| image[(y + pad) * (w + 2 * pad) + x + pad];
         // The border, away from the corners.
-        assert_eq!(at(10, 0), EDGE);
-        assert_eq!(at(0, 12), EDGE);
-        assert_eq!(at(10, 23), EDGE);
+        assert_eq!(at(10, 0), EDGE());
+        assert_eq!(at(0, 12), EDGE());
+        assert_eq!(at(10, 23), EDGE());
         // The first fill row carries the 8 % highlight on #3b3c41.
         let top = at(10, 1);
         assert!(top.r() > 0x3b + 12 && top.r() < 0x3b + 20, "{top:?}");
@@ -3544,7 +3613,7 @@ mod tests {
     /// panel where code-value blending puts them.
     #[test]
     fn linear_light_keeps_the_translucent_pixels() {
-        let panel = rgba(PANEL);
+        let panel = rgba(PANEL());
         for look in [Look::Field, Look::Raised] {
             let s = spec(look, Seg::Solo);
             let pad = s.pad() as usize;
@@ -3575,7 +3644,7 @@ mod tests {
         let above = |pixels: usize| image[(2 * pad - pixels) * (30 + 4 * pad) + 2 * pad + 15];
         assert_eq!(above(1).a(), 0);
         assert_eq!(above(3).a(), 0);
-        assert_eq!(above(5), ACC);
+        assert_eq!(above(5), ACC());
     }
     /// A full atlas is kept for the frame that filled it and starts over larger at the next.
     #[test]

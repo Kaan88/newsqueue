@@ -3,30 +3,96 @@ use eframe::egui::{
     self, Align2, Color32, FontId, Pos2, Rect, Response, CornerRadius, Sense, Stroke, Ui,
     Vec2,
 };
-pub const BG: Color32 = Color32::from_rgb(0x22, 0x22, 0x25);
-pub const BG_LIGHT: Color32 = Color32::from_rgb(0x2b, 0x2b, 0x2f);
-pub const BG_PALE: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1c);
-pub const BG_HOVER: Color32 = Color32::from_rgb(0x2c, 0x2c, 0x30);
-pub const BG_ACTIVE: Color32 = Color32::from_rgb(0x34, 0x34, 0x3a);
+#[allow(non_snake_case)]
+pub fn BG() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x22, 0x22, 0x25), Color32::from_rgb(0xf3, 0xf3, 0xf5))
+}
+#[allow(non_snake_case)]
+pub fn BG_LIGHT() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x2b, 0x2b, 0x2f), Color32::from_rgb(0xe7, 0xe7, 0xeb))
+}
+#[allow(non_snake_case)]
+pub fn BG_PALE() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x1a, 0x1a, 0x1c), Color32::from_rgb(0xe6, 0xe6, 0xea))
+}
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+pub fn BG_HOVER() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x2c, 0x2c, 0x30), Color32::from_rgb(0xec, 0xec, 0xf0))
+}
+#[allow(non_snake_case)]
+#[allow(dead_code)]
+pub fn BG_ACTIVE() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x34, 0x34, 0x3a), Color32::from_rgb(0xdd, 0xdd, 0xe2))
+}
 /// The ground of lists and tables (recessed, darker than panels).
-pub const PANEL_WHITE: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1c);
-pub const ROW_ALT: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x21);
+#[allow(non_snake_case)]
+pub fn PANEL_WHITE() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x1a, 0x1a, 0x1c), Color32::from_rgb(0xff, 0xff, 0xff))
+}
+#[allow(non_snake_case)]
 #[allow(dead_code)]
-pub const ROW_GROUP: Color32 = Color32::from_rgb(0x1f, 0x1f, 0x22);
+pub fn ROW_ALT() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x1e, 0x1e, 0x21), Color32::from_rgb(0xf7, 0xf7, 0xf9))
+}
 #[allow(dead_code)]
-pub const ROW_SELECT: Color32 = Color32::from_rgb(0x1d, 0x45, 0x4c);
-pub const TEXT: Color32 = Color32::from_rgb(0xe5, 0xe5, 0xe7);
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0xa8, 0xa8, 0xaf);
-pub const TEXT_GROUP: Color32 = Color32::from_rgb(0x9a, 0xdf, 0xe8);
-pub const ACCENT: Color32 = Color32::from_rgb(0x60, 0xca, 0xd8);
-pub const BORDER: Color32 = Color32::from_rgb(0x0c, 0x0c, 0x0d);
-pub const BORDER_LIGHT: Color32 = Color32::from_rgb(0x38, 0x38, 0x3d);
-pub const GREEN: Color32 = Color32::from_rgb(0x6c, 0xc4, 0x6c);
-pub const GREEN_DARK: Color32 = Color32::from_rgb(0x4c, 0xa0, 0x58);
-pub const ORANGE: Color32 = Color32::from_rgb(0xe0, 0x9a, 0x48);
-pub const RED: Color32 = Color32::from_rgb(0xe0, 0x60, 0x60);
-pub const BLUE: Color32 = Color32::from_rgb(0x6a, 0xa8, 0xe8);
-pub const YELLOW: Color32 = Color32::from_rgb(0xf0, 0xc8, 0x50);
+#[allow(non_snake_case)]
+pub fn ROW_GROUP() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x1f, 0x1f, 0x22), Color32::from_rgb(0xf4, 0xf4, 0xf6))
+}
+#[allow(dead_code)]
+#[allow(non_snake_case)]
+pub fn ROW_SELECT() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x1d, 0x45, 0x4c), Color32::from_rgb(0xcd, 0xec, 0xf1))
+}
+#[allow(non_snake_case)]
+pub fn TEXT() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0xe5, 0xe5, 0xe7), Color32::from_rgb(0x1c, 0x1c, 0x1f))
+}
+#[allow(non_snake_case)]
+pub fn TEXT_MUTED() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0xa8, 0xa8, 0xaf), Color32::from_rgb(0x50, 0x50, 0x58))
+}
+#[allow(non_snake_case)]
+pub fn TEXT_GROUP() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x9a, 0xdf, 0xe8), Color32::from_rgb(0x0d, 0x6f, 0x7d))
+}
+#[allow(non_snake_case)]
+pub fn ACCENT() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x60, 0xca, 0xd8), Color32::from_rgb(0x12, 0x8c, 0x9e))
+}
+#[allow(non_snake_case)]
+pub fn BORDER() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x0c, 0x0c, 0x0d), Color32::from_rgb(0xa4, 0xa5, 0xac))
+}
+#[allow(non_snake_case)]
+pub fn BORDER_LIGHT() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x38, 0x38, 0x3d), Color32::from_rgb(0xd6, 0xd6, 0xdb))
+}
+#[allow(non_snake_case)]
+pub fn GREEN() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x6c, 0xc4, 0x6c), Color32::from_rgb(0x3d, 0x9a, 0x4a))
+}
+#[allow(non_snake_case)]
+pub fn GREEN_DARK() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x4c, 0xa0, 0x58), Color32::from_rgb(0x2f, 0x7d, 0x3a))
+}
+#[allow(non_snake_case)]
+pub fn ORANGE() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0xe0, 0x9a, 0x48), Color32::from_rgb(0xc0, 0x7a, 0x20))
+}
+#[allow(non_snake_case)]
+pub fn RED() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0xe0, 0x60, 0x60), Color32::from_rgb(0xc0, 0x3b, 0x3b))
+}
+#[allow(non_snake_case)]
+pub fn BLUE() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0x6a, 0xa8, 0xe8), Color32::from_rgb(0x2a, 0x6f, 0xbe))
+}
+#[allow(non_snake_case)]
+pub fn YELLOW() -> Color32 {
+    crate::skin::pick(Color32::from_rgb(0xf0, 0xc8, 0x50), Color32::from_rgb(0xd9, 0xa5, 0x20))
+}
 pub fn semibold(size: f32) -> FontId {
     crate::skin::semibold(size)
 }
@@ -38,16 +104,44 @@ pub fn install(ctx: &egui::Context, fixed_scale: bool) {
     let mut fonts = egui::FontDefinitions::default();
     crate::skin::fonts(&mut fonts);
     ctx.set_fonts(fonts);
-    let mut style = (*ctx.global_style()).clone();
-    style.visuals = egui::Visuals::dark();
-    crate::skin::style(&mut style);
-    style.visuals.override_text_color = Some(TEXT);
-    style.interaction.selectable_labels = false;
-    style.spacing.window_margin = egui::Margin::same(12);
-    ctx.set_global_style(style);
+    apply_visuals(ctx);
     if fixed_scale {
         ctx.set_pixels_per_point(1.0);
     }
+}
+
+/// Whether `setting` ("system", "light", "dark") means the light variant now.
+pub fn wants_light(setting: &str, ctx: &egui::Context) -> bool {
+    match setting {
+        "light" => true,
+        "dark" => false,
+        _ => ctx.system_theme() == Some(egui::Theme::Light),
+    }
+}
+
+/// Switches to the light or dark variant when it differs from the one in use.
+pub fn follow(ctx: &egui::Context, setting: &str) {
+    let light = wants_light(setting, ctx);
+    if light != crate::skin::is_light() {
+        crate::skin::set_light(light);
+        apply_visuals(ctx);
+        ctx.request_repaint();
+    }
+}
+
+/// The egui style for the variant in use (`skin::is_light`).
+fn apply_visuals(ctx: &egui::Context) {
+    let mut style = (*ctx.global_style()).clone();
+    style.visuals = if crate::skin::is_light() {
+        egui::Visuals::light()
+    } else {
+        egui::Visuals::dark()
+    };
+    crate::skin::style(&mut style);
+    style.visuals.override_text_color = Some(TEXT());
+    style.interaction.selectable_labels = false;
+    style.spacing.window_margin = egui::Margin::same(12);
+    ctx.set_global_style(style);
 }
 pub fn paint_toolbar_gradient(ui: &Ui, rect: Rect) {
     crate::skin::top_bar_ground(ui.painter(), rect);
@@ -118,7 +212,7 @@ pub fn tool_button(ui: &mut Ui, caption: &str, icon: Icon, active: bool) -> Resp
         Sense::click(),
     );
     let dy = crate::skin::button_chrome(ui, rect.shrink(2.0), &resp, true, active);
-    let color = if active { ACCENT } else { TEXT };
+    let color = if active { ACCENT() } else { TEXT() };
     let painter = ui.painter();
     let icon_rect = Rect::from_center_size(
         Pos2::new(rect.center().x, rect.top() + 18.0 + dy),
@@ -130,7 +224,7 @@ pub fn tool_button(ui: &mut Ui, caption: &str, icon: Icon, active: bool) -> Resp
         Align2::CENTER_CENTER,
         caption,
         crate::skin::sans(12.0),
-        if active { ACCENT } else { crate::skin::DIM },
+        if active { ACCENT() } else { crate::skin::DIM() },
     );
     resp
 }
@@ -141,7 +235,7 @@ pub fn small_button(ui: &mut Ui, icon: Icon, active: bool) -> Response {
         ui.painter(),
         Rect::from_center_size(rect.center() + Vec2::new(0.0, dy), Vec2::new(15.0, 15.0)),
         icon,
-        if active { ACCENT } else { TEXT },
+        if active { ACCENT() } else { TEXT() },
     );
     resp
 }
@@ -159,7 +253,7 @@ pub fn tab_button(ui: &mut Ui, caption: &str, icon: Icon, selected: bool, width:
         Align2::LEFT_CENTER,
         caption,
         if selected { semibold(13.5) } else { crate::skin::sans(13.5) },
-        if selected { TEXT } else { color },
+        if selected { TEXT() } else { color },
     );
     resp
 }
@@ -190,7 +284,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 let dy = (s * 0.36 * s * 0.36 - (s * k) * (s * k)).sqrt();
                 painter.line_segment([Pos2::new(x, c.y - dy), Pos2::new(x, c.y + dy)], thin);
             }
-            painter.circle_filled(Pos2::new(c.x + s * 0.33, c.y + s * 0.33), s * 0.14, GREEN);
+            painter.circle_filled(Pos2::new(c.x + s * 0.33, c.y + s * 0.33), s * 0.14, GREEN());
         }
         Icon::Pause => {
             let w = s * 0.14;
@@ -239,7 +333,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                     Pos2::new(r.right(), r.top() + fold),
                     Pos2::new(r.right() - fold, r.top() + fold),
                 ],
-                BG_LIGHT,
+                BG_LIGHT(),
                 thin,
             ));
             if matches!(icon, Icon::Nzb) {
@@ -535,7 +629,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                         Pos2::new(c.x - s * 0.28, c.y + s * 0.28),
                         Pos2::new(c.x + s * 0.28, c.y - s * 0.28),
                     ],
-                    Stroke::new(stroke.width * 1.5, RED),
+                    Stroke::new(stroke.width * 1.5, RED()),
                 );
             }
         }
@@ -559,7 +653,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         Icon::Folder => {
             let r =
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.05), Vec2::new(s * 0.60, s * 0.40));
-            painter.rect_filled(r, CornerRadius::same(1), YELLOW);
+            painter.rect_filled(r, CornerRadius::same(1), YELLOW());
             painter.rect_stroke(
                 r,
                 CornerRadius::same(1),
@@ -571,7 +665,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                     Pos2::new(r.left() + s * 0.28, r.top() + s * 0.02),
                 ),
                 CornerRadius::same(1),
-                YELLOW,
+                YELLOW(),
             );
         }
         Icon::Rename => {
@@ -691,14 +785,14 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                     Pos2::new(c.x - s * 0.22, c.y - s * 0.22),
                     Pos2::new(c.x + s * 0.22, c.y + s * 0.22),
                 ],
-                Stroke::new(stroke.width * 1.4, RED),
+                Stroke::new(stroke.width * 1.4, RED()),
             );
             painter.line_segment(
                 [
                     Pos2::new(c.x + s * 0.22, c.y - s * 0.22),
                     Pos2::new(c.x - s * 0.22, c.y + s * 0.22),
                 ],
-                Stroke::new(stroke.width * 1.4, RED),
+                Stroke::new(stroke.width * 1.4, RED()),
             );
         }
         Icon::Open => {
@@ -773,7 +867,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                         Pos2::new(c.x + s * 0.30, y + s * 0.05),
                     ),
                     0.0,
-                    if k == 0 { ACCENT } else { color },
+                    if k == 0 { ACCENT() } else { color },
                 );
             }
         }
@@ -807,8 +901,8 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
     }
 }
 fn green_or(color: Color32) -> Color32 {
-    if color == TEXT {
-        GREEN_DARK
+    if color == TEXT() {
+        GREEN_DARK()
     } else {
         color
     }
@@ -838,7 +932,7 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
     let rect = rect.shrink2(Vec2::new(0.0, 1.0));
     crate::skin::recess(ui, rect);
     let fill = if complete {
-        Color32::from_rgb(0x3a, 0x3a, 0x3f)
+        crate::skin::pick(Color32::from_rgb(0x3a, 0x3a, 0x3f), Color32::from_rgb(0xc8, 0xc9, 0xcf))
     } else {
         crate::skin::accent_fill()
     };
@@ -853,7 +947,7 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
         Align2::CENTER_CENTER,
         text,
         crate::skin::mono(10.5),
-        TEXT,
+        TEXT(),
     );
 }
 #[allow(dead_code)]
@@ -865,7 +959,7 @@ pub fn section_header(ui: &mut Ui, text: &str) {
         Align2::LEFT_CENTER,
         text.to_uppercase(),
         semibold(12.0),
-        crate::skin::DIM,
+        crate::skin::DIM(),
     );
 }
 #[allow(dead_code)]

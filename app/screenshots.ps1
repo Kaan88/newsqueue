@@ -16,8 +16,16 @@ try {
         $env:NQ_DEMO_DIALOG = $dialog
         cargo run -- --screenshot "shots\golden\dialog-$dialog.png"
     }
+    # The light variant (screenshots are dark unless NQ_DEMO_THEME says otherwise).
+    $env:NQ_DEMO_THEME = "light"
+    cargo run -- --screenshot "shots\golden\queue-light.png"
+    $env:NQ_DEMO_DIALOG = "setup"
+    cargo run -- --screenshot "shots\golden\dialog-setup-light.png"
+    Remove-Item Env:NQ_DEMO_DIALOG -ErrorAction SilentlyContinue
+    Remove-Item Env:NQ_DEMO_THEME -ErrorAction SilentlyContinue
 } finally {
     Remove-Item Env:NQ_DEMO_TAB -ErrorAction SilentlyContinue
     Remove-Item Env:NQ_DEMO_DIALOG -ErrorAction SilentlyContinue
+    Remove-Item Env:NQ_DEMO_THEME -ErrorAction SilentlyContinue
     Pop-Location
 }

@@ -19,17 +19,17 @@ pub fn draw(app: &mut App, ctx: &mut Ui) {
 
     egui::Panel::top("main_toolbar")
         .exact_size(TOOLBAR_HEIGHT)
-        .frame(egui::Frame::NONE.fill(theme::BG))
+        .frame(egui::Frame::NONE.fill(theme::BG()))
         .show(ctx, |ui| toolbar(app, ui));
 
     egui::Panel::top("main_tabs")
         .exact_size(TAB_BAR_HEIGHT + 1.0)
-        .frame(egui::Frame::NONE.fill(theme::BG))
+        .frame(egui::Frame::NONE.fill(theme::BG()))
         .show(ctx, |ui| tabs(app, ui));
 
     egui::Panel::bottom("status_bar")
         .exact_size(STATUS_BAR_HEIGHT)
-        .frame(egui::Frame::NONE.fill(theme::BG))
+        .frame(egui::Frame::NONE.fill(theme::BG()))
         .show(ctx, |ui| status_bar(app, ui));
 
     if app.show_threads {
@@ -41,8 +41,8 @@ pub fn draw(app: &mut App, ctx: &mut Ui) {
             .default_size(height)
             .frame(
                 egui::Frame::NONE
-                    .fill(theme::PANEL_WHITE)
-                    .stroke(Stroke::new(1.0_f32, theme::BORDER)),
+                    .fill(theme::PANEL_WHITE())
+                    .stroke(Stroke::new(1.0_f32, theme::BORDER())),
             );
         let resp = panel.show(ctx, |ui| {
             thread_panel(app, ui);
@@ -55,7 +55,7 @@ pub fn draw(app: &mut App, ctx: &mut Ui) {
     }
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::NONE.fill(theme::PANEL_WHITE))
+        .frame(egui::Frame::NONE.fill(theme::PANEL_WHITE()))
         .show(ctx, |ui| match app.active_tab {
             0 => queue_tab(app, ui),
             1 => par2_tab(app, ui),
@@ -196,16 +196,16 @@ fn toolbar_sep(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(2.0, 53.0), Sense::hover());
     let y = (rect.top() + 8.0)..=(rect.bottom() - 8.0);
     let x = rect.center().x;
-    ui.painter().vline(x - 0.5, y.clone(), Stroke::new(1.0_f32, theme::BORDER));
-    ui.painter().vline(x + 0.5, y, Stroke::new(1.0_f32, theme::BORDER_LIGHT));
+    ui.painter().vline(x - 0.5, y.clone(), Stroke::new(1.0_f32, theme::BORDER()));
+    ui.painter().vline(x + 0.5, y, Stroke::new(1.0_f32, theme::BORDER_LIGHT()));
 }
 
 fn tabs(app: &mut App, ui: &mut Ui) {
     let rect = ui.max_rect();
-    ui.painter().rect_filled(rect, 0.0, theme::BG);
+    ui.painter().rect_filled(rect, 0.0, theme::BG());
     ui.painter().line_segment(
         [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(1.0_f32, theme::BORDER),
+        Stroke::new(1.0_f32, theme::BORDER()),
     );
     ui.spacing_mut().item_spacing = Vec2::ZERO;
     ui.horizontal(|ui| {
@@ -233,11 +233,11 @@ fn tabs(app: &mut App, ui: &mut Ui) {
 fn queue_tab(app: &mut App, ui: &mut Ui) {
     let bar = egui::Panel::top("dq_toolbar")
         .exact_size(DQ_TOOLBAR_HEIGHT)
-        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE()))
         .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                Stroke::new(1.0_f32, theme::BORDER_LIGHT),
+                Stroke::new(1.0_f32, theme::BORDER_LIGHT()),
             );
             ui.spacing_mut().item_spacing = Vec2::new(1.0, 0.0);
             ui.horizontal(|ui| {
@@ -372,7 +372,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     crate::skin::band_ground(ui.painter(), ui.max_rect().expand2(Vec2::new(4.0, 0.0)));
                     ui.painter().line_segment(
                         [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                        Stroke::new(1.0_f32, theme::BORDER_LIGHT),
+                        Stroke::new(1.0_f32, theme::BORDER_LIGHT()),
                     );
                     let align = match ci {
                         1..=3 => Align::Max,
@@ -430,12 +430,12 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                         }
                                         let (r, _) = ui
                                             .allocate_exact_size(Vec2::new(15.0, 15.0), Sense::hover());
-                                        theme::paint_icon(ui.painter(), r, Icon::Folder, theme::TEXT);
+                                        theme::paint_icon(ui.painter(), r, Icon::Folder, theme::TEXT());
                                         ui.add(
                                             Label::new(
                                                 RichText::new(&c.subject)
                                                     .size(12.5)
-                                                    .color(theme::TEXT_GROUP),
+                                                    .color(theme::TEXT_GROUP()),
                                             )
                                             .truncate(),
                                         );
@@ -505,7 +505,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                                         ui.label(
                                                             RichText::new("Error!")
                                                                 .size(11.5)
-                                                                .color(theme::RED),
+                                                                .color(theme::RED()),
                                                         );
                                                     },
                                                 );
@@ -532,9 +532,9 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                             ),
                                             |ui| {
                                                 let (txt, color) = if c.unrar {
-                                                    ("Yes", theme::GREEN_DARK)
+                                                    ("Yes", theme::GREEN_DARK())
                                                 } else {
-                                                    ("-", theme::TEXT_MUTED)
+                                                    ("-", theme::TEXT_MUTED())
                                                 };
                                                 ui.label(RichText::new(txt).size(11.5).color(color));
                                             },
@@ -597,7 +597,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                         ui.add_space(18.0);
                                         let (r, _) = ui
                                             .allocate_exact_size(Vec2::new(13.0, 13.0), Sense::hover());
-                                        theme::paint_icon(ui.painter(), r, Icon::File, theme::TEXT);
+                                        theme::paint_icon(ui.painter(), r, Icon::File, theme::TEXT());
                                         ui.add(Label::new(RichText::new(&f.name).size(12.0)).truncate());
                                     }
                                     1 => {
@@ -814,7 +814,7 @@ fn row_click_overlay(ui: &mut Ui, col: usize, acc: &mut Option<egui::Response>) 
         // Keep the expand/collapse button on the left clickable.
         rect.min.x += 15.0;
     }
-    let response = ui.interact(rect, ui.id().with("row_click"), Sense::click());
+    let response = ui.interact(rect, ui.scope_id().with("row_click"), Sense::click());
     *acc = Some(match acc.take() {
         Some(previous) => previous.union(response),
         None => response,
@@ -836,7 +836,7 @@ fn dq_sep(ui: &mut Ui) {
             egui::pos2(rect.center().x, rect.top() + 4.0),
             egui::pos2(rect.center().x, rect.bottom() - 4.0),
         ],
-        Stroke::new(1.0_f32, theme::BORDER),
+        Stroke::new(1.0_f32, theme::BORDER()),
     );
 }
 
@@ -864,11 +864,11 @@ fn build_rows(app: &App) -> Vec<QueueRowRef> {
 fn par2_tab(app: &mut App, ui: &mut Ui) {
     egui::Panel::top("par2_toolbar")
         .exact_size(30.0)
-        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE()))
         .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                Stroke::new(1.0_f32, theme::BORDER_LIGHT),
+                Stroke::new(1.0_f32, theme::BORDER_LIGHT()),
             );
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
@@ -974,7 +974,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                 ui.label(
                     RichText::new("PAR2 checking and repairing are enabled")
                         .size(12.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             });
         });
@@ -1035,7 +1035,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                 crate::skin::band_ground(ui.painter(), ui.max_rect().expand2(Vec2::new(4.0, 0.0)));
                 ui.painter().line_segment(
                     [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                    Stroke::new(1.0_f32, theme::BORDER_LIGHT),
+                    Stroke::new(1.0_f32, theme::BORDER_LIGHT()),
                 );
                 ui.add(Label::new(RichText::new(text).size(12.0)).truncate());
             });
@@ -1048,7 +1048,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
             row.set_selected(selected == Some(i));
             row.col(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
-                theme::paint_icon(ui.painter(), r, Icon::Shield, theme::TEXT);
+                theme::paint_icon(ui.painter(), r, Icon::Shield, theme::TEXT());
                 ui.add(Label::new(RichText::new(&p.name).size(12.0)).truncate());
             });
             row.col(|ui| {
@@ -1082,9 +1082,9 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
                             RichText::new(if p.unrar { "Yes" } else { "-" })
                                 .size(11.5)
                                 .color(if p.unrar {
-                                    theme::GREEN_DARK
+                                    theme::GREEN_DARK()
                                 } else {
-                                    theme::TEXT_MUTED
+                                    theme::TEXT_MUTED()
                                 }),
                         );
                     },
@@ -1112,11 +1112,11 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
 fn log_tab(app: &mut App, ui: &mut Ui) {
     egui::Panel::top("log_toolbar")
         .exact_size(30.0)
-        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE()))
         .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                Stroke::new(1.0_f32, theme::BORDER_LIGHT),
+                Stroke::new(1.0_f32, theme::BORDER_LIGHT()),
             );
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
@@ -1150,7 +1150,7 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                     ui.label(
                         RichText::new(format!("{} lines", app.logs.len()))
                             .size(11.5)
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::TEXT_MUTED()),
                     );
                 });
             });
@@ -1172,13 +1172,13 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                         RichText::new(&e.time)
                             .monospace()
                             .size(11.5)
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::TEXT_MUTED()),
                     );
                     let color = match e.level.as_str() {
-                        "Error" => theme::RED,
-                        "Connection" => theme::BLUE,
-                        "Scheduler" => theme::ORANGE,
-                        _ => theme::TEXT_MUTED,
+                        "Error" => theme::RED(),
+                        "Connection" => theme::BLUE(),
+                        "Scheduler" => theme::ORANGE(),
+                        _ => theme::TEXT_MUTED(),
                     };
                     ui.add_sized(
                         [62.0, 14.0],
@@ -1193,11 +1193,11 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
 fn rss_tab(app: &mut App, ui: &mut Ui) {
     egui::Panel::top("rss_toolbar")
         .exact_size(30.0)
-        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE()))
         .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
-                Stroke::new(1.0_f32, theme::BORDER_LIGHT),
+                Stroke::new(1.0_f32, theme::BORDER_LIGHT()),
             );
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
@@ -1242,7 +1242,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                     ui.label(
                         RichText::new("Press Refresh to update the feed list")
                             .size(11.5)
-                            .color(theme::TEXT_MUTED),
+                            .color(theme::TEXT_MUTED()),
                     );
                 });
             });
@@ -1289,7 +1289,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
             let item = &items[i];
             row.col(|ui| {
                 let (r, _) = ui.allocate_exact_size(Vec2::new(14.0, 14.0), Sense::hover());
-                theme::paint_icon(ui.painter(), r, Icon::Rss, theme::TEXT);
+                theme::paint_icon(ui.painter(), r, Icon::Rss, theme::TEXT());
                 ui.add(Label::new(RichText::new(&item.name).size(12.0)).truncate());
             });
             row.col(|ui| {
@@ -1304,7 +1304,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
 
 fn thread_panel(app: &mut App, ui: &mut Ui) {
     ui.painter()
-        .rect_filled(ui.max_rect(), 0.0, theme::PANEL_WHITE);
+        .rect_filled(ui.max_rect(), 0.0, theme::PANEL_WHITE());
     if app.threads.is_empty() {
         // Header only, matching a disconnected session.
         let rect = ui.max_rect();
@@ -1324,7 +1324,7 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
                 Align2::LEFT_CENTER,
                 text,
                 FontId::proportional(11.5),
-                theme::TEXT,
+                theme::TEXT(),
             );
             x += w;
         }
@@ -1364,9 +1364,9 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
             });
             row.col(|ui| {
                 let color = if t.status == "Downloading" {
-                    theme::GREEN_DARK
+                    theme::GREEN_DARK()
                 } else {
-                    theme::TEXT_MUTED
+                    theme::TEXT_MUTED()
                 };
                 ui.label(RichText::new(&t.status).size(12.0).color(color));
             });
@@ -1379,10 +1379,10 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
 
 fn status_bar(app: &mut App, ui: &mut Ui) {
     let rect = ui.max_rect();
-    ui.painter().rect_filled(rect, 0.0, theme::BG);
+    ui.painter().rect_filled(rect, 0.0, theme::BG());
     ui.painter().line_segment(
         [rect.left_top(), rect.right_top()],
-        Stroke::new(1.0_f32, theme::BORDER),
+        Stroke::new(1.0_f32, theme::BORDER()),
     );
     let height = rect.height();
     let mut x = rect.left();
@@ -1435,10 +1435,10 @@ fn status_bar(app: &mut App, ui: &mut Ui) {
     ];
     for (i, (id, text, w, hint)) in panels.iter().enumerate() {
         let arenas = egui::Rect::from_min_size(egui::pos2(x, rect.top()), Vec2::new(*w, height));
-        ui.painter().rect_filled(arenas, 0.0, theme::BG_LIGHT);
+        ui.painter().rect_filled(arenas, 0.0, theme::BG_LIGHT());
         ui.painter().line_segment(
             [arenas.right_top(), arenas.right_bottom()],
-            Stroke::new(1.0_f32, theme::BORDER),
+            Stroke::new(1.0_f32, theme::BORDER()),
         );
         if *id == "graph" {
             draw_speed_graph(ui, arenas.shrink2(Vec2::new(3.0, 3.0)), app);
@@ -1448,10 +1448,10 @@ fn status_bar(app: &mut App, ui: &mut Ui) {
                 Align2::CENTER_CENTER,
                 text,
                 FontId::proportional(12.0),
-                theme::TEXT,
+                theme::TEXT(),
             );
         }
-        let resp = ui.interact(arenas, egui::Id::new(("status_panel", i)), Sense::click());
+        let resp = ui.interact(arenas, ui.scope_id().with(("status_panel", i)), Sense::click());
         if resp.clicked() && *id == "limit" {
             app.show_speed_limit = true;
         }
@@ -1484,19 +1484,19 @@ fn status_bar(app: &mut App, ui: &mut Ui) {
         egui::pos2(x, rect.top()),
         Vec2::new((rect.right() - 22.0 - x).max(0.0), height),
     );
-    ui.painter().rect_filled(spring, 0.0, theme::BG_LIGHT);
+    ui.painter().rect_filled(spring, 0.0, theme::BG_LIGHT());
     let thread_rect = egui::Rect::from_min_size(
         egui::pos2(rect.right() - 22.0, rect.top()),
         Vec2::new(22.0, height),
     );
-    ui.painter().rect_filled(thread_rect, 0.0, theme::BG_LIGHT);
+    ui.painter().rect_filled(thread_rect, 0.0, theme::BG_LIGHT());
     theme::paint_icon(
         ui.painter(),
         egui::Rect::from_center_size(thread_rect.center(), Vec2::new(14.0, 14.0)),
         Icon::Threads,
-        theme::TEXT,
+        theme::TEXT(),
     );
-    let resp = ui.interact(thread_rect, egui::Id::new("thread_toggle"), Sense::click());
+    let resp = ui.interact(thread_rect, ui.scope_id().with("thread_toggle"), Sense::click());
     if resp.clicked() {
         app.show_threads = !app.show_threads;
         app.settings.thread_list_visible = app.show_threads;
@@ -1509,7 +1509,7 @@ fn status_bar(app: &mut App, ui: &mut Ui) {
                 Align2::LEFT_CENTER,
                 text,
                 FontId::proportional(12.0),
-                theme::ACCENT,
+                theme::ACCENT(),
             );
         }
     }
@@ -1542,12 +1542,12 @@ fn draw_speed_graph(ui: &Ui, rect: egui::Rect, app: &App) {
     fill.push(egui::pos2(rect.left(), rect.bottom()));
     p.add(egui::Shape::convex_polygon(
         fill,
-        theme::ACCENT.gamma_multiply(0.22),
+        theme::ACCENT().gamma_multiply(0.22),
         Stroke::NONE,
     ));
     p.add(egui::Shape::line(
         points,
-        Stroke::new(1.2_f32, theme::ACCENT),
+        Stroke::new(1.2_f32, theme::ACCENT()),
     ));
 }
 

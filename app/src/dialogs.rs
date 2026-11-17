@@ -147,7 +147,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                         ui.painter().rect_filled(
                             ui.max_rect(),
                             0.0,
-                            theme::PANEL_WHITE,
+                            theme::PANEL_WHITE(),
                         );
                         ScrollArea::vertical()
                             .id_salt("setup_tree_scroll")
@@ -178,7 +178,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                                     RichText::new(SETUP_PAGES[app.setup_page])
                                         .size(14.0)
                                         .strong()
-                                        .color(theme::TEXT_GROUP),
+                                        .color(theme::TEXT_GROUP()),
                                 );
                                 ui.separator();
                                 match app.setup_page {
@@ -270,7 +270,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
                 ui.label(
                     RichText::new(format!("({:.2} Mbit/s)", s.max_speed_mbps))
                         .size(11.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             });
             ui.end_row();
@@ -290,7 +290,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
                 ui.label(
                     RichText::new(format!("({:.0} KB/s)", s.max_speed_kbps))
                         .size(11.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             });
             ui.end_row();
@@ -317,7 +317,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
     ui.label(
         RichText::new("The original profile saved 8 connections with SSL on port 563. SSL switches the default port between 563 and 119. The limits are 200 connections per server and 8 servers per level.")
             .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .color(theme::TEXT_MUTED()),
     );
 }
 
@@ -381,7 +381,7 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
             ui.end_row();
         });
     ui.add_space(8.0);
-    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(11.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(11.0).color(theme::TEXT_MUTED()));
 }
 
 fn page_download2(ui: &mut Ui, s: &mut Settings) {
@@ -438,7 +438,7 @@ fn page_log(ui: &mut Ui, s: &mut Settings) {
     ui.label(
         RichText::new("The log keeps 200 visible lines in this build and writes one file per day.")
             .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .color(theme::TEXT_MUTED()),
     );
 }
 
@@ -628,7 +628,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
             "Each row is a day; each cell is a 30-minute slot. Green means downloading is allowed.",
         )
         .size(11.0)
-        .color(theme::TEXT_MUTED),
+        .color(theme::TEXT_MUTED()),
     );
     ui.add_space(6.0);
     let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -649,14 +649,14 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
                     ui.allocate_exact_size(Vec2::new(11.0, 16.0), egui::Sense::click());
                 let on = chars.get(slot).copied().unwrap_or('0') == '1';
                 let fill = if on {
-                    theme::GREEN
+                    theme::GREEN()
                 } else {
-                    theme::BG_LIGHT
+                    theme::BG_LIGHT()
                 };
                 ui.painter().rect_filled(rect.shrink(0.5), 0.0, fill);
                 if *day == current_day.as_str() && slot == current_slot {
                     ui.painter()
-                        .rect_stroke(rect, 0.0, Stroke::new(1.5_f32, theme::ACCENT), egui::StrokeKind::Inside);
+                        .rect_stroke(rect, 0.0, Stroke::new(1.5_f32, theme::ACCENT()), egui::StrokeKind::Inside);
                 }
                 if resp.clicked() {
                     click = Some((d, slot));
@@ -681,7 +681,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
                 Label::new(
                     RichText::new(format!("{h:02}"))
                         .size(10.5)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 ),
             );
         }
@@ -771,7 +771,7 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
     ui.label(
         RichText::new("A server needs a name, an address and a non-zero port. SSL switches the default port between 563 and 119.")
             .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .color(theme::TEXT_MUTED()),
     );
     match action {
         1 => {
@@ -891,6 +891,13 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
+            ui.label("Theme");
+            ui.horizontal(|ui| {
+                for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+                    crate::skin::selectable_value(ui, &mut s.ui_theme, value.to_string(), label);
+                }
+            });
+            ui.end_row();
             ui.label("Visible tabs");
             ui.horizontal_wrapped(|ui| {
                 crate::skin::checkbox_label(ui, &mut s.show_tabs[0], "Download queue");
@@ -921,7 +928,7 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
             );
             ui.end_row();
         });
-    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(11.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(11.0).color(theme::TEXT_MUTED()));
 }
 
 fn server_edit_window(app: &mut App, ctx: &egui::Context) {
@@ -1025,7 +1032,7 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                 ui.label(
                     RichText::new(&app.server_edit_error)
                         .size(11.5)
-                        .color(theme::RED),
+                        .color(theme::RED()),
                 );
             }
             ui.add_space(6.0);
@@ -1105,7 +1112,7 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                         ui.label(
                             RichText::new("(MB per hour)")
                                 .size(11.0)
-                                .color(theme::TEXT_MUTED),
+                                .color(theme::TEXT_MUTED()),
                         );
                     });
                     draw_bars(
@@ -1142,7 +1149,7 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                             ui.label(
                                 RichText::new("Double click to open")
                                     .size(11.0)
-                                    .color(theme::TEXT_MUTED),
+                                    .color(theme::TEXT_MUTED()),
                             );
                         });
                     });
@@ -1165,7 +1172,7 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                                         ui.label(
                                             RichText::new(&item.date)
                                                 .size(11.0)
-                                                .color(theme::TEXT_MUTED),
+                                                .color(theme::TEXT_MUTED()),
                                         );
                                         ui.label(RichText::new(&item.size).size(11.0));
                                         ui.end_row();
@@ -1217,8 +1224,8 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
         egui::Sense::hover(),
     );
     let p = ui.painter();
-    p.rect_filled(rect, 0.0, theme::PANEL_WHITE);
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT), egui::StrokeKind::Inside);
+    p.rect_filled(rect, 0.0, theme::PANEL_WHITE());
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT()), egui::StrokeKind::Inside);
     let max = values.iter().take(count).cloned().fold(1.0f64, f64::max);
     let left = rect.left() + 40.0;
     let bottom = rect.bottom() - 24.0;
@@ -1237,7 +1244,7 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
                 Align2::CENTER_CENTER,
                 labels.get(i).cloned().unwrap_or_default(),
                 FontId::proportional(10.5),
-                theme::TEXT_MUTED,
+                theme::TEXT_MUTED(),
             );
         }
     }
@@ -1246,14 +1253,14 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
             egui::pos2(left, bottom),
             egui::pos2(rect.right() - 8.0, bottom),
         ],
-        Stroke::new(1.0_f32, theme::BORDER),
+        Stroke::new(1.0_f32, theme::BORDER()),
     );
     p.text(
         egui::pos2(left, rect.top() + 6.0),
         Align2::LEFT_TOP,
         format!("max {:.0}", max),
         FontId::proportional(8.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
 }
 
@@ -1263,14 +1270,14 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
         egui::Sense::hover(),
     );
     let p = ui.painter();
-    p.rect_filled(rect, 0.0, theme::PANEL_WHITE);
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT), egui::StrokeKind::Inside);
+    p.rect_filled(rect, 0.0, theme::PANEL_WHITE());
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT()), egui::StrokeKind::Inside);
     let inner = rect.shrink(20.0);
     for k in 0..=4 {
         let y = inner.top() + inner.height() * k as f32 / 4.0;
         p.line_segment(
             [egui::pos2(inner.left(), y), egui::pos2(inner.right(), y)],
-            Stroke::new(1.0_f32, theme::BG_LIGHT),
+            Stroke::new(1.0_f32, theme::BG_LIGHT()),
         );
     }
     let n = app.speed_history.len();
@@ -1289,7 +1296,7 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
             .collect();
         p.add(egui::Shape::line(
             points,
-            Stroke::new(1.4_f32, theme::GREEN_DARK),
+            Stroke::new(1.4_f32, theme::GREEN_DARK()),
         ));
     }
     p.text(
@@ -1300,21 +1307,21 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
             app.status_mode_speed,
         ),
         FontId::proportional(8.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
     p.text(
         egui::pos2(inner.left(), inner.bottom() + 4.0),
         Align2::LEFT_TOP,
         "2 minutes ago",
         FontId::proportional(10.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
     p.text(
         egui::pos2(inner.right(), inner.bottom() + 4.0),
         Align2::RIGHT_TOP,
         "now",
         FontId::proportional(10.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
 }
 
@@ -1329,16 +1336,16 @@ fn about_window(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(64.0, 64.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, egui::CornerRadius::same(10), theme::BG);
-                theme::paint_icon(ui.painter(), rect.shrink(10.0), Icon::Connect, theme::ACCENT);
+                ui.painter().rect_filled(rect, egui::CornerRadius::same(10), theme::BG());
+                theme::paint_icon(ui.painter(), rect.shrink(10.0), Icon::Connect, theme::ACCENT());
                 ui.add_space(6.0);
-                ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::TEXT_GROUP));
+                ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::TEXT_GROUP()));
                 ui.label(RichText::new(format!("Version {VERSION}")).size(12.0));
-                ui.label(RichText::new(format!("Build date {BUILD_DATE}")).size(11.5).color(theme::TEXT_MUTED));
+                ui.label(RichText::new(format!("Build date {BUILD_DATE}")).size(11.5).color(theme::TEXT_MUTED()));
                 ui.add_space(8.0);
                 ui.label(RichText::new("A desktop Usenet download queue, rebuilt from the observed layout and behaviour.").size(12.0));
                 ui.add_space(4.0);
-                ui.label(RichText::new("Free version. Independent project; not affiliated with the original application.").size(11.0).color(theme::TEXT_MUTED));
+                ui.label(RichText::new("Free version. Independent project; not affiliated with the original application.").size(11.0).color(theme::TEXT_MUTED()));
                 ui.add_space(10.0);
                 if crate::skin::button(ui, "OK").clicked() {
                     app.show_about = false;
@@ -1529,7 +1536,7 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
                 ui.label(
                     RichText::new(format!("Remaining: {}m {:02}s", secs / 60, secs % 60))
                         .size(11.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             }
         });
@@ -1605,7 +1612,7 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                         app.settings.shutdown_method
                     ))
                     .size(12.0)
-                    .color(theme::ORANGE),
+                    .color(theme::ORANGE()),
                 );
                 if crate::skin::button(ui, "Abort").clicked() {
                     app.shutdown_countdown = None;
@@ -1619,7 +1626,7 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                      Shutdown, Hibernate and Sleep affect Windows; Exit only closes NewsQueue.",
                 )
                 .size(10.5)
-                .color(theme::TEXT_MUTED),
+                .color(theme::TEXT_MUTED()),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if crate::skin::button(ui, "OK").clicked() {
@@ -1650,7 +1657,7 @@ fn execute_command_window(app: &mut App, ctx: &egui::Context) {
             ui.label(
                 RichText::new("Placeholders: {folder}, {name}, {file}")
                     .size(11.0)
-                    .color(theme::TEXT_MUTED),
+                    .color(theme::TEXT_MUTED()),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 if crate::skin::button(ui, "Save").clicked() {
@@ -1702,7 +1709,7 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
                     "pattern | A[P]  or  pattern | D\nLast matching line wins. P starts the item paused.",
                 )
                 .size(11.0)
-                .color(theme::TEXT_MUTED),
+                .color(theme::TEXT_MUTED()),
             );
             crate::skin::text_area(ui,
                 TextEdit::multiline(&mut filters)
@@ -1759,7 +1766,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
                     )
                 ))
                 .size(11.5)
-                .color(theme::TEXT_MUTED),
+                .color(theme::TEXT_MUTED()),
             );
             ui.add_space(4.0);
             if ui
@@ -1788,7 +1795,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
             ui.label(
                 RichText::new("The limit is applied to the total of all connections.")
                     .size(10.5)
-                    .color(theme::TEXT_MUTED),
+                    .color(theme::TEXT_MUTED()),
             );
         });
     app.show_speed_limit = open;

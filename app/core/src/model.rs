@@ -355,6 +355,8 @@ pub struct Settings {
     pub minimize_to_tray_on_close: bool,
     pub tray_balloon: bool,
     pub speed_in_tray: bool,
+    /// Colour theme: "system" (follow Windows), "light" or "dark".
+    pub ui_theme: String,
     /// 0 turns the periodic version check off.
     pub check_version_minutes: u32,
     /// Install a newer release by itself once nothing is downloading.
@@ -443,6 +445,7 @@ impl Default for Settings {
             minimize_to_tray_on_close: true,
             tray_balloon: true,
             speed_in_tray: true,
+            ui_theme: "system".into(),
             check_version_minutes: 1440,
             auto_update: true,
             clear_history_on_exit: false,

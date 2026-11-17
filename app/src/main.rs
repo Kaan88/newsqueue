@@ -1003,6 +1003,13 @@ impl eframe::App for App {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.engine.checkout();
         self.frame += 1;
+        // Screenshots stay deterministic: dark unless NQ_DEMO_THEME says otherwise.
+        let theme_setting = if self.screenshot_path.is_some() {
+            std::env::var("NQ_DEMO_THEME").unwrap_or_else(|_| "dark".into())
+        } else {
+            self.settings.ui_theme.clone()
+        };
+        theme::follow(ctx, &theme_setting);
         self.handle_tray(ctx);
         self.tick();
         if self.shutdown_exit_requested && !self.shutdown_exit_sent {
