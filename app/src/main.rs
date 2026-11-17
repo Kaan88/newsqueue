@@ -944,51 +944,38 @@ Unpack cancelled because no password was supplied."),
             return;
         };
         if self.frame >= 120 && !self.screenshot_requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             self.screenshot_requested = true;
+            let cb = egui::ScreenshotCallback::new(move |img| save_screenshot(&path, &img));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(cb));
         }
-        if self.screenshot_requested && !self.screenshot_saved {
-            if self.frame > 240 {
-                eprintln!("Timed out waiting for the screenshot event");
-                std::process::exit(1);
-            }
-            let mut image: Option<std::sync::Arc<egui::ColorImage>> = None;
-            ctx.input(|i| {
-                for event in &i.events {
-                    if let egui::Event::Screenshot { image: img, .. } = event {
-                        image = Some(img.clone());
-                    }
-                }
-            });
-            if let Some(img) = image {
-                let w = img.width() as u32;
-                let h = img.height() as u32;
-                let mut buf = Vec::with_capacity((w * h * 4) as usize);
-                for px in &img.pixels {
-                    let [r, g, b, a] = px.to_array();
-                    buf.extend_from_slice(&[r, g, b, a]);
-                }
-                if let Some(parent) = std::path::Path::new(&path).parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                match image::RgbaImage::from_raw(w, h, buf) {
-                    Some(img) => match img.save(&path) {
-                        Ok(_) => {
-                            println!("Screenshot saved to {path}");
-                            self.screenshot_saved = true;
-                            std::process::exit(0);
-                        }
-                        Err(e) => {
-                            eprintln!("Could not save screenshot: {e}");
-                            std::process::exit(1);
-                        }
-                    },
-                    None => {
-                        eprintln!("Could not build screenshot image");
-                        std::process::exit(1);
-                    }
-                }
-            }
+        if self.screenshot_requested && self.frame > 240 {
+            eprintln!("Timed out waiting for the screenshot event");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn save_screenshot(path: &str, img: &egui::ColorImage) -> ! {
+    let (w, h) = (img.width() as u32, img.height() as u32);
+    let mut buf = Vec::with_capacity((w * h * 4) as usize);
+    for px in &img.pixels {
+        buf.extend_from_slice(&px.to_array());
+    }
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match image::RgbaImage::from_raw(w, h, buf).map(|i| i.save(path)) {
+        Some(Ok(_)) => {
+            println!("Screenshot saved to {path}");
+            std::process::exit(0);
+        }
+        Some(Err(e)) => {
+            eprintln!("Could not save screenshot: {e}");
+            std::process::exit(1);
+        }
+        None => {
+            eprintln!("Could not build screenshot image");
+            std::process::exit(1);
         }
     }
 }
@@ -1009,7 +996,8 @@ impl Drop for App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &root.ctx().clone();
         // The engine thread ticks it between frames; this frame uses it directly.
         self.engine.checkout();
         self.frame += 1;
@@ -1020,7 +1008,7 @@ impl eframe::App for App {
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
         self.handle_keys(ctx);
-        ui::draw(self, ctx);
+        ui::draw(self, root);
         dialogs::draw(self, ctx);
         self.handle_screenshot(ctx);
 

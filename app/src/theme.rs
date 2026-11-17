@@ -1,6 +1,6 @@
 use crate::model::{TOOLBAR_BUTTON_HEIGHT, TOOLBAR_BUTTON_WIDTH};
 use eframe::egui::{
-    self, Align2, Color32, FontFamily, FontId, Pos2, Rect, Response, Rounding, Sense, Stroke, Ui,
+    self, Align2, Color32, FontFamily, FontId, Pos2, Rect, Response, CornerRadius, Sense, Stroke, Ui,
     Vec2,
 };
 pub const BG: Color32 = Color32::from_rgb(214, 226, 242);
@@ -37,7 +37,7 @@ fn install_fonts(ctx: &egui::Context) {
             Some(bytes) => {
                 fonts
                     .font_data
-                    .insert(name.into(), egui::FontData::from_owned(bytes));
+                    .insert(name.into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
                 true
             }
             None => false,
@@ -74,19 +74,19 @@ pub fn semibold(size: f32) -> FontId {
 /// otherwise the monitor's DPI scale is used.
 pub fn install(ctx: &egui::Context, fixed_scale: bool) {
     install_fonts(ctx);
-    let mut style = (*ctx.style()).clone();
+    let mut style = (*ctx.global_style()).clone();
     style.visuals = egui::Visuals::light();
     style.visuals.panel_fill = BG;
     style.visuals.window_fill = BG_LIGHT;
     style.visuals.extreme_bg_color = PANEL_WHITE;
     style.visuals.faint_bg_color = ROW_ALT;
     style.visuals.override_text_color = Some(TEXT);
-    style.visuals.window_rounding = Rounding::same(6.0);
-    style.visuals.menu_rounding = Rounding::same(4.0);
+    style.visuals.window_corner_radius = CornerRadius::same(6);
+    style.visuals.menu_corner_radius = CornerRadius::same(4);
     style.visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
-    style.visuals.window_shadow = egui::epaint::Shadow { offset: Vec2::new(0.0, 4.0), blur: 16.0, spread: 0.0, color: Color32::from_black_alpha(40) };
-    style.visuals.popup_shadow = egui::epaint::Shadow { offset: Vec2::new(0.0, 2.0), blur: 8.0, spread: 0.0, color: Color32::from_black_alpha(30) };
-    for w in [&mut style.visuals.widgets.noninteractive, &mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered, &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] { w.rounding = Rounding::same(3.0); }
+    style.visuals.window_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(40) };
+    style.visuals.popup_shadow = egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(30) };
+    for w in [&mut style.visuals.widgets.noninteractive, &mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered, &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] { w.corner_radius = CornerRadius::same(3); }
     style.visuals.selection.bg_fill = Color32::from_rgb(153, 200, 245);
     style.visuals.selection.stroke = Stroke::new(1.0_f32, TEXT);
     style.visuals.widgets.noninteractive.bg_fill = BG;
@@ -104,7 +104,7 @@ pub fn install(ctx: &egui::Context, fixed_scale: bool) {
     style.visuals.widgets.open.bg_fill = BG_PALE;
     style.spacing.item_spacing = Vec2::new(6.0, 4.0);
     style.spacing.button_padding = Vec2::new(10.0, 3.0);
-    style.spacing.window_margin = egui::Margin::same(10.0);
+    style.spacing.window_margin = egui::Margin::same(10);
     style.interaction.selectable_labels = false;
     style.spacing.interact_size.y = 22.0;
     style.text_styles.insert(
@@ -127,7 +127,7 @@ pub fn install(ctx: &egui::Context, fixed_scale: bool) {
         egui::TextStyle::Monospace,
         FontId::new(11.5, FontFamily::Monospace),
     );
-    ctx.set_style(style);
+    ctx.set_global_style(style);
     if fixed_scale {
         ctx.set_pixels_per_point(1.0);
     }
@@ -231,15 +231,15 @@ pub fn tool_button(ui: &mut Ui, caption: &str, icon: Icon, active: bool) -> Resp
     );
     let painter = ui.painter();
     if resp.hovered() {
-        painter.rect_filled(rect.shrink(1.0), Rounding::same(3.0), BG_HOVER);
+        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_HOVER);
         painter.rect_stroke(
             rect.shrink(1.0),
-            Rounding::same(3.0),
+            CornerRadius::same(3),
             Stroke::new(1.0_f32, Color32::from_rgb(220, 235, 252)),
-        );
+        egui::StrokeKind::Inside);
     }
     if active {
-        painter.rect_filled(rect.shrink(1.0), Rounding::same(3.0), BG_ACTIVE);
+        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_ACTIVE);
         painter.line_segment(
             [
                 Pos2::new(rect.left() + 6.0, rect.bottom() - 2.0),
@@ -270,15 +270,15 @@ pub fn small_button(ui: &mut Ui, icon: Icon, active: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 24.0), Sense::click());
     let painter = ui.painter();
     if resp.hovered() {
-        painter.rect_filled(rect.shrink(1.0), Rounding::same(3.0), BG_HOVER);
+        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_HOVER);
         painter.rect_stroke(
             rect.shrink(1.0),
-            Rounding::same(3.0),
+            CornerRadius::same(3),
             Stroke::new(1.0_f32, BORDER_LIGHT),
-        );
+        egui::StrokeKind::Inside);
     }
     if active {
-        painter.rect_filled(rect.shrink(1.0), Rounding::same(3.0), BG_ACTIVE);
+        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_ACTIVE);
     }
     paint_icon(
         painter,
@@ -298,7 +298,7 @@ pub fn tab_button(ui: &mut Ui, caption: &str, icon: Icon, selected: bool, width:
     } else {
         BG
     };
-    painter.rect_filled(rect, Rounding::ZERO, fill);
+    painter.rect_filled(rect, CornerRadius::ZERO, fill);
     if selected {
         painter.line_segment(
             [
@@ -370,12 +370,12 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
             let h = s * 0.48;
             painter.rect_filled(
                 Rect::from_center_size(Pos2::new(c.x - s * 0.16, c.y), Vec2::new(w, h)),
-                Rounding::same(1.0),
+                CornerRadius::same(1),
                 color,
             );
             painter.rect_filled(
                 Rect::from_center_size(Pos2::new(c.x + s * 0.16, c.y), Vec2::new(w, h)),
-                Rounding::same(1.0),
+                CornerRadius::same(1),
                 color,
             );
         }
@@ -404,7 +404,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         }
         Icon::Nzb | Icon::Page | Icon::Notes | Icon::Export | Icon::File => {
             let r = Rect::from_center_size(c, Vec2::new(s * 0.56, s * 0.68));
-            painter.rect_stroke(r, Rounding::same(1.0), stroke);
+            painter.rect_stroke(r, CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
             let fold = s * 0.18;
             painter.add(egui::Shape::convex_polygon(
                 vec![
@@ -453,7 +453,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         Icon::Download | Icon::Tray => {
             let r =
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.10), Vec2::new(s * 0.60, s * 0.34));
-            painter.rect_stroke(r, Rounding::same(1.5), stroke);
+            painter.rect_stroke(r, CornerRadius::same(1), stroke, egui::StrokeKind::Inside);
             painter.line_segment(
                 [
                     Pos2::new(c.x, c.y - s * 0.34),
@@ -534,9 +534,9 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                     Pos2::new(c.x - s * 0.24, c.y + s * 0.00),
                     Pos2::new(c.x + s * 0.24, c.y + s * 0.28),
                 ),
-                Rounding::same(1.0),
+                CornerRadius::same(1),
                 stroke,
-            );
+            egui::StrokeKind::Inside);
         }
         Icon::Version => {
             painter.text(
@@ -664,7 +664,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         }
         Icon::Collapse | Icon::Expand => {
             let r = Rect::from_center_size(c, Vec2::new(s * 0.46, s * 0.46));
-            painter.rect_stroke(r, Rounding::same(1.0), thin);
+            painter.rect_stroke(r, CornerRadius::same(1), thin, egui::StrokeKind::Inside);
             painter.line_segment(
                 [
                     Pos2::new(c.x - s * 0.14, c.y),
@@ -685,7 +685,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         Icon::Unrar | Icon::NoUnrar => {
             let r =
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.08), Vec2::new(s * 0.50, s * 0.34));
-            painter.rect_stroke(r, Rounding::same(1.0), thin);
+            painter.rect_stroke(r, CornerRadius::same(1), thin, egui::StrokeKind::Inside);
             painter.line_segment(
                 [
                     Pos2::new(c.x, c.y - s * 0.02),
@@ -732,18 +732,18 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         Icon::Folder => {
             let r =
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.05), Vec2::new(s * 0.60, s * 0.40));
-            painter.rect_filled(r, Rounding::same(1.5), YELLOW);
+            painter.rect_filled(r, CornerRadius::same(1), YELLOW);
             painter.rect_stroke(
                 r,
-                Rounding::same(1.5),
+                CornerRadius::same(1),
                 Stroke::new(1.0_f32, Color32::from_rgb(180, 140, 30)),
-            );
+            egui::StrokeKind::Inside);
             painter.rect_filled(
                 Rect::from_min_max(
                     Pos2::new(r.left() + s * 0.03, r.top() - s * 0.10),
                     Pos2::new(r.left() + s * 0.28, r.top() + s * 0.02),
                 ),
-                Rounding::same(1.5),
+                CornerRadius::same(1),
                 YELLOW,
             );
         }
@@ -799,9 +799,9 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         Icon::Trash => {
             painter.rect_stroke(
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.10), Vec2::new(s * 0.38, s * 0.44)),
-                Rounding::same(1.0),
+                CornerRadius::same(1),
                 stroke,
-            );
+            egui::StrokeKind::Inside);
             painter.line_segment(
                 [
                     Pos2::new(c.x - s * 0.28, c.y - s * 0.14),
@@ -879,7 +879,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.08), Vec2::new(s * 0.54, s * 0.40)),
                 1.0,
                 stroke,
-            );
+            egui::StrokeKind::Inside);
             painter.line_segment(
                 [
                     Pos2::new(c.x + s * 0.06, c.y - s * 0.30),
@@ -955,7 +955,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
                 Rect::from_center_size(c + Vec2::new(0.0, s * 0.10), Vec2::new(s * 0.40, s * 0.32)),
                 1.0,
                 stroke,
-            );
+            egui::StrokeKind::Inside);
             draw_arc(
                 painter,
                 Pos2::new(c.x, c.y - s * 0.04),
@@ -1010,7 +1010,7 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
     let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
     let p = ui.painter();
     let rect = rect.shrink2(Vec2::new(0.0, 1.0));
-    p.rect_filled(rect, Rounding::same(3.0), Color32::from_rgb(238, 242, 248));
+    p.rect_filled(rect, CornerRadius::same(3), Color32::from_rgb(238, 242, 248));
     let fill = if complete {
         Color32::from_rgb(200, 212, 226)
     } else {
@@ -1019,13 +1019,13 @@ pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
     let mut inner = rect;
     inner.set_width((inner.width() * fraction.clamp(0.0, 1.0)).max(0.0));
     if inner.width() > 0.5 {
-        p.rect_filled(inner, Rounding::same(3.0), fill);
+        p.rect_filled(inner, CornerRadius::same(3), fill);
     }
     p.rect_stroke(
         rect,
-        Rounding::same(3.0),
+        CornerRadius::same(3),
         Stroke::new(1.0_f32, Color32::from_rgb(186, 198, 214)),
-    );
+    egui::StrokeKind::Inside);
     p.text(
         rect.center(),
         Align2::CENTER_CENTER,

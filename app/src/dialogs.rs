@@ -656,7 +656,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
                 ui.painter().rect_filled(rect.shrink(0.5), 0.0, fill);
                 if *day == current_day.as_str() && slot == current_slot {
                     ui.painter()
-                        .rect_stroke(rect, 0.0, Stroke::new(1.5_f32, theme::ACCENT));
+                        .rect_stroke(rect, 0.0, Stroke::new(1.5_f32, theme::ACCENT), egui::StrokeKind::Inside);
                 }
                 if resp.clicked() {
                     click = Some((d, slot));
@@ -1220,7 +1220,7 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
     );
     let p = ui.painter();
     p.rect_filled(rect, 0.0, Color32::from_rgb(250, 252, 255));
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT));
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT), egui::StrokeKind::Inside);
     let max = values.iter().take(count).cloned().fold(1.0f64, f64::max);
     let left = rect.left() + 40.0;
     let bottom = rect.bottom() - 24.0;
@@ -1266,7 +1266,7 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
     );
     let p = ui.painter();
     p.rect_filled(rect, 0.0, Color32::from_rgb(250, 252, 255));
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT));
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT), egui::StrokeKind::Inside);
     let inner = rect.shrink(20.0);
     for k in 0..=4 {
         let y = inner.top() + inner.height() * k as f32 / 4.0;
@@ -1331,7 +1331,7 @@ fn about_window(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(64.0, 64.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, egui::Rounding::same(10.0), theme::BG);
+                ui.painter().rect_filled(rect, egui::CornerRadius::same(10), theme::BG);
                 theme::paint_icon(ui.painter(), rect.shrink(10.0), Icon::Connect, theme::ACCENT);
                 ui.add_space(6.0);
                 ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::TEXT_GROUP));

@@ -14,33 +14,33 @@ enum QueueRowRef {
     File(usize, usize),
 }
 
-pub fn draw(app: &mut App, ctx: &egui::Context) {
+pub fn draw(app: &mut App, ctx: &mut Ui) {
     normalize_tab(app);
 
-    egui::TopBottomPanel::top("main_toolbar")
-        .exact_height(TOOLBAR_HEIGHT)
-        .frame(egui::Frame::none().fill(theme::BG))
+    egui::Panel::top("main_toolbar")
+        .exact_size(TOOLBAR_HEIGHT)
+        .frame(egui::Frame::NONE.fill(theme::BG))
         .show(ctx, |ui| toolbar(app, ui));
 
-    egui::TopBottomPanel::top("main_tabs")
-        .exact_height(TAB_BAR_HEIGHT + 1.0)
-        .frame(egui::Frame::none().fill(theme::BG))
+    egui::Panel::top("main_tabs")
+        .exact_size(TAB_BAR_HEIGHT + 1.0)
+        .frame(egui::Frame::NONE.fill(theme::BG))
         .show(ctx, |ui| tabs(app, ui));
 
-    egui::TopBottomPanel::bottom("status_bar")
-        .exact_height(STATUS_BAR_HEIGHT)
-        .frame(egui::Frame::none().fill(theme::BG))
+    egui::Panel::bottom("status_bar")
+        .exact_size(STATUS_BAR_HEIGHT)
+        .frame(egui::Frame::NONE.fill(theme::BG))
         .show(ctx, |ui| status_bar(app, ui));
 
     if app.show_threads {
         let mut height = app.thread_height.clamp(80.0, 520.0);
-        let panel = egui::TopBottomPanel::bottom("threads_panel")
+        let panel = egui::Panel::bottom("threads_panel")
             .resizable(true)
-            .min_height(70.0)
-            .max_height(520.0)
-            .default_height(height)
+            .min_size(70.0)
+            .max_size(520.0)
+            .default_size(height)
             .frame(
-                egui::Frame::none()
+                egui::Frame::NONE
                     .fill(theme::PANEL_WHITE)
                     .stroke(Stroke::new(1.0_f32, theme::BORDER)),
             );
@@ -55,7 +55,7 @@ pub fn draw(app: &mut App, ctx: &egui::Context) {
     }
 
     egui::CentralPanel::default()
-        .frame(egui::Frame::none().fill(theme::PANEL_WHITE))
+        .frame(egui::Frame::NONE.fill(theme::PANEL_WHITE))
         .show(ctx, |ui| match app.active_tab {
             0 => queue_tab(app, ui),
             1 => par2_tab(app, ui),
@@ -234,10 +234,10 @@ fn tabs(app: &mut App, ui: &mut Ui) {
 }
 
 fn queue_tab(app: &mut App, ui: &mut Ui) {
-    let bar = egui::TopBottomPanel::top("dq_toolbar")
-        .exact_height(DQ_TOOLBAR_HEIGHT)
-        .frame(egui::Frame::none().fill(theme::BG_PALE))
-        .show_inside(ui, |ui| {
+    let bar = egui::Panel::top("dq_toolbar")
+        .exact_size(DQ_TOOLBAR_HEIGHT)
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                 Stroke::new(1.0_f32, theme::BORDER_LIGHT),
@@ -696,7 +696,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                 file: Some(fi),
                             },
                         }));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Pause").clicked() {
                         action = Some(UiAction::PauseSelected(true));
@@ -710,77 +710,77 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                 file: Some(fi),
                             },
                         }));
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     ui.menu_button("Move", |ui| {
                         if ui.button("Move to top").clicked() {
                             action = Some(UiAction::Move(MoveDir::Top));
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui.button("Move up").clicked() {
                             action = Some(UiAction::Move(MoveDir::Up));
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui.button("Move down").clicked() {
                             action = Some(UiAction::Move(MoveDir::Down));
-                            ui.close_menu();
+                            ui.close();
                         }
                         if ui.button("Move to bottom").clicked() {
                             action = Some(UiAction::Move(MoveDir::Bottom));
-                            ui.close_menu();
+                            ui.close();
                         }
                     });
                     if ui.button("Collapse all").clicked() {
                         action = Some(UiAction::CollapseAll);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Expand all").clicked() {
                         action = Some(UiAction::ExpandAll);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("Rename collection").clicked() {
                         action = Some(UiAction::Rename);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Export to NZB").clicked() {
                         action = Some(UiAction::Export);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Change download folder").clicked() {
                         action = Some(UiAction::ChangeFolder);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Open").clicked() {
                         action = Some(UiAction::OpenFolder);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("Unrar").clicked() {
                         action = Some(UiAction::ToggleUnrar(true));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Do not Unrar").clicked() {
                         action = Some(UiAction::ToggleUnrar(false));
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Unpack now").clicked() {
                         action = Some(UiAction::UnpackNow);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Change unrar folder").clicked() {
                         action = Some(UiAction::ChangeUnrarFolder);
-                        ui.close_menu();
+                        ui.close();
                     }
                     if ui.button("Change execute command").clicked() {
                         action = Some(UiAction::SetExecute);
-                        ui.close_menu();
+                        ui.close();
                     }
                     ui.separator();
                     if ui.button("Delete").clicked() {
                         action = Some(UiAction::DeleteSelected);
-                        ui.close_menu();
+                        ui.close();
                     }
                 });
             });
@@ -865,10 +865,10 @@ fn build_rows(app: &App) -> Vec<QueueRowRef> {
 }
 
 fn par2_tab(app: &mut App, ui: &mut Ui) {
-    egui::TopBottomPanel::top("par2_toolbar")
-        .exact_height(30.0)
-        .frame(egui::Frame::none().fill(theme::BG_PALE))
-        .show_inside(ui, |ui| {
+    egui::Panel::top("par2_toolbar")
+        .exact_size(30.0)
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                 Stroke::new(1.0_f32, theme::BORDER_LIGHT),
@@ -1113,10 +1113,10 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
 }
 
 fn log_tab(app: &mut App, ui: &mut Ui) {
-    egui::TopBottomPanel::top("log_toolbar")
-        .exact_height(30.0)
-        .frame(egui::Frame::none().fill(theme::BG_PALE))
-        .show_inside(ui, |ui| {
+    egui::Panel::top("log_toolbar")
+        .exact_size(30.0)
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                 Stroke::new(1.0_f32, theme::BORDER_LIGHT),
@@ -1139,7 +1139,7 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                         .map(|e| format!("[{}] [{}] {}", e.time, e.level, e.message))
                         .collect::<Vec<_>>()
                         .join("\n");
-                    ui.output_mut(|o| o.copied_text = text);
+                    ui.ctx().copy_text(text);
                     app.toast("Log copied");
                 }
                 ui.add_space(8.0);
@@ -1194,10 +1194,10 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
 }
 
 fn rss_tab(app: &mut App, ui: &mut Ui) {
-    egui::TopBottomPanel::top("rss_toolbar")
-        .exact_height(30.0)
-        .frame(egui::Frame::none().fill(theme::BG_PALE))
-        .show_inside(ui, |ui| {
+    egui::Panel::top("rss_toolbar")
+        .exact_size(30.0)
+        .frame(egui::Frame::NONE.fill(theme::BG_PALE))
+        .show(ui, |ui| {
             ui.painter().line_segment(
                 [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                 Stroke::new(1.0_f32, theme::BORDER_LIGHT),
@@ -1533,7 +1533,7 @@ fn draw_speed_graph(ui: &Ui, rect: egui::Rect, app: &App) {
         rect,
         0.0,
         Stroke::new(1.0_f32, Color32::from_rgb(170, 190, 170)),
-    );
+    egui::StrokeKind::Inside);
     let max = (app.speed_ceiling_mbps * BPS_PER_MBPS).max(1.0);
     let n = app.speed_history.len();
     if n < 2 {
