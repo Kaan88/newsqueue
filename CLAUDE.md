@@ -41,6 +41,7 @@ runs both (`default-members`).
 | Path | Purpose |
 |---|---|
 | `app/src/main.rs` | `App` state, CLI entry, `App::tick()`, eframe `update`, timers, scheduler, worker start/finish, logging, autosave |
+| `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
 | `app/src/ui.rs` | Main window, tabs, queue table, status bar, PAR2/RSS/Log tabs, queue actions |
 | `app/src/dialogs.rs` | 15 setup pages, server editor, stats/columns, password prompt, shutdown, version/update and other modal windows |
@@ -97,6 +98,15 @@ directory. This is why the installed app keeps its settings beside the exe.
 ## 4. Main architecture and data flow
 
 ### Application loop
+
+The engine lives in `newsqueue-core` (`engine.rs`). The desktop `App` holds
+`engine: Engine` and implements `Deref`/`DerefMut` to it, so UI code can keep
+using `app.queue`, `app.log(...)` etc. `App::tick` calls `Engine::tick`, then
+turns engine `Event`s (toast, message box, tray balloon, unrar password,
+RSS feeds needed) into UI state, then runs the desktop-only parts: tray,
+updater and shutdown countdown. Engine code must not touch UI state: queue an
+`Event` instead. When two borrows of `app` conflict through `Deref`, borrow
+`app.engine.<field>` directly.
 
 `App::new` loads settings, queue, history and stats, creates the eframe state and
 starts optional startup behaviour. `App::update` runs every frame:

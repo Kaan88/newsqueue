@@ -37,6 +37,13 @@ Windows-specific (`tray.rs`, `shutdown.rs`, `update.rs`, the installer,
 
 ## Phase 0: engine split (required for both)
 
+**Status 2026-11-18:** done: the `core` crate; `Engine` with the engine state,
+methods and `tick`; `Event`s instead of UI flag writes; tool lookup on PATH
+(`par2`/`unrar` on Linux); core builds and passes its tests on Debian 13.
+The desktop `App` wraps the engine via `Deref`. Still open, needed for the
+web server: a `Command` enum, a shareable `Snapshot`, and running the engine
+on its own thread (steps 3–5).
+
 Today `App` in `main.rs` holds settings, queue, workers, timers, logs, stats
 and dozens of `show_*` dialog flags, and `App::tick` drives everything between
 frames.

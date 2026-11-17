@@ -8,7 +8,8 @@ not a source-code or artwork copy.
 
 Self-update confirmed working by the user (1.0.2 → 1.0.3). Engine split
 started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
-`Engine`/`Command`/`Snapshot` from GUI_PLAN Phase 0 are not done yet. Core
+`Engine` (with `Event`s) is in core and the desktop app runs on it;
+`Command`/`Snapshot`/engine thread from GUI_PLAN Phase 0 are not done yet. Core
 builds and passes all 40 tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
