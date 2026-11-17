@@ -5,6 +5,7 @@ pub use newsqueue_core::command::MoveDir;
 use newsqueue_core::engine::*;
 use newsqueue_core::host::{EngineHost, TICK_INTERVAL};
 use newsqueue_core::{download, model, par2, rss, unrar};
+mod skin;
 mod dialogs;
 mod shutdown;
 mod theme;
@@ -996,9 +997,10 @@ impl Drop for App {
 }
 
 impl eframe::App for App {
-    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
-        let ctx = &root.ctx().clone();
-        // The engine thread ticks it between frames; this frame uses it directly.
+    /// Runs before every frame and also while the window is minimized or
+    /// hidden (eframe 0.37 calls only this then), so tray hiding, the engine
+    /// events and the shutdown countdown keep working without a frame.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.engine.checkout();
         self.frame += 1;
         self.handle_tray(ctx);
@@ -1007,11 +1009,6 @@ impl eframe::App for App {
             self.shutdown_exit_sent = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        self.handle_keys(ctx);
-        ui::draw(self, root);
-        dialogs::draw(self, ctx);
-        self.handle_screenshot(ctx);
-
         if self.screenshot_path.is_some() {
             ctx.request_repaint();
         } else if self.connected && !self.paused {
@@ -1019,6 +1016,18 @@ impl eframe::App for App {
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+        self.engine.checkin();
+    }
+
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &root.ctx().clone();
+        // The engine thread ticks it between frames; this frame uses it directly.
+        self.engine.checkout();
+        self.handle_keys(ctx);
+        ui::draw(self, root);
+        dialogs::draw(self, ctx);
+        skin::flush(ctx);
+        self.handle_screenshot(ctx);
         self.engine.checkin();
     }
 }

@@ -1,170 +1,58 @@
-use crate::model::{TOOLBAR_BUTTON_HEIGHT, TOOLBAR_BUTTON_WIDTH};
+﻿use crate::model::{TOOLBAR_BUTTON_HEIGHT, TOOLBAR_BUTTON_WIDTH};
 use eframe::egui::{
-    self, Align2, Color32, FontFamily, FontId, Pos2, Rect, Response, CornerRadius, Sense, Stroke, Ui,
+    self, Align2, Color32, FontId, Pos2, Rect, Response, CornerRadius, Sense, Stroke, Ui,
     Vec2,
 };
-pub const BG: Color32 = Color32::from_rgb(214, 226, 242);
-pub const BG_LIGHT: Color32 = Color32::from_rgb(230, 238, 248);
-pub const BG_PALE: Color32 = Color32::from_rgb(242, 246, 252);
-pub const BG_HOVER: Color32 = Color32::from_rgb(220, 234, 252);
-pub const BG_ACTIVE: Color32 = Color32::from_rgb(196, 222, 250);
-pub const PANEL_WHITE: Color32 = Color32::from_rgb(255, 255, 255);
-pub const ROW_ALT: Color32 = Color32::from_rgb(247, 250, 255);
+pub const BG: Color32 = Color32::from_rgb(0x22, 0x22, 0x25);
+pub const BG_LIGHT: Color32 = Color32::from_rgb(0x2b, 0x2b, 0x2f);
+pub const BG_PALE: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1c);
+pub const BG_HOVER: Color32 = Color32::from_rgb(0x2c, 0x2c, 0x30);
+pub const BG_ACTIVE: Color32 = Color32::from_rgb(0x34, 0x34, 0x3a);
+/// The ground of lists and tables (recessed, darker than panels).
+pub const PANEL_WHITE: Color32 = Color32::from_rgb(0x1a, 0x1a, 0x1c);
+pub const ROW_ALT: Color32 = Color32::from_rgb(0x1e, 0x1e, 0x21);
 #[allow(dead_code)]
-pub const ROW_GROUP: Color32 = Color32::from_rgb(239, 245, 252);
+pub const ROW_GROUP: Color32 = Color32::from_rgb(0x1f, 0x1f, 0x22);
 #[allow(dead_code)]
-pub const ROW_SELECT: Color32 = Color32::from_rgb(204, 228, 255);
-pub const TEXT: Color32 = Color32::from_rgb(26, 30, 38);
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(90, 100, 115);
-pub const TEXT_GROUP: Color32 = Color32::from_rgb(0, 0, 102);
-pub const ACCENT: Color32 = Color32::from_rgb(0, 103, 192);
-pub const BORDER: Color32 = Color32::from_rgb(170, 188, 212);
-pub const BORDER_LIGHT: Color32 = Color32::from_rgb(214, 224, 238);
-pub const GREEN: Color32 = Color32::from_rgb(92, 190, 92);
-pub const GREEN_DARK: Color32 = Color32::from_rgb(52, 135, 62);
-pub const ORANGE: Color32 = Color32::from_rgb(214, 138, 45);
-pub const RED: Color32 = Color32::from_rgb(196, 64, 64);
-pub const BLUE: Color32 = Color32::from_rgb(54, 118, 190);
-pub const YELLOW: Color32 = Color32::from_rgb(240, 196, 64);
-/// Segoe UI from the Windows font folder, falling back to egui's built-in
-/// font when it is missing. Adds a `semibold` family for headings.
-fn install_fonts(ctx: &egui::Context) {
-    let mut fonts = egui::FontDefinitions::default();
-    let dir = std::env::var("WINDIR").unwrap_or_else(|_| r"C:\Windows".into());
-    let load = |file: &str| std::fs::read(std::path::Path::new(&dir).join("Fonts").join(file)).ok();
-    let mut add = |name: &str, file: &str| -> bool {
-        match load(file) {
-            Some(bytes) => {
-                fonts
-                    .font_data
-                    .insert(name.into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
-                true
-            }
-            None => false,
-        }
-    };
-    let regular = add("segoe", "segoeui.ttf");
-    let semibold = add("segoe-semibold", "seguisb.ttf");
-    let mono = add("consolas", "consola.ttf");
-    let prop = fonts.families.entry(FontFamily::Proportional).or_default();
-    if regular {
-        prop.insert(0, "segoe".into());
-    }
-    let fallback = prop.clone();
-    let mut bold = fallback.clone();
-    if semibold {
-        bold.insert(0, "segoe-semibold".into());
-    }
-    fonts.families.insert(FontFamily::Name("semibold".into()), bold);
-    if mono {
-        fonts
-            .families
-            .entry(FontFamily::Monospace)
-            .or_default()
-            .insert(0, "consolas".into());
-    }
-    ctx.set_fonts(fonts);
-}
-
+pub const ROW_SELECT: Color32 = Color32::from_rgb(0x1d, 0x45, 0x4c);
+pub const TEXT: Color32 = Color32::from_rgb(0xe5, 0xe5, 0xe7);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(0xa8, 0xa8, 0xaf);
+pub const TEXT_GROUP: Color32 = Color32::from_rgb(0x9a, 0xdf, 0xe8);
+pub const ACCENT: Color32 = Color32::from_rgb(0x60, 0xca, 0xd8);
+pub const BORDER: Color32 = Color32::from_rgb(0x0c, 0x0c, 0x0d);
+pub const BORDER_LIGHT: Color32 = Color32::from_rgb(0x38, 0x38, 0x3d);
+pub const GREEN: Color32 = Color32::from_rgb(0x6c, 0xc4, 0x6c);
+pub const GREEN_DARK: Color32 = Color32::from_rgb(0x4c, 0xa0, 0x58);
+pub const ORANGE: Color32 = Color32::from_rgb(0xe0, 0x9a, 0x48);
+pub const RED: Color32 = Color32::from_rgb(0xe0, 0x60, 0x60);
+pub const BLUE: Color32 = Color32::from_rgb(0x6a, 0xa8, 0xe8);
+pub const YELLOW: Color32 = Color32::from_rgb(0xf0, 0xc8, 0x50);
 pub fn semibold(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("semibold".into()))
+    crate::skin::semibold(size)
 }
 
+/// The Instrument skin (`skin.rs`): IBM Plex over egui's fonts, dark visuals.
 /// `fixed_scale` pins one pixel per point (deterministic screenshots);
 /// otherwise the monitor's DPI scale is used.
 pub fn install(ctx: &egui::Context, fixed_scale: bool) {
-    install_fonts(ctx);
+    let mut fonts = egui::FontDefinitions::default();
+    crate::skin::fonts(&mut fonts);
+    ctx.set_fonts(fonts);
     let mut style = (*ctx.global_style()).clone();
-    style.visuals = egui::Visuals::light();
-    style.visuals.panel_fill = BG;
-    style.visuals.window_fill = BG_LIGHT;
-    style.visuals.extreme_bg_color = PANEL_WHITE;
-    style.visuals.faint_bg_color = ROW_ALT;
+    style.visuals = egui::Visuals::dark();
+    crate::skin::style(&mut style);
     style.visuals.override_text_color = Some(TEXT);
-    style.visuals.window_corner_radius = CornerRadius::same(6);
-    style.visuals.menu_corner_radius = CornerRadius::same(4);
-    style.visuals.window_stroke = Stroke::new(1.0_f32, BORDER);
-    style.visuals.window_shadow = egui::epaint::Shadow { offset: [0, 4], blur: 16, spread: 0, color: Color32::from_black_alpha(40) };
-    style.visuals.popup_shadow = egui::epaint::Shadow { offset: [0, 2], blur: 8, spread: 0, color: Color32::from_black_alpha(30) };
-    for w in [&mut style.visuals.widgets.noninteractive, &mut style.visuals.widgets.inactive, &mut style.visuals.widgets.hovered, &mut style.visuals.widgets.active, &mut style.visuals.widgets.open] { w.corner_radius = CornerRadius::same(3); }
-    style.visuals.selection.bg_fill = Color32::from_rgb(153, 200, 245);
-    style.visuals.selection.stroke = Stroke::new(1.0_f32, TEXT);
-    style.visuals.widgets.noninteractive.bg_fill = BG;
-    style.visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0_f32, BORDER_LIGHT);
-    style.visuals.widgets.inactive.bg_fill = BG_LIGHT;
-    style.visuals.widgets.inactive.weak_bg_fill = BG_LIGHT;
-    style.visuals.widgets.inactive.bg_stroke = Stroke::new(1.0_f32, BORDER);
-    style.visuals.widgets.inactive.fg_stroke = Stroke::new(1.0_f32, TEXT);
-    style.visuals.widgets.hovered.bg_fill = BG_HOVER;
-    style.visuals.widgets.hovered.weak_bg_fill = BG_HOVER;
-    style.visuals.widgets.hovered.bg_stroke = Stroke::new(1.0_f32, ACCENT);
-    style.visuals.widgets.active.bg_fill = BG_ACTIVE;
-    style.visuals.widgets.active.weak_bg_fill = BG_ACTIVE;
-    style.visuals.widgets.active.bg_stroke = Stroke::new(1.0_f32, ACCENT);
-    style.visuals.widgets.open.bg_fill = BG_PALE;
-    style.spacing.item_spacing = Vec2::new(6.0, 4.0);
-    style.spacing.button_padding = Vec2::new(10.0, 3.0);
-    style.spacing.window_margin = egui::Margin::same(10);
     style.interaction.selectable_labels = false;
-    style.spacing.interact_size.y = 22.0;
-    style.text_styles.insert(
-        egui::TextStyle::Body,
-        FontId::new(12.0, FontFamily::Proportional),
-    );
-    style.text_styles.insert(
-        egui::TextStyle::Button,
-        FontId::new(12.0, FontFamily::Proportional),
-    );
-    style.text_styles.insert(
-        egui::TextStyle::Small,
-        FontId::new(10.5, FontFamily::Proportional),
-    );
-    style.text_styles.insert(
-        egui::TextStyle::Heading,
-        semibold(15.0),
-    );
-    style.text_styles.insert(
-        egui::TextStyle::Monospace,
-        FontId::new(11.5, FontFamily::Monospace),
-    );
+    style.spacing.window_margin = egui::Margin::same(12);
     ctx.set_global_style(style);
     if fixed_scale {
         ctx.set_pixels_per_point(1.0);
     }
 }
 pub fn paint_toolbar_gradient(ui: &Ui, rect: Rect) {
-    let p = ui.painter();
-    let top = Color32::from_rgb(246, 249, 254);
-    let mid = Color32::from_rgb(232, 240, 250);
-    let bottom = BG;
-    let steps = 18;
-    for i in 0..steps {
-        let t = i as f32 / (steps - 1) as f32;
-        let color = if t < 0.5 {
-            lerp_color(top, mid, t * 2.0)
-        } else {
-            lerp_color(mid, bottom, (t - 0.5) * 2.0)
-        };
-        let y0 = rect.top() + rect.height() * i as f32 / steps as f32;
-        let y1 = rect.top() + rect.height() * (i + 1) as f32 / steps as f32;
-        p.rect_filled(
-            Rect::from_min_max(Pos2::new(rect.left(), y0), Pos2::new(rect.right(), y1)),
-            0.0,
-            color,
-        );
-    }
-    p.line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(1.0_f32, BORDER),
-    );
-    p.line_segment(
-        [
-            rect.left_top() + Vec2::new(0.0, 1.0),
-            rect.right_top() + Vec2::new(0.0, 1.0),
-        ],
-        Stroke::new(1.0_f32, Color32::WHITE),
-    );
+    crate::skin::top_bar_ground(ui.painter(), rect);
 }
+#[allow(dead_code)]
 fn lerp_color(a: Color32, b: Color32, t: f32) -> Color32 {
     let t = t.clamp(0.0, 1.0);
     Color32::from_rgb(
@@ -229,110 +117,49 @@ pub fn tool_button(ui: &mut Ui, caption: &str, icon: Icon, active: bool) -> Resp
         Vec2::new(TOOLBAR_BUTTON_WIDTH, TOOLBAR_BUTTON_HEIGHT),
         Sense::click(),
     );
+    let dy = crate::skin::button_chrome(ui, rect.shrink(2.0), &resp, true, active);
+    let color = if active { ACCENT } else { TEXT };
     let painter = ui.painter();
-    if resp.hovered() {
-        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_HOVER);
-        painter.rect_stroke(
-            rect.shrink(1.0),
-            CornerRadius::same(3),
-            Stroke::new(1.0_f32, Color32::from_rgb(220, 235, 252)),
-        egui::StrokeKind::Inside);
-    }
-    if active {
-        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_ACTIVE);
-        painter.line_segment(
-            [
-                Pos2::new(rect.left() + 6.0, rect.bottom() - 2.0),
-                Pos2::new(rect.right() - 6.0, rect.bottom() - 2.0),
-            ],
-            Stroke::new(2.0_f32, ACCENT),
-        );
-    }
     let icon_rect = Rect::from_center_size(
-        Pos2::new(rect.center().x, rect.top() + 18.0),
-        Vec2::new(24.0, 24.0),
+        Pos2::new(rect.center().x, rect.top() + 18.0 + dy),
+        Vec2::new(22.0, 22.0),
     );
-    paint_icon(painter, icon_rect, icon, TEXT);
-    let caption_rect = Rect::from_min_max(
-        Pos2::new(rect.left() + 1.0, rect.top() + 33.0),
-        Pos2::new(rect.right() - 1.0, rect.bottom() - 2.0),
-    );
+    paint_icon(painter, icon_rect, icon, color);
     painter.text(
-        caption_rect.center(),
+        Pos2::new(rect.center().x, rect.top() + 41.0 + dy),
         Align2::CENTER_CENTER,
         caption,
-        FontId::proportional(11.0),
-        TEXT,
+        crate::skin::sans(12.0),
+        if active { ACCENT } else { crate::skin::DIM },
     );
     resp
 }
 pub fn small_button(ui: &mut Ui, icon: Icon, active: bool) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(26.0, 24.0), Sense::click());
-    let painter = ui.painter();
-    if resp.hovered() {
-        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_HOVER);
-        painter.rect_stroke(
-            rect.shrink(1.0),
-            CornerRadius::same(3),
-            Stroke::new(1.0_f32, BORDER_LIGHT),
-        egui::StrokeKind::Inside);
-    }
-    if active {
-        painter.rect_filled(rect.shrink(1.0), CornerRadius::same(3), BG_ACTIVE);
-    }
+    let dy = crate::skin::button_chrome(ui, rect, &resp, true, active);
     paint_icon(
-        painter,
-        Rect::from_center_size(rect.center(), Vec2::new(16.0, 16.0)),
+        ui.painter(),
+        Rect::from_center_size(rect.center() + Vec2::new(0.0, dy), Vec2::new(15.0, 15.0)),
         icon,
-        TEXT,
+        if active { ACCENT } else { TEXT },
     );
     resp
 }
 pub fn tab_button(ui: &mut Ui, caption: &str, icon: Icon, selected: bool, width: f32) -> Response {
     let (rect, resp) = ui.allocate_exact_size(Vec2::new(width, 26.0), Sense::click());
+    let (dy, color) = crate::skin::tab_chrome(ui, rect, &resp, selected, true);
     let painter = ui.painter();
-    let fill = if selected {
-        Color32::from_rgb(232, 240, 250)
-    } else if resp.hovered() {
-        BG_HOVER
-    } else {
-        BG
-    };
-    painter.rect_filled(rect, CornerRadius::ZERO, fill);
-    if selected {
-        painter.line_segment(
-            [
-                Pos2::new(rect.left() + 2.0, rect.top() + 1.0),
-                Pos2::new(rect.right() - 2.0, rect.top() + 1.0),
-            ],
-            Stroke::new(2.0_f32, Color32::from_rgb(245, 250, 255)),
-        );
-        painter.line_segment(
-            [
-                Pos2::new(rect.left(), rect.top()),
-                Pos2::new(rect.left(), rect.bottom() - 1.0),
-            ],
-            Stroke::new(1.0_f32, BORDER_LIGHT),
-        );
-        painter.line_segment(
-            [
-                Pos2::new(rect.right(), rect.top()),
-                Pos2::new(rect.right(), rect.bottom() - 1.0),
-            ],
-            Stroke::new(1.0_f32, BORDER_LIGHT),
-        );
-    }
     let icon_rect = Rect::from_center_size(
-        Pos2::new(rect.left() + 15.0, rect.center().y),
-        Vec2::new(15.0, 15.0),
+        Pos2::new(rect.left() + 15.0, rect.center().y + dy),
+        Vec2::new(14.0, 14.0),
     );
-    paint_icon(painter, icon_rect, icon, TEXT);
+    paint_icon(painter, icon_rect, icon, color);
     painter.text(
-        Pos2::new(rect.left() + 27.0, rect.center().y),
+        Pos2::new(rect.left() + 27.0, rect.center().y + dy),
         Align2::LEFT_CENTER,
         caption,
-        if selected { semibold(12.0) } else { FontId::proportional(12.0) },
-        TEXT,
+        if selected { semibold(13.5) } else { crate::skin::sans(13.5) },
+        if selected { TEXT } else { color },
     );
     resp
 }
@@ -1008,55 +835,42 @@ pub fn draw_arc(
 pub fn progress_bar(ui: &mut Ui, fraction: f32, text: &str, complete: bool) {
     let desired = Vec2::new(ui.available_width().max(20.0), 15.0);
     let (rect, _) = ui.allocate_exact_size(desired, Sense::hover());
-    let p = ui.painter();
     let rect = rect.shrink2(Vec2::new(0.0, 1.0));
-    p.rect_filled(rect, CornerRadius::same(3), Color32::from_rgb(238, 242, 248));
+    crate::skin::recess(ui, rect);
     let fill = if complete {
-        Color32::from_rgb(200, 212, 226)
+        Color32::from_rgb(0x3a, 0x3a, 0x3f)
     } else {
-        Color32::from_rgb(134, 196, 132)
+        crate::skin::accent_fill()
     };
-    let mut inner = rect;
+    let mut inner = rect.shrink(1.0);
     inner.set_width((inner.width() * fraction.clamp(0.0, 1.0)).max(0.0));
+    let p = ui.painter();
     if inner.width() > 0.5 {
-        p.rect_filled(inner, CornerRadius::same(3), fill);
+        p.rect_filled(inner, CornerRadius::same(2), fill);
     }
-    p.rect_stroke(
-        rect,
-        CornerRadius::same(3),
-        Stroke::new(1.0_f32, Color32::from_rgb(186, 198, 214)),
-    egui::StrokeKind::Inside);
     p.text(
         rect.center(),
         Align2::CENTER_CENTER,
         text,
-        FontId::proportional(10.5),
+        crate::skin::mono(10.5),
         TEXT,
     );
 }
 #[allow(dead_code)]
 pub fn section_header(ui: &mut Ui, text: &str) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 20.0), Sense::hover());
-    ui.painter().rect_filled(rect, 0.0, BG);
-    ui.painter().line_segment(
-        [rect.left_bottom(), rect.right_bottom()],
-        Stroke::new(1.0_f32, BORDER_LIGHT),
-    );
+    let (rect, _) = ui.allocate_exact_size(Vec2::new(ui.available_width(), 22.0), Sense::hover());
+    crate::skin::band_ground(ui.painter(), rect);
     ui.painter().text(
-        Pos2::new(rect.left() + 6.0, rect.center().y),
+        Pos2::new(rect.left() + 8.0, rect.center().y),
         Align2::LEFT_CENTER,
-        text,
-        FontId::proportional(10.5),
-        TEXT,
+        text.to_uppercase(),
+        semibold(12.0),
+        crate::skin::DIM,
     );
 }
 #[allow(dead_code)]
 pub fn thin_separator(ui: &mut Ui) {
-    let (rect, _) = ui.allocate_exact_size(Vec2::new(1.0, ui.available_height()), Sense::hover());
-    ui.painter().line_segment(
-        [rect.center_top(), rect.center_bottom()],
-        Stroke::new(1.0_f32, BORDER_LIGHT),
-    );
+    crate::skin::rule_v(ui, ui.available_height());
 }
 
 /// The folder a Browse dialog opens in: the current value when it exists,

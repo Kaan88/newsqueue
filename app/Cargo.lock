@@ -2077,6 +2077,7 @@ version = "1.0.4"
 dependencies = [
  "chrono",
  "eframe",
+ "egui",
  "egui_extras",
  "embed-resource",
  "image",

@@ -1,5 +1,5 @@
-use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Label, Layout, RichText, Sense, Stroke, TextEdit, Ui,
+﻿use eframe::egui::{
+    self, Align, Align2, FontId, Label, Layout, RichText, Sense, Stroke, TextEdit, Ui,
     Vec2,
 };
 use egui_extras::{Column, TableBuilder};
@@ -194,13 +194,10 @@ fn toolbar(app: &mut App, ui: &mut Ui) {
 
 fn toolbar_sep(ui: &mut Ui) {
     let (rect, _) = ui.allocate_exact_size(Vec2::new(2.0, 53.0), Sense::hover());
-    ui.painter().line_segment(
-        [
-            egui::pos2(rect.center().x, rect.top() + 6.0),
-            egui::pos2(rect.center().x, rect.bottom() - 6.0),
-        ],
-        Stroke::new(1.0_f32, Color32::from_rgb(210, 223, 240)),
-    );
+    let y = (rect.top() + 8.0)..=(rect.bottom() - 8.0);
+    let x = rect.center().x;
+    ui.painter().vline(x - 0.5, y.clone(), Stroke::new(1.0_f32, theme::BORDER));
+    ui.painter().vline(x + 0.5, y, Stroke::new(1.0_f32, theme::BORDER_LIGHT));
 }
 
 fn tabs(app: &mut App, ui: &mut Ui) {
@@ -214,10 +211,10 @@ fn tabs(app: &mut App, ui: &mut Ui) {
     ui.horizontal(|ui| {
         // Tab indices stay fixed (2 was Explorer) so saved settings still load.
         let defs = [
-            (0, "Download queue", Icon::Queue, 130.0),
-            (1, "PAR2", Icon::Shield, 78.0),
-            (3, "Log", Icon::Page, 72.0),
-            (4, "RSS", Icon::Rss, 72.0),
+            (0, "Download queue", Icon::Queue, 150.0),
+            (1, "PAR2", Icon::Shield, 84.0),
+            (3, "Log", Icon::Page, 74.0),
+            (4, "RSS", Icon::Rss, 76.0),
         ];
         for &(i, caption, icon, width) in defs.iter() {
             if !app.settings.show_tabs[i] {
@@ -309,8 +306,8 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     ui.add_space(4.0);
                     let mut filter = app.filter.clone();
-                    let resp = ui.add_sized(
-                        [122.0, 20.0],
+                    let resp = crate::skin::text_edit(ui,
+                        122.0,
                         TextEdit::singleline(&mut filter).hint_text("Filter subjects"),
                     );
                     if resp.changed() {
@@ -372,7 +369,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
         .header(22.0, |mut header| {
             for &ci in &col_map {
                 header.col(|ui| {
-                    ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
+                    crate::skin::band_ground(ui.painter(), ui.max_rect().expand2(Vec2::new(4.0, 0.0)));
                     ui.painter().line_segment(
                         [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                         Stroke::new(1.0_f32, theme::BORDER_LIGHT),
@@ -422,7 +419,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                                             let label = if c.expanded { "-" } else { "+" };
                                             let btn = ui.add_sized(
                                                 [14.0, 14.0],
-                                                egui::Button::new(RichText::new(label).size(11.5))
+                                                crate::skin::Button::new(RichText::new(label).size(11.5))
                                                     .frame(false),
                                             );
                                             if btn.clicked() {
@@ -683,8 +680,8 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                 if resp.double_clicked() {
                     double_toggle = true;
                 }
-                resp.context_menu(|ui| {
-                    if ui.button("Unpause").clicked() {
+                crate::skin::context_menu(&resp, |ui| {
+                    if crate::skin::button(ui, "Unpause").clicked() {
                         action = Some(UiAction::PauseSelected(false));
                         new_selection = Some(Some(match row_ref {
                             QueueRowRef::Collection(ci) => Selection {
@@ -698,7 +695,7 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                         }));
                         ui.close();
                     }
-                    if ui.button("Pause").clicked() {
+                    if crate::skin::button(ui, "Pause").clicked() {
                         action = Some(UiAction::PauseSelected(true));
                         new_selection = Some(Some(match row_ref {
                             QueueRowRef::Collection(ci) => Selection {
@@ -714,71 +711,71 @@ fn queue_tab(app: &mut App, ui: &mut Ui) {
                     }
                     ui.separator();
                     ui.menu_button("Move", |ui| {
-                        if ui.button("Move to top").clicked() {
+                        if crate::skin::button(ui, "Move to top").clicked() {
                             action = Some(UiAction::Move(MoveDir::Top));
                             ui.close();
                         }
-                        if ui.button("Move up").clicked() {
+                        if crate::skin::button(ui, "Move up").clicked() {
                             action = Some(UiAction::Move(MoveDir::Up));
                             ui.close();
                         }
-                        if ui.button("Move down").clicked() {
+                        if crate::skin::button(ui, "Move down").clicked() {
                             action = Some(UiAction::Move(MoveDir::Down));
                             ui.close();
                         }
-                        if ui.button("Move to bottom").clicked() {
+                        if crate::skin::button(ui, "Move to bottom").clicked() {
                             action = Some(UiAction::Move(MoveDir::Bottom));
                             ui.close();
                         }
                     });
-                    if ui.button("Collapse all").clicked() {
+                    if crate::skin::button(ui, "Collapse all").clicked() {
                         action = Some(UiAction::CollapseAll);
                         ui.close();
                     }
-                    if ui.button("Expand all").clicked() {
+                    if crate::skin::button(ui, "Expand all").clicked() {
                         action = Some(UiAction::ExpandAll);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Rename collection").clicked() {
+                    if crate::skin::button(ui, "Rename collection").clicked() {
                         action = Some(UiAction::Rename);
                         ui.close();
                     }
-                    if ui.button("Export to NZB").clicked() {
+                    if crate::skin::button(ui, "Export to NZB").clicked() {
                         action = Some(UiAction::Export);
                         ui.close();
                     }
-                    if ui.button("Change download folder").clicked() {
+                    if crate::skin::button(ui, "Change download folder").clicked() {
                         action = Some(UiAction::ChangeFolder);
                         ui.close();
                     }
-                    if ui.button("Open").clicked() {
+                    if crate::skin::button(ui, "Open").clicked() {
                         action = Some(UiAction::OpenFolder);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Unrar").clicked() {
+                    if crate::skin::button(ui, "Unrar").clicked() {
                         action = Some(UiAction::ToggleUnrar(true));
                         ui.close();
                     }
-                    if ui.button("Do not Unrar").clicked() {
+                    if crate::skin::button(ui, "Do not Unrar").clicked() {
                         action = Some(UiAction::ToggleUnrar(false));
                         ui.close();
                     }
-                    if ui.button("Unpack now").clicked() {
+                    if crate::skin::button(ui, "Unpack now").clicked() {
                         action = Some(UiAction::UnpackNow);
                         ui.close();
                     }
-                    if ui.button("Change unrar folder").clicked() {
+                    if crate::skin::button(ui, "Change unrar folder").clicked() {
                         action = Some(UiAction::ChangeUnrarFolder);
                         ui.close();
                     }
-                    if ui.button("Change execute command").clicked() {
+                    if crate::skin::button(ui, "Change execute command").clicked() {
                         action = Some(UiAction::SetExecute);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.button("Delete").clicked() {
+                    if crate::skin::button(ui, "Delete").clicked() {
                         action = Some(UiAction::DeleteSelected);
                         ui.close();
                     }
@@ -1035,7 +1032,7 @@ fn par2_tab(app: &mut App, ui: &mut Ui) {
             "Progress",
         ] {
             header.col(|ui| {
-                ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
+                crate::skin::band_ground(ui.painter(), ui.max_rect().expand2(Vec2::new(4.0, 0.0)));
                 ui.painter().line_segment(
                     [ui.max_rect().left_bottom(), ui.max_rect().right_bottom()],
                     Stroke::new(1.0_f32, theme::BORDER_LIGHT),
@@ -1123,10 +1120,10 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
             );
             ui.horizontal(|ui| {
                 ui.add_space(4.0);
-                if ui.button("Clear").clicked() {
+                if crate::skin::button(ui, "Clear").clicked() {
                     app.logs.clear();
                 }
-                if ui.button("Copy").clicked() {
+                if crate::skin::button(ui, "Copy").clicked() {
                     let text = app
                         .logs
                         .iter()
@@ -1144,8 +1141,8 @@ fn log_tab(app: &mut App, ui: &mut Ui) {
                 }
                 ui.add_space(8.0);
                 ui.label(RichText::new("Filter").size(12.0));
-                ui.add_sized(
-                    [180.0, 20.0],
+                crate::skin::text_edit(ui,
+                    180.0,
                     TextEdit::singleline(&mut app.log_filter).hint_text("Filter log lines"),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1236,8 +1233,8 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
                 r.on_hover_text("Show/hide filters");
                 ui.add_space(8.0);
                 ui.label(RichText::new("Filter").size(12.0));
-                ui.add_sized(
-                    [180.0, 20.0],
+                crate::skin::text_edit(ui,
+                    180.0,
                     TextEdit::singleline(&mut app.rss_filter).hint_text("Filter names"),
                 );
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -1281,7 +1278,7 @@ fn rss_tab(app: &mut App, ui: &mut Ui) {
     let table = table.header(22.0, |mut header| {
         for text in ["Name", "Date", "Description"] {
             header.col(|ui| {
-                ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
+                crate::skin::band_ground(ui.painter(), ui.max_rect().expand2(Vec2::new(4.0, 0.0)));
                 ui.add(Label::new(RichText::new(text).size(12.0)).truncate());
             });
         }
@@ -1312,7 +1309,7 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
         // Header only, matching a disconnected session.
         let rect = ui.max_rect();
         let header = egui::Rect::from_min_size(rect.min, Vec2::new(rect.width(), 20.0));
-        ui.painter().rect_filled(header, 0.0, theme::BG);
+        crate::skin::band_ground(ui.painter(), header);
         let cols = [
             ("#".to_string(), 20.0),
             ("Action".into(), 150.0),
@@ -1346,7 +1343,7 @@ fn thread_panel(app: &mut App, ui: &mut Ui) {
     let table = table.header(22.0, |mut header| {
         for text in ["#", "Action", "Description", "Status", "Server"] {
             header.col(|ui| {
-                ui.painter().rect_filled(ui.max_rect(), 0.0, theme::BG);
+                crate::skin::band_ground(ui.painter(), ui.max_rect().expand2(Vec2::new(4.0, 0.0)));
                 ui.add(Label::new(RichText::new(text).size(12.0)).truncate());
             });
         }
@@ -1528,12 +1525,7 @@ fn eta_text(app: &App) -> String {
 
 fn draw_speed_graph(ui: &Ui, rect: egui::Rect, app: &App) {
     let p = ui.painter();
-    p.rect_filled(rect, 0.0, Color32::from_rgb(235, 245, 235));
-    p.rect_stroke(
-        rect,
-        0.0,
-        Stroke::new(1.0_f32, Color32::from_rgb(170, 190, 170)),
-    egui::StrokeKind::Inside);
+    crate::skin::recess(ui, rect);
     let max = (app.speed_ceiling_mbps * BPS_PER_MBPS).max(1.0);
     let n = app.speed_history.len();
     if n < 2 {
@@ -1550,12 +1542,12 @@ fn draw_speed_graph(ui: &Ui, rect: egui::Rect, app: &App) {
     fill.push(egui::pos2(rect.left(), rect.bottom()));
     p.add(egui::Shape::convex_polygon(
         fill,
-        Color32::from_rgba_unmultiplied(92, 190, 92, 55),
+        theme::ACCENT.gamma_multiply(0.22),
         Stroke::NONE,
     ));
     p.add(egui::Shape::line(
         points,
-        Stroke::new(1.2_f32, theme::GREEN_DARK),
+        Stroke::new(1.2_f32, theme::ACCENT),
     ));
 }
 

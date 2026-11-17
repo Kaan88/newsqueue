@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 //! Native Windows notification-area icon and minimize-to-tray integration.
 //!
 //! Kept behind `cfg(windows)`; the rest of the app remains usable without it.
@@ -759,7 +760,7 @@ struct MSG {
 
 #[cfg(target_os = "windows")]
 #[link(name = "user32")]
-extern "system" {
+unsafe extern "system" {
     fn RegisterClassW(class: *const WNDCLASSW) -> u16;
     fn CreateWindowExW(
         ex_style: u32,
@@ -825,7 +826,7 @@ extern "system" {
 
 #[cfg(target_os = "windows")]
 #[link(name = "ole32")]
-extern "system" {
+unsafe extern "system" {
     fn CoInitializeEx(reserved: *mut std::ffi::c_void, coinit: u32) -> i32;
     fn CoUninitialize();
     fn CoCreateInstance(
@@ -839,13 +840,13 @@ extern "system" {
 
 #[cfg(target_os = "windows")]
 #[link(name = "shell32")]
-extern "system" {
+unsafe extern "system" {
     fn Shell_NotifyIconW(message: u32, data: *const NOTIFYICONDATAW) -> i32;
 }
 
 #[cfg(target_os = "windows")]
 #[link(name = "kernel32")]
-extern "system" {
+unsafe extern "system" {
     fn GetCurrentProcessId() -> u32;
 }
 
