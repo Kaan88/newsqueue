@@ -117,6 +117,8 @@ pub fn job_for_collection(
 /// One article that still needs fetching. Articles from different files may
 /// be fetched at the same time by different workers.
 struct Task {
+    /// Indexes of servers that already answered 430 for this article.
+    tried: Vec<usize>,
     file_index: usize,
     path: PathBuf,
     offset: u64,
@@ -311,7 +313,8 @@ fn run_job(
         job.cache_mb,
         job.cache_cleanup_minutes,
     )));
-    let mut lookup = Nntp::connect(server, &job.proxy)?;
+    let _ = server;
+    let mut lookups: Vec<Option<Nntp>> = servers.iter().map(|_| None).collect();
     let mut tasks: VecDeque<Task> = VecDeque::new();
     let mut paths: Vec<Option<PathBuf>> = vec![None; job.files.len()];
     let mut skipped = vec![false; job.files.len()];
@@ -326,7 +329,7 @@ fn run_job(
             thread::sleep(Duration::from_millis(100));
         }
         if stop.load(Ordering::Relaxed) {
-            let _ = lookup.quit();
+            quit_all(&mut lookups);
             snapshot_set(snap, |s| s.stage = Stage::Stopped);
             return Ok(());
         }
@@ -337,30 +340,50 @@ fn run_job(
         segments.sort_by_key(|s| s.number);
         let fallback = format!("file{:02}.bin", index + 1);
         let base = safe_file_name(&file.name, &fallback);
-        let body = if let Some(body) = cache.lock().ok().and_then(|mut cache| cache.get(&segments[0].id)) {
-            body
-        } else {
-            match lookup.body(&segments[0].id) {
-                Ok(body) => {
+        let cached = cache.lock().ok().and_then(|mut cache| cache.get(&segments[0].id));
+        let body = match cached {
+            Some(body) => Some(body),
+            None => match lookup_body(
+                servers,
+                &job.proxy,
+                &mut lookups,
+                &segments[0].id,
+                job.retry_count,
+                job.retry_delay,
+                stop,
+            ) {
+                Ok(Some(body)) => {
                     if let Ok(mut cache) = cache.lock() {
                         cache.insert(segments[0].id.clone(), body.clone());
                     }
-                    body
+                    Some(body)
                 }
+                Ok(None) => None,
                 Err(e) => {
-                    let _ = lookup.quit();
+                    quit_all(&mut lookups);
                     return Err(e);
                 }
-            }
+            },
         };
-        let (yenc_name, first_begin, first_data) = match decode_yenc(&body) {
-            Ok(decoded) => decoded,
-            Err(e) => {
-                let _ = lookup.quit();
+        // A first article that no server has must not fail the whole job:
+        // record it as missing (PAR2 can repair it) and fall back to the NZB
+        // name. Its slot is left as a hole in the file.
+        let first_missing = body.is_none();
+        if first_missing {
+            snapshot_set(snap, |s| {
+                s.missing += 1;
+                s.message = format!("{} article(s) missing", s.missing);
+            });
+        }
+        let (yenc_name, first_begin, first_data) = match body.as_deref().map(decode_yenc) {
+            Some(Ok(decoded)) => decoded,
+            Some(Err(e)) => {
+                quit_all(&mut lookups);
                 return Err(e);
             }
+            None => (String::new(), None, Vec::new()),
         };
-        let decoded_size = yenc_size(&body);
+        let decoded_size = body.as_deref().and_then(yenc_size);
         expected_sizes[index] = decoded_size;
         let mut name = if yenc_name.is_empty() {
             base
@@ -442,7 +465,7 @@ fn run_job(
             options.truncate(true);
         }
         if let Err(e) = options.open(&path) {
-            let _ = lookup.quit();
+            quit_all(&mut lookups);
             return Err(format!("Cannot create file: {e}"));
         }
         let mut offset = 0u64;
@@ -452,8 +475,13 @@ fn run_job(
             } else {
                 None
             };
+            if seg_index == 0 && first_missing {
+                offset = offset.saturating_add(segment.bytes);
+                continue;
+            }
             if !completed_ids.contains(&segment.id) {
                 tasks.push_back(Task {
+                    tried: Vec::new(),
                     file_index: index,
                     path: path.clone(),
                     offset,
@@ -468,7 +496,7 @@ fn run_job(
             let _ = fs::remove_file(&progress_path);
         }
     }
-    let _ = lookup.quit();
+    quit_all(&mut lookups);
 
     if tasks.is_empty() {
         let stage = if stop.load(Ordering::Relaxed) {
@@ -492,12 +520,23 @@ fn run_job(
         return Ok(());
     }
 
-    let total_connections = servers
+    // Each server gets the number of connections it is configured for,
+    // interleaved so a job with few articles still uses every server.
+    let mut assignment: Vec<usize> = Vec::new();
+    let mut per_server: Vec<usize> = servers
         .iter()
         .map(|server| (server.connections.max(1) as usize).min(MAX_CONNECTIONS_PER_SERVER as usize))
-        .sum::<usize>()
-        .max(1);
-    let worker_count = total_connections.min(tasks.len()).max(1);
+        .collect();
+    while per_server.iter().any(|count| *count > 0) {
+        for (index, count) in per_server.iter_mut().enumerate() {
+            if *count > 0 {
+                *count -= 1;
+                assignment.push(index);
+            }
+        }
+    }
+    assignment.truncate(tasks.len().max(1));
+    let worker_count = assignment.len().max(1);
     let per_worker_throttle = if throttle_bps > 0.0 {
         throttle_bps / worker_count as f64
     } else {
@@ -510,7 +549,15 @@ fn run_job(
         s.message = format!("Downloading with {worker_count} connections");
     });
 
-    let shared_tasks = Arc::new(Mutex::new(tasks));
+    let mut live = vec![0usize; servers.len()];
+    for server_index in &assignment {
+        live[*server_index] += 1;
+    }
+    let shared_tasks = Arc::new(Mutex::new(TaskQueue {
+        tasks,
+        in_flight: 0,
+        live,
+    }));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let connect_errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let speed = Arc::new(Mutex::new(SpeedMeter {
@@ -523,8 +570,8 @@ fn run_job(
     let priority = job.priority;
     let proxy = job.proxy.clone();
     let mut handles = Vec::new();
-    for worker_index in 0..worker_count {
-        let server = servers[worker_index % servers.len()].clone();
+    for server_index in assignment {
+        let server = servers[server_index].clone();
         let tasks = shared_tasks.clone();
         let errors = errors.clone();
         let connect_errors = connect_errors.clone();
@@ -535,22 +582,28 @@ fn run_job(
         let cache = cache.clone();
         let proxy = proxy.clone();
         handles.push(thread::spawn(move || {
-            download_worker(
-                &server,
-                &tasks,
-                &pause,
-                &stop,
-                &snap,
-                &speed,
-                &errors,
-                &connect_errors,
-                &cache,
-                &proxy,
-                per_worker_throttle,
+            let context = WorkerContext {
+                server_index,
+                tasks: &tasks,
+                pause: &pause,
+                stop: &stop,
+                snap: &snap,
+                speed: &speed,
+                errors: &errors,
+                connect_errors: &connect_errors,
+                cache: &cache,
+                proxy: &proxy,
+                throttle_bps: per_worker_throttle,
                 retry_count,
                 retry_delay,
                 priority,
-            )
+            };
+            download_worker(&server, &context);
+            // This connection is gone either way; articles only it could
+            // still try must not wait for it.
+            if let Ok(mut queue) = tasks.lock() {
+                queue.live[server_index] = queue.live[server_index].saturating_sub(1);
+            }
         }));
     }
     for handle in handles {
@@ -577,7 +630,7 @@ fn run_job(
         });
         return Ok(());
     }
-    let remaining = shared_tasks.lock().map(|t| t.len()).unwrap_or(0);
+    let remaining = shared_tasks.lock().map(|q| q.tasks.len()).unwrap_or(0);
     if remaining > 0 {
         let message = connect_errors
             .lock()
@@ -651,37 +704,120 @@ fn run_job(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
-fn download_worker(
-    server: &Server,
-    tasks: &Mutex<VecDeque<Task>>,
-    pause: &AtomicBool,
-    stop: &AtomicBool,
-    snap: &Mutex<DownloadSnapshot>,
-    speed: &Mutex<SpeedMeter>,
-    errors: &Mutex<Vec<String>>,
-    connect_errors: &Mutex<Vec<String>>,
-    cache: &Arc<Mutex<ArticleCache>>,
-    proxy: &ProxyConfig,
+/// Articles waiting for a connection, shared by every worker of a job.
+struct TaskQueue {
+    tasks: VecDeque<Task>,
+    /// Tasks a worker has taken and not yet finished or handed back.
+    in_flight: usize,
+    /// Workers still alive, per server index.
+    live: Vec<usize>,
+}
+
+impl TaskQueue {
+    /// True when a server that has not tried `task` still has a worker.
+    fn can_retry(&self, task: &Task) -> bool {
+        self.live
+            .iter()
+            .enumerate()
+            .any(|(index, live)| *live > 0 && !task.tried.contains(&index))
+    }
+}
+
+struct WorkerContext<'a> {
+    server_index: usize,
+    tasks: &'a Mutex<TaskQueue>,
+    pause: &'a AtomicBool,
+    stop: &'a AtomicBool,
+    snap: &'a Mutex<DownloadSnapshot>,
+    speed: &'a Mutex<SpeedMeter>,
+    errors: &'a Mutex<Vec<String>>,
+    connect_errors: &'a Mutex<Vec<String>>,
+    cache: &'a Arc<Mutex<ArticleCache>>,
+    proxy: &'a ProxyConfig,
     throttle_bps: f64,
     retry_count: u32,
     retry_delay: u32,
     priority: u32,
-) {
-    set_thread_priority(priority);
+}
+
+enum Next {
+    Task(Box<Task>),
+    Wait,
+    Done,
+}
+
+fn mark_missing(snap: &Mutex<DownloadSnapshot>, count: usize) {
+    if count == 0 {
+        return;
+    }
+    if let Ok(mut snapshot) = snap.lock() {
+        snapshot.missing += count;
+        snapshot.message = format!("{} article(s) missing", snapshot.missing);
+    }
+}
+
+/// Takes the next article this worker's server has not tried yet. Articles
+/// that no living server can still try are counted as missing.
+fn next_task(ctx: &WorkerContext) -> Next {
+    let Ok(mut queue) = ctx.tasks.lock() else {
+        return Next::Done;
+    };
+    let me = ctx.server_index;
+    if let Some(position) = queue.tasks.iter().position(|task| !task.tried.contains(&me)) {
+        if let Some(task) = queue.tasks.remove(position) {
+            queue.in_flight += 1;
+            return Next::Task(Box::new(task));
+        }
+    }
+    let before = queue.tasks.len();
+    let pending: Vec<Task> = queue.tasks.drain(..).collect();
+    for task in pending {
+        if queue.can_retry(&task) {
+            queue.tasks.push_back(task);
+        }
+    }
+    let dropped = before - queue.tasks.len();
+    let done = queue.tasks.is_empty() && queue.in_flight == 0;
+    drop(queue);
+    mark_missing(ctx.snap, dropped);
+    if done {
+        Next::Done
+    } else {
+        Next::Wait
+    }
+}
+
+/// Releases a taken task. `retry` hands a 430 article back for another server.
+fn finish_task(ctx: &WorkerContext, retry: Option<Task>) {
+    let mut missing = 0;
+    if let Ok(mut queue) = ctx.tasks.lock() {
+        queue.in_flight = queue.in_flight.saturating_sub(1);
+        if let Some(task) = retry {
+            if queue.can_retry(&task) {
+                queue.tasks.push_back(task);
+            } else {
+                missing = 1;
+            }
+        }
+    }
+    mark_missing(ctx.snap, missing);
+}
+
+fn download_worker(server: &Server, ctx: &WorkerContext) {
+    set_thread_priority(ctx.priority);
     let mut connect_attempt = 0;
     let mut nntp = loop {
-        match Nntp::connect(server, proxy) {
-            Ok(nntp) => break nntp,
+        match Nntp::connect(server, ctx.proxy) {
+            Ok(nntp) => break Some(nntp),
             Err(e) => {
-                if connect_attempt < retry_count {
+                if connect_attempt < ctx.retry_count && !ctx.stop.load(Ordering::Relaxed) {
                     connect_attempt += 1;
-                    thread::sleep(Duration::from_secs(retry_delay.max(1) as u64));
+                    thread::sleep(Duration::from_secs(ctx.retry_delay.max(1) as u64));
                     continue;
                 }
                 // One failed connection should not kill the whole job; the
                 // remaining workers can still finish the queue.
-                if let Ok(mut list) = connect_errors.lock() {
+                if let Ok(mut list) = ctx.connect_errors.lock() {
                     list.push(e);
                 }
                 return;
@@ -691,54 +827,73 @@ fn download_worker(
     let mut files: HashMap<usize, fs::File> = HashMap::new();
     let mut next_allowed = Instant::now();
     loop {
-        if stop.load(Ordering::Relaxed) {
+        if ctx.stop.load(Ordering::Relaxed) {
             break;
         }
-        while pause.load(Ordering::Relaxed) {
-            if stop.load(Ordering::Relaxed) {
+        while ctx.pause.load(Ordering::Relaxed) {
+            if ctx.stop.load(Ordering::Relaxed) {
                 break;
             }
             thread::sleep(Duration::from_millis(100));
         }
-        if stop.load(Ordering::Relaxed) {
+        if ctx.stop.load(Ordering::Relaxed) {
             break;
         }
-        let task = {
-            match tasks.lock() {
-                Ok(mut queue) => queue.pop_front(),
-                Err(_) => None,
+        let mut task = match next_task(ctx) {
+            Next::Task(task) => *task,
+            Next::Wait => {
+                thread::sleep(Duration::from_millis(50));
+                continue;
             }
+            Next::Done => break,
         };
-        let Some(mut task) = task else { break };
         let mut attempts = 0;
         let decoded = loop {
-            let cached = cache
+            let cached = ctx
+                .cache
                 .lock()
                 .ok()
                 .and_then(|mut cache| cache.get(&task.id));
             let attempt = if let Some(body) = cached {
                 decode_yenc(&body).map(|(_, begin, data)| (begin, data))
+            } else if let Some(value) = task.prefetched.take() {
+                Ok(value)
             } else {
-                match task.prefetched.take() {
-                    Some(value) => Ok(value),
-                    None => match nntp.body(&task.id) {
+                // A connection that failed is dropped and replaced before the
+                // article is asked for again, so retries never reuse a dead
+                // socket.
+                let connection = match nntp.take() {
+                    Some(connection) => Ok(connection),
+                    None => Nntp::connect(server, ctx.proxy),
+                };
+                match connection {
+                    Ok(mut connection) => match connection.body(&task.id) {
                         Ok(body) => {
-                            if let Ok(mut cache) = cache.lock() {
+                            nntp = Some(connection);
+                            if let Ok(mut cache) = ctx.cache.lock() {
                                 cache.insert(task.id.clone(), body.clone());
                             }
                             decode_yenc(&body).map(|(_, begin, data)| (begin, data))
                         }
-                        Err(error) => Err(error),
+                        Err(error) => {
+                            if error.starts_with("Article not found") {
+                                nntp = Some(connection);
+                            }
+                            Err(error)
+                        }
                     },
+                    Err(error) => Err(error),
                 }
             };
             match attempt {
                 Ok(value) => break Ok(value),
                 Err(error)
-                    if !error.starts_with("Article not found") && attempts < retry_count =>
+                    if !error.starts_with("Article not found")
+                        && attempts < ctx.retry_count
+                        && !ctx.stop.load(Ordering::Relaxed) =>
                 {
                     attempts += 1;
-                    thread::sleep(Duration::from_secs(retry_delay.max(1) as u64));
+                    thread::sleep(Duration::from_secs(ctx.retry_delay.max(1) as u64));
                 }
                 Err(error) => break Err(error),
             }
@@ -746,18 +901,16 @@ fn download_worker(
         let (begin, data) = match decoded {
             Ok(value) => value,
             Err(e) => {
-                // A missing article must not kill the whole job. PAR2 (or a
-                // later retry) can repair the hole; record it and continue.
                 if e.starts_with("Article not found") {
-                    if let Ok(mut snapshot) = snap.lock() {
-                        snapshot.missing += 1;
-                        snapshot.message = format!("{} article(s) missing", snapshot.missing);
-                    }
-                } else {
-                    record_error(errors, stop, e);
-                    break;
+                    // Another server may still have it. If none does, it is
+                    // counted missing and PAR2 can repair the hole.
+                    task.tried.push(ctx.server_index);
+                    finish_task(ctx, Some(task));
+                    continue;
                 }
-                continue;
+                finish_task(ctx, None);
+                record_error(ctx.errors, ctx.stop, e);
+                break;
             }
         };
         let offset = begin
@@ -765,7 +918,8 @@ fn download_worker(
             .unwrap_or(task.offset);
         let write_result = write_article(&mut files, &task, offset, &data);
         if let Err(e) = write_result {
-            record_error(errors, stop, e);
+            finish_task(ctx, None);
+            record_error(ctx.errors, ctx.stop, e);
             break;
         }
         if let Ok(mut progress) = fs::OpenOptions::new()
@@ -775,10 +929,11 @@ fn download_worker(
         {
             let _ = writeln!(progress, "{}", task.id);
         }
+        finish_task(ctx, None);
         let chunk = data.len() as u64;
 
         let mut measured = None;
-        if let Ok(mut meter) = speed.lock() {
+        if let Ok(mut meter) = ctx.speed.lock() {
             meter.bytes = meter.bytes.saturating_add(chunk);
             let elapsed = meter.window.elapsed();
             if elapsed >= Duration::from_millis(500) {
@@ -787,7 +942,7 @@ fn download_worker(
                 meter.window = Instant::now();
             }
         }
-        if let Ok(mut s) = snap.lock() {
+        if let Ok(mut s) = ctx.snap.lock() {
             s.bytes = s.bytes.saturating_add(chunk);
             s.file_index = task.file_index;
             if let Some(progress) = s.file_progress.get_mut(task.file_index) {
@@ -804,8 +959,8 @@ fn download_worker(
             }
         }
 
-        if throttle_bps > 0.0 {
-            let budget = Duration::from_secs_f64(chunk as f64 / throttle_bps);
+        if ctx.throttle_bps > 0.0 {
+            let budget = Duration::from_secs_f64(chunk as f64 / ctx.throttle_bps);
             let now = Instant::now();
             next_allowed = next_allowed.max(now) + budget;
             if next_allowed > now {
@@ -813,9 +968,78 @@ fn download_worker(
             }
         }
     }
-    let _ = nntp.quit();
+    if let Some(mut nntp) = nntp {
+        let _ = nntp.quit();
+    }
     for file in files.values_mut() {
         let _ = file.flush();
+    }
+}
+
+/// Fetches an article during the name lookup pass, trying each server in
+/// order and reconnecting after a failed connection. Returns `Ok(None)` when
+/// at least one server reported the article missing and none had it.
+fn lookup_body(
+    servers: &[Server],
+    proxy: &ProxyConfig,
+    connections: &mut [Option<Nntp>],
+    id: &str,
+    retry_count: u32,
+    retry_delay: u32,
+    stop: &AtomicBool,
+) -> Result<Option<Vec<u8>>, String> {
+    let mut not_found = false;
+    let mut last_error = None;
+    for (index, server) in servers.iter().enumerate() {
+        let mut attempts = 0;
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                return Err("Stopped".into());
+            }
+            let connection = match connections[index].take() {
+                Some(connection) => Ok(connection),
+                None => Nntp::connect(server, proxy),
+            };
+            let result = connection.and_then(|mut connection| {
+                let body = connection.body(id);
+                let reusable = match &body {
+                    Ok(_) => true,
+                    Err(error) => error.starts_with("Article not found"),
+                };
+                if reusable {
+                    connections[index] = Some(connection);
+                }
+                body
+            });
+            match result {
+                Ok(body) => return Ok(Some(body)),
+                Err(error) if error.starts_with("Article not found") => {
+                    not_found = true;
+                    break;
+                }
+                Err(error) => {
+                    last_error = Some(error);
+                    if attempts >= retry_count {
+                        break;
+                    }
+                    attempts += 1;
+                    thread::sleep(Duration::from_secs(retry_delay.max(1) as u64));
+                }
+            }
+        }
+    }
+    match (not_found, last_error) {
+        (true, _) => Ok(None),
+        (false, Some(error)) => Err(error),
+        (false, None) => Err("No enabled NNTP server configured".into()),
+    }
+}
+
+fn quit_all(connections: &mut [Option<Nntp>]) {
+    for connection in connections.iter_mut() {
+        if let Some(mut connection) = connection.take() {
+            let _ = connection.quit();
+        }
     }
 }
 
@@ -1825,6 +2049,157 @@ mod tests {
         assert_eq!(fs::read(root.join("one.bin")).unwrap(), data);
         assert_eq!(fs::read(root.join("two.bin")).unwrap(), data);
         assert_eq!(count.load(Ordering::Relaxed), 1);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// One yEnc part of a `total`-byte file starting at 1-based `begin`.
+    fn yenc_part(data: &[u8], total: usize, begin: usize) -> Vec<u8> {
+        let mut out = format!(
+            "=ybegin part=1 line=128 size={total} name=mock.bin\n=ypart begin={begin} end={}\n",
+            begin + data.len() - 1
+        )
+        .into_bytes();
+        for byte in data {
+            let encoded = byte.wrapping_add(42);
+            if matches!(encoded, 0 | 10 | 13 | 61) {
+                out.push(b'=');
+                out.push(encoded.wrapping_add(64));
+            } else {
+                out.push(encoded);
+            }
+        }
+        out.extend_from_slice(format!("\n=yend size={}\n", data.len()).as_bytes());
+        out
+    }
+
+    /// Like `mock_server`, but closes the connection without answering the
+    /// `drop_on`-th BODY command (1-based, counted across connections).
+    fn flaky_server(articles: Vec<(String, Vec<u8>)>, drop_on: usize) -> u16 {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            let mut bodies = 0;
+            for _ in 0..8 {
+                let Ok((mut stream, _)) = listener.accept() else {
+                    break;
+                };
+                let Ok(mut reader) = stream.try_clone().map(BufReader::new) else {
+                    continue;
+                };
+                let _ = stream.write_all(b"200 mock ready\r\n");
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    let line = line.trim();
+                    if line == "QUIT" {
+                        break;
+                    } else if let Some(id) = line.strip_prefix("BODY <") {
+                        bodies += 1;
+                        if bodies == drop_on {
+                            let _ = stream.shutdown(std::net::Shutdown::Both);
+                            break;
+                        }
+                        let id = id.trim_end_matches('>');
+                        if let Some((_, body)) = articles.iter().find(|(key, _)| key == id) {
+                            let _ = stream.write_all(b"222 0 article\r\n");
+                            let _ = stream.write_all(body);
+                            let _ = stream.write_all(b"\r\n.\r\n");
+                        } else {
+                            let _ = stream.write_all(b"430 no such article\r\n");
+                        }
+                    }
+                }
+            }
+        });
+        port
+    }
+
+    fn local_server(port: u16, connections: u32) -> Server {
+        let mut server = Server::default();
+        server.address = "127.0.0.1".into();
+        server.port = port;
+        server.ssl = false;
+        server.auth = false;
+        server.enabled = true;
+        server.connections = connections;
+        server
+    }
+
+    fn two_part_job(root: &std::path::Path) -> DownloadJob {
+        mock_job(
+            root,
+            vec![
+                Segment {
+                    number: 1,
+                    bytes: 5,
+                    id: "p1".into(),
+                },
+                Segment {
+                    number: 2,
+                    bytes: 5,
+                    id: "p2".into(),
+                },
+            ],
+            10,
+        )
+    }
+
+    fn temp_root(tag: &str) -> PathBuf {
+        let root = std::env::temp_dir().join(format!("newsqueue-mock-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        root
+    }
+
+    #[test]
+    fn a_430_on_one_server_is_fetched_from_the_next() {
+        let root = temp_root("failover");
+        let primary = mock_server(vec![("p1".into(), yenc_part(b"ABCDE", 10, 1))]);
+        let backup = mock_server(vec![
+            ("p1".into(), yenc_part(b"ABCDE", 10, 1)),
+            ("p2".into(), yenc_part(b"FGHIJ", 10, 6)),
+        ]);
+        let servers = vec![local_server(primary, 1), local_server(backup, 1)];
+        let active = spawn(two_part_job(&root), servers, 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(snapshot.missing, 0);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_missing_first_article_marks_the_job_incomplete_not_failed() {
+        let root = temp_root("first-missing");
+        let port = mock_server(vec![("p2".into(), yenc_part(b"FGHIJ", 10, 6))]);
+        let active = spawn(two_part_job(&root), vec![local_server(port, 1)], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Incomplete, "{}", snapshot.message);
+        assert_eq!(snapshot.missing, 1);
+        let written = fs::read(root.join("mock.bin")).unwrap();
+        assert_eq!(&written[5..], b"FGHIJ");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_dropped_connection_is_replaced_before_the_retry() {
+        let root = temp_root("reconnect");
+        // BODY #1 is the lookup of p1, #2 is the worker's p2, which is dropped.
+        let port = flaky_server(
+            vec![
+                ("p1".into(), yenc_part(b"ABCDE", 10, 1)),
+                ("p2".into(), yenc_part(b"FGHIJ", 10, 6)),
+            ],
+            2,
+        );
+        let mut job = two_part_job(&root);
+        job.retry_count = 1;
+        let active = spawn(job, vec![local_server(port, 1)], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
         let _ = fs::remove_dir_all(root);
     }
 

@@ -1643,19 +1643,35 @@ impl App {
             let path = PathBuf::from(&folder).join(&file.name);
             path.is_file().then(|| path.to_string_lossy().to_string())
         });
-        let command = command
-            .replace("{folder}", &folder)
-            .replace("{name}", &subject)
-            .replace("{file}", first_file.as_deref().unwrap_or(""));
+        let values = [
+            ("{folder}", "NQ_FOLDER", folder.clone()),
+            ("{name}", "NQ_NAME", subject.clone()),
+            ("{file}", "NQ_FILE", first_file.clone().unwrap_or_default()),
+        ];
+        // What the log shows; the shell never sees these values as text.
+        let display = values
+            .iter()
+            .fold(command.clone(), |text, (placeholder, _, value)| text.replace(placeholder, value));
+        let shell_command = hook_shell_command(&command, cfg!(target_os = "windows"));
         let mut process = if cfg!(target_os = "windows") {
             let mut process = std::process::Command::new("cmd");
-            process.args(["/C", &command]);
+            process.args(["/D", "/S", "/C"]);
+            #[cfg(target_os = "windows")]
+            {
+                use std::os::windows::process::CommandExt;
+                // `/S /C "<line>"` strips exactly the outer quotes, so the line
+                // reaches cmd unchanged instead of with Rust's `\"` escaping.
+                process.raw_arg(format!("\"{shell_command}\""));
+            }
             process
         } else {
             let mut process = std::process::Command::new("sh");
-            process.args(["-c", &command]);
+            process.args(["-c", &shell_command]);
             process
         };
+        for (_, variable, value) in &values {
+            process.env(variable, hook_env_value(value));
+        }
         process.current_dir(&folder);
         #[cfg(target_os = "windows")]
         if self.settings.hide_execute_window {
@@ -1665,7 +1681,7 @@ impl App {
         match process.spawn() {
             Ok(_) => {
                 self.queue[index].execute_done = true;
-                self.log("Execute", &format!("Started for {subject}: {command}"));
+                self.log("Execute", &format!("Started for {subject}: {display}"));
             }
             Err(error) => {
                 self.log("Error", &format!("Execute failed for {subject}: {error}"));
@@ -3017,6 +3033,58 @@ fn xml_escape(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
+/// Turns an execute-hook template into a shell line that reads `{folder}`,
+/// `{name}` and `{file}` from the `NQ_FOLDER`, `NQ_NAME` and `NQ_FILE`
+/// environment variables instead of pasting them in as text. The NZB subject
+/// comes from feeds and indexers, so a name such as `x & evil.exe` must stay
+/// data. A placeholder outside quotes gets quotes of its own; one the user
+/// already quoted is left inside their quotes.
+fn hook_shell_command(template: &str, windows: bool) -> String {
+    let placeholders = [
+        ("{folder}", "NQ_FOLDER"),
+        ("{name}", "NQ_NAME"),
+        ("{file}", "NQ_FILE"),
+    ];
+    let mut out = String::with_capacity(template.len() + 32);
+    let mut quoted = false;
+    let mut rest = template;
+    'outer: while let Some(ch) = rest.chars().next() {
+        for (placeholder, variable) in placeholders {
+            if let Some(after) = rest.strip_prefix(placeholder) {
+                let reference = if windows {
+                    format!("%{variable}%")
+                } else {
+                    format!("${{{variable}}}")
+                };
+                if quoted {
+                    out.push_str(&reference);
+                } else {
+                    out.push('"');
+                    out.push_str(&reference);
+                    out.push('"');
+                }
+                rest = after;
+                continue 'outer;
+            }
+        }
+        if ch == '"' {
+            quoted = !quoted;
+        }
+        out.push(ch);
+        rest = &rest[ch.len_utf8()..];
+    }
+    out
+}
+
+/// A value for a hook variable: quotes and line breaks would end the quoted
+/// string around it, so they are dropped. Windows paths cannot contain `"`.
+fn hook_env_value(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| !matches!(ch, '"' | '\r' | '\n' | '\0'))
+        .collect()
+}
+
 /// Open a file or folder with the Windows shell, matching a double-click in
 /// Explorer. Uses ShellExecuteW so commas and quotes in paths are safe.
 #[cfg(target_os = "windows")]
@@ -3375,6 +3443,50 @@ mod integration_tests {
             .search_status
             .to_ascii_lowercase()
             .contains("not configured"));
+    }
+
+    #[test]
+    fn hook_placeholders_become_quoted_variables() {
+        assert_eq!(
+            hook_shell_command("echo {name}>x.txt", true),
+            "echo \"%NQ_NAME%\">x.txt"
+        );
+        assert_eq!(
+            hook_shell_command("copy \"{folder}\\a.txt\" {file}", true),
+            "copy \"%NQ_FOLDER%\\a.txt\" \"%NQ_FILE%\""
+        );
+        assert_eq!(hook_shell_command("run {name}", false), "run \"${NQ_NAME}\"");
+        assert_eq!(hook_env_value("a\"b\r\nc"), "abc");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn execute_hook_does_not_run_commands_from_the_nzb_name() {
+        let root = std::env::temp_dir().join(format!("newsqueue-execute-inject-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let mut app = App::new(Settings::default(), Some("unused.png".into()));
+        app.queue.clear();
+        let mut collection = sample_queue(&app.settings).remove(0);
+        collection.id = 301;
+        collection.folder = root.to_string_lossy().to_string();
+        collection.subject = "safe & echo pwned>pwned.txt \" & echo two>pwned2.txt".into();
+        collection.execute = "echo {name}>marker.txt".into();
+        collection.execute_done = false;
+        app.queue = vec![collection];
+        app.run_execute_hook(301);
+        for _ in 0..100 {
+            if root.join("marker.txt").is_file() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let marker = std::fs::read_to_string(root.join("marker.txt")).unwrap();
+        assert!(marker.contains("safe & echo pwned"), "{marker}");
+        assert!(!root.join("pwned.txt").exists());
+        assert!(!root.join("pwned2.txt").exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[cfg(target_os = "windows")]
