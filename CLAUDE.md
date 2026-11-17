@@ -11,8 +11,9 @@ NewsQueue is a Windows-only, from-scratch Rust/egui clone of AltBinz 0.48.4. It
 is a private-use desktop Usenet downloader, not a source-code or artwork copy of
 the original. **AltBinz parity is no longer a requirement (2026-11-18):** prefer a
 sensible app with useful settings over measured AltBinz behaviour; the
-measurements remain as reference. The UI uses Segoe UI (loaded from the
-Windows font folder), follows the monitor DPI outside `--screenshot` mode, and
+measurements remain as reference. The UI uses the "Instrument" skin ported
+from Caustica (`app/src/skin.rs`, bundled IBM Plex fonts), in a light and a dark
+variant (setting `ui_theme`: system/light/dark), follows the monitor DPI outside `--screenshot` mode, and
 labels are not text-selectable. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
@@ -20,7 +21,7 @@ versioning.
 - Current build date: **2026-11-18**
 - Parity target: **AltBinz 0.48.4**
 - Platform: Windows x64
-- UI: eframe/egui 0.29, custom light theme
+- UI: eframe/egui 0.37 (glow), Instrument skin, light/dark/system theme
 - Network: std threads, blocking sockets, no async runtime
 - Out of scope: global/Newznab search (removed 2026-11-18; the toolbar has no
   Search button and Ctrl+F does nothing)
@@ -54,7 +55,8 @@ runs both (`default-members`).
 | `app/core/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
 | `app/core/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
 | `app/src/update.rs` | GitHub release check, verified self-update via the silent installer |
-| `app/src/theme.rs` | Measured colours, fonts, icon drawing, widget metrics |
+| `app/src/theme.rs` | App palette (light/dark pairs), theme switching, icon drawing, toolbar/tab/progress widgets |
+| `app/src/skin.rs` | Instrument skin from Caustica: texture-atlas widgets (buttons, fields, checkboxes, menus, windows), IBM Plex fonts, light/dark palette |
 | `app/src/tray.rs` | Win32 tray icon, off-screen hide/show, taskbar add/remove, tooltip, balloons |
 | `app/src/shutdown.rs` | Queue-drained shutdown/hibernate/sleep/exit plan plus mock backend |
 | `app/tools/` | Vendored `UnRAR.exe`, `par2.exe`, licenses; do not delete |
@@ -345,6 +347,15 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 - Queue rows include a transparent `row_click_overlay`; preserve it
   when editing cells or labels.
 - Keep icons/theme drawn, not copied from the original artwork.
+- Widgets come from `skin.rs` (`skin::button`, `checkbox_label`, `text_edit`,
+  `drag_value`, `ComboBox`, `window`, `context_menu`, …), never egui's stock
+  ones. Colours are functions (`theme::TEXT()`, `skin::PANEL()`) that return the
+  light or dark value; never add a fixed `Color32` for UI chrome. A new look in
+  `skin::spec` needs both variants.
+- eframe 0.37 calls only `App::logic` while the window is minimized/hidden:
+  tray handling, `tick` and exit handling live there, drawing in `App::ui`.
+- Screenshots render dark unless `NQ_DEMO_THEME=light`; `screenshots.ps1`
+  writes `queue-light.png` and `dialog-setup-light.png` too.
 
 ## 10. Known gotchas
 

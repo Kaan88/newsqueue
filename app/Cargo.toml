@@ -1,16 +1,17 @@
 [package]
 name = "newsqueue"
 version = "1.0.4"
-edition = "2021"
+edition = "2024"
 
 [workspace]
 members = [".", "core"]
 default-members = [".", "core"]
 
 [dependencies]
+egui = "0.37"
 newsqueue-core = { path = "core" }
-eframe = "0.29"
-egui_extras = "0.29"
+eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts", "accesskit", "wayland", "x11"] }
+egui_extras = "0.37"
 image = { version = "0.25", default-features = false, features = ["png"] }
 rfd = "0.14"
 serde = { version = "1", features = ["derive"] }

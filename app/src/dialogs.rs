@@ -1,5 +1,5 @@
-use eframe::egui::{
-    self, Align, Align2, Color32, FontId, Label, Layout, RichText, ScrollArea, Stroke, TextEdit,
+﻿use eframe::egui::{
+    self, Align, Align2, FontId, Label, Layout, RichText, ScrollArea, Stroke, TextEdit,
     Ui, Vec2,
 };
 
@@ -80,7 +80,7 @@ fn version_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_version;
     let mut check = false;
     let mut install = false;
-    egui::Window::new("Version")
+    crate::skin::window("Version")
         .default_pos([420.0, 220.0])
         .default_size([380.0, 140.0])
         .resizable(false)
@@ -98,19 +98,19 @@ fn version_window(app: &mut App, ctx: &egui::Context) {
             ui.add_space(8.0);
             ui.horizontal(|ui| {
                 let busy = app.update_rx.is_some() || app.update_installing;
-                if ui.add_enabled(!busy, egui::Button::new("Check now")).clicked() {
+                if ui.add_enabled(!busy, crate::skin::Button::new("Check now")).clicked() {
                     check = true;
                 }
                 if let Some(release) = app.update_available.clone() {
                     let can_install = crate::update::install_dir().is_some();
                     let label = format!("Update to {}", release.version);
                     if ui
-                        .add_enabled(!busy && can_install, egui::Button::new(label))
+                        .add_enabled(!busy && can_install, crate::skin::Button::new(label))
                         .clicked()
                     {
                         install = true;
                     }
-                    if !release.page.is_empty() && ui.button("Release page").clicked() {
+                    if !release.page.is_empty() && crate::skin::button(ui, "Release page").clicked() {
                         ui.ctx().open_url(egui::OpenUrl::new_tab(release.page.clone()));
                     }
                 }
@@ -130,7 +130,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
     let mut draft = std::mem::take(&mut app.setup_draft);
     let mut ok = false;
     let mut cancel = false;
-    egui::Window::new("Setup")
+    crate::skin::window("Setup")
         .default_pos([245.0, 95.0])
         .default_size([700.0, 580.0])
         .min_size([650.0, 470.0])
@@ -147,14 +147,14 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                         ui.painter().rect_filled(
                             ui.max_rect(),
                             0.0,
-                            Color32::from_rgb(246, 249, 253),
+                            theme::PANEL_WHITE(),
                         );
                         ScrollArea::vertical()
                             .id_salt("setup_tree_scroll")
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 for (i, name) in SETUP_PAGES.iter().enumerate() {
-                                    let r = ui.selectable_label(
+                                    let r = crate::skin::selectable(ui, 
                                         app.setup_page == i,
                                         *name,
                                     );
@@ -178,7 +178,7 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
                                     RichText::new(SETUP_PAGES[app.setup_page])
                                         .size(14.0)
                                         .strong()
-                                        .color(theme::TEXT_GROUP),
+                                        .color(theme::TEXT_GROUP()),
                                 );
                                 ui.separator();
                                 match app.setup_page {
@@ -204,16 +204,16 @@ fn setup_window(app: &mut App, ctx: &egui::Context) {
             });
             ui.separator();
             ui.horizontal(|ui| {
-                if ui.button("Columns...").clicked() {
+                if crate::skin::button(ui, "Columns...").clicked() {
                     app.column_visible_draft = app.settings.column_visible;
                     app.column_width_draft = app.settings.column_widths;
                     app.show_columns = true;
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if ui.button("OK").clicked() {
+                    if crate::skin::button(ui, "OK").clicked() {
                         ok = true;
                     }
-                    if ui.button("Cancel").clicked() {
+                    if crate::skin::button(ui, "Cancel").clicked() {
                         cancel = true;
                     }
                 });
@@ -258,7 +258,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
             ui.label("Maximum download speed");
             ui.horizontal(|ui| {
                 let old = s.max_speed_kbps;
-                ui.add(
+                crate::skin::drag_value(ui,
                     egui::DragValue::new(&mut s.max_speed_kbps)
                         .speed(1.0)
                         .range(0.0..=10_000.0)
@@ -270,7 +270,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
                 ui.label(
                     RichText::new(format!("({:.2} Mbit/s)", s.max_speed_mbps))
                         .size(11.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             });
             ui.end_row();
@@ -278,7 +278,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
             ui.label("Maximum download speed");
             ui.horizontal(|ui| {
                 let old = s.max_speed_mbps;
-                ui.add(
+                crate::skin::drag_value(ui,
                     egui::DragValue::new(&mut s.max_speed_mbps)
                         .speed(0.01)
                         .range(0.0..=100.0)
@@ -290,7 +290,7 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
                 ui.label(
                     RichText::new(format!("({:.0} KB/s)", s.max_speed_kbps))
                         .size(11.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             });
             ui.end_row();
@@ -300,11 +300,11 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
 
 
             ui.label("Retry count");
-            ui.add(egui::DragValue::new(&mut s.retry_count).range(0..=999));
+            crate::skin::drag_value(ui,egui::DragValue::new(&mut s.retry_count).range(0..=999));
             ui.end_row();
 
             ui.label("Delay between retries");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.retry_delay)
                     .range(0..=1440)
                     .suffix(" s"),
@@ -317,15 +317,15 @@ fn page_connection(ui: &mut Ui, s: &mut Settings) {
     ui.label(
         RichText::new("The original profile saved 8 connections with SSL on port 563. SSL switches the default port between 563 and 119. The limits are 200 connections per server and 8 servers per level.")
             .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .color(theme::TEXT_MUTED()),
     );
 }
 
 fn dir_row(ui: &mut Ui, label: &str, value: &mut String) {
     ui.label(label);
     ui.horizontal(|ui| {
-        ui.add_sized([380.0, 22.0], TextEdit::singleline(value));
-        if ui.button("Browse...").clicked() {
+        crate::skin::text_edit(ui,380.0, TextEdit::singleline(value));
+        if crate::skin::button(ui, "Browse...").clicked() {
             if let Some(p) = rfd::FileDialog::new().set_directory(crate::theme::start_dir(value)).pick_folder() {
                 *value = p.to_string_lossy().to_string();
             }
@@ -348,7 +348,7 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
 
             ui.label("If free space on destination drive gets below");
             ui.horizontal(|ui| {
-                ui.add(
+                crate::skin::drag_value(ui,
                     egui::DragValue::new(&mut s.low_free_space_mb)
                         .range(0..=1_000_000)
                         .suffix(" MB"),
@@ -358,7 +358,7 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
             ui.end_row();
 
             ui.label("Autosave download queue every");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.autosave_minutes)
                     .range(1..=999)
                     .suffix(" min"),
@@ -367,21 +367,21 @@ fn page_download(ui: &mut Ui, s: &mut Settings) {
 
             ui.label("Cleanup");
             ui.horizontal(|ui| {
-                ui.checkbox(&mut s.par2_checking, "Par2 list");
+                crate::skin::checkbox_label(ui, &mut s.par2_checking, "Par2 list");
             });
             ui.end_row();
 
             ui.label("Skip if file is already downloaded");
-            ui.checkbox(&mut s.skip_existing, "");
+            crate::skin::checkbox_label(ui, &mut s.skip_existing, "");
             ui.end_row();
 
 
             ui.label("Dblclick toggles expand/collapse");
-            ui.checkbox(&mut s.dblclick_expand, "");
+            crate::skin::checkbox_label(ui, &mut s.dblclick_expand, "");
             ui.end_row();
         });
     ui.add_space(8.0);
-    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(11.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to edit the queue columns.").size(11.0).color(theme::TEXT_MUTED()));
 }
 
 fn page_download2(ui: &mut Ui, s: &mut Settings) {
@@ -391,13 +391,13 @@ fn page_download2(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Delete NZB file after importing");
-            ui.checkbox(&mut s.delete_nzb_after_import, "");
+            crate::skin::checkbox_label(ui, &mut s.delete_nzb_after_import, "");
             ui.end_row();
             ui.label("Import as paused");
-            ui.checkbox(&mut s.auto_import_paused, "");
+            crate::skin::checkbox_label(ui, &mut s.auto_import_paused, "");
             ui.end_row();
             ui.label("Case insensitive subject filters");
-            ui.checkbox(&mut s.case_insensitive_filters, "");
+            crate::skin::checkbox_label(ui, &mut s.case_insensitive_filters, "");
             ui.end_row();
         });
 }
@@ -409,26 +409,26 @@ fn page_log(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Enable logging");
-            ui.checkbox(&mut s.log_enabled, "");
+            crate::skin::checkbox_label(ui, &mut s.log_enabled, "");
             ui.end_row();
             ui.label("Log to file");
-            ui.checkbox(&mut s.log_to_file, "");
+            crate::skin::checkbox_label(ui, &mut s.log_to_file, "");
             ui.end_row();
             ui.label("Keep log files for previous");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.keep_log_days)
                     .range(0..=999)
                     .suffix(" days"),
             );
             ui.end_row();
             ui.label("Maximum visible lines in Log tab");
-            ui.add(egui::DragValue::new(&mut s.max_log_lines).range(0..=100_000));
+            crate::skin::drag_value(ui,egui::DragValue::new(&mut s.max_log_lines).range(0..=100_000));
             ui.end_row();
             ui.label("Detailed logging");
-            ui.checkbox(&mut s.detailed_log, "");
+            crate::skin::checkbox_label(ui, &mut s.detailed_log, "");
             ui.end_row();
             ui.label("Keep download history for last");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.keep_log_days)
                     .range(0..=999)
                     .suffix(" days"),
@@ -438,7 +438,7 @@ fn page_log(ui: &mut Ui, s: &mut Settings) {
     ui.label(
         RichText::new("The log keeps 200 visible lines in this build and writes one file per day.")
             .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .color(theme::TEXT_MUTED()),
     );
 }
 
@@ -449,29 +449,29 @@ fn page_misc(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Minimize to tray");
-            ui.checkbox(&mut s.minimize_to_tray, "");
+            crate::skin::checkbox_label(ui, &mut s.minimize_to_tray, "");
             ui.end_row();
             ui.label("Minimize to tray on close");
-            ui.checkbox(&mut s.minimize_to_tray_on_close, "");
+            crate::skin::checkbox_label(ui, &mut s.minimize_to_tray_on_close, "");
             ui.end_row();
             ui.label("Tray balloon hints");
-            ui.checkbox(&mut s.tray_balloon, "");
+            crate::skin::checkbox_label(ui, &mut s.tray_balloon, "");
             ui.end_row();
             ui.label("Display speed in tray");
-            ui.checkbox(&mut s.speed_in_tray, "");
+            crate::skin::checkbox_label(ui, &mut s.speed_in_tray, "");
             ui.end_row();
             ui.label("Check for new version every");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.check_version_minutes)
                     .range(0..=9999)
                     .suffix(" min (0 = never)"),
             );
             ui.end_row();
             ui.label("Install new versions automatically");
-            ui.checkbox(&mut s.auto_update, "when idle");
+            crate::skin::checkbox_label(ui, &mut s.auto_update, "when idle");
             ui.end_row();
             ui.label("Clear history on exit");
-            ui.checkbox(&mut s.clear_history_on_exit, "");
+            crate::skin::checkbox_label(ui, &mut s.clear_history_on_exit, "");
             ui.end_row();
         });
 }
@@ -483,21 +483,21 @@ fn page_misc2(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Article cache size");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.article_cache_mb)
                     .range(0..=500)
                     .suffix(" MB"),
             );
             ui.end_row();
             ui.label("Cache cleanup time");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.cache_cleanup_minutes)
                     .range(1..=60)
                     .suffix(" min"),
             );
             ui.end_row();
             ui.label("Download thread priority");
-            ui.add(egui::DragValue::new(&mut s.download_priority).range(0..=5));
+            crate::skin::drag_value(ui,egui::DragValue::new(&mut s.download_priority).range(0..=5));
             ui.end_row();
         });
 }
@@ -509,7 +509,7 @@ fn page_misc3(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("RSS refresh interval");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.rss_refresh_minutes)
                     .range(1..=1440)
                     .suffix(" min"),
@@ -527,11 +527,11 @@ fn page_nzb(ui: &mut Ui, s: &mut Settings) {
             dir_row(ui, "Default NZB folder", &mut s.nzb_dir);
             ui.label("Autoimport NZB files from folder");
             ui.horizontal(|ui| {
-                ui.add_sized(
-                    [300.0, 20.0],
+                crate::skin::text_edit(ui,
+                    300.0,
                     TextEdit::singleline(&mut s.auto_import_folder),
                 );
-                if ui.button("Browse...").clicked() {
+                if crate::skin::button(ui, "Browse...").clicked() {
                     if let Some(p) = rfd::FileDialog::new().set_directory(crate::theme::start_dir(&s.auto_import_folder)).pick_folder() {
                         s.auto_import_folder = p.to_string_lossy().to_string();
                     }
@@ -539,10 +539,10 @@ fn page_nzb(ui: &mut Ui, s: &mut Settings) {
             });
             ui.end_row();
             ui.label("Import as paused");
-            ui.checkbox(&mut s.auto_import_paused, "");
+            crate::skin::checkbox_label(ui, &mut s.auto_import_paused, "");
             ui.end_row();
             ui.label("Delete NZB after import");
-            ui.checkbox(&mut s.delete_nzb_after_import, "");
+            crate::skin::checkbox_label(ui, &mut s.delete_nzb_after_import, "");
             ui.end_row();
         });
 }
@@ -554,10 +554,10 @@ fn page_nzb2(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Delete NZB after import");
-            ui.checkbox(&mut s.delete_nzb_after_import, "");
+            crate::skin::checkbox_label(ui, &mut s.delete_nzb_after_import, "");
             ui.end_row();
             ui.label("Case insensitive subject filters");
-            ui.checkbox(&mut s.case_insensitive_filters, "");
+            crate::skin::checkbox_label(ui, &mut s.case_insensitive_filters, "");
             ui.end_row();
         });
 }
@@ -569,51 +569,51 @@ fn page_par2(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("PAR2 checking");
-            ui.checkbox(&mut s.par2_checking, "");
+            crate::skin::checkbox_label(ui, &mut s.par2_checking, "");
             ui.end_row();
             ui.label("PAR2 repairing");
-            ui.checkbox(&mut s.par2_repairing, "");
+            crate::skin::checkbox_label(ui, &mut s.par2_repairing, "");
             ui.end_row();
             ui.label("Cleanup after PAR2 repair");
-            ui.checkbox(&mut s.cleanup_after_repair, "");
+            crate::skin::checkbox_label(ui, &mut s.cleanup_after_repair, "");
             ui.end_row();
         });
 }
 
 fn page_proxy(ui: &mut Ui, s: &mut Settings) {
     heading(ui, "Proxy");
-    ui.checkbox(&mut s.proxy_enabled, "Proxy / Firewall (nntp connections)");
+    crate::skin::checkbox_label(ui, &mut s.proxy_enabled, "Proxy / Firewall (nntp connections)");
     egui::Grid::new("proxy_grid")
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Type");
-            egui::ComboBox::from_id_salt("proxy_kind")
+            crate::skin::ComboBox::from_id_salt("proxy_kind")
                 .selected_text(if s.proxy_kind.eq_ignore_ascii_case("socks5") {
                     "SOCKS5"
                 } else {
                     "HTTP CONNECT"
                 })
                 .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut s.proxy_kind, "http".into(), "HTTP CONNECT");
-                    ui.selectable_value(&mut s.proxy_kind, "socks5".into(), "SOCKS5");
+                    crate::skin::selectable_value(ui, &mut s.proxy_kind, "http".into(), "HTTP CONNECT");
+                    crate::skin::selectable_value(ui, &mut s.proxy_kind, "socks5".into(), "SOCKS5");
                 });
             ui.end_row();
             ui.label("Address");
-            ui.add_sized([240.0, 20.0], TextEdit::singleline(&mut s.proxy_address));
+            crate::skin::text_edit(ui,240.0, TextEdit::singleline(&mut s.proxy_address));
             ui.end_row();
             ui.label("Port");
-            ui.add(egui::DragValue::new(&mut s.proxy_port).range(1..=65535));
+            crate::skin::drag_value(ui,egui::DragValue::new(&mut s.proxy_port).range(1..=65535));
             ui.end_row();
             ui.label("Requires authentication");
-            ui.checkbox(&mut s.proxy_auth, "");
+            crate::skin::checkbox_label(ui, &mut s.proxy_auth, "");
             ui.end_row();
             ui.label("Username");
-            ui.add_sized([240.0, 20.0], TextEdit::singleline(&mut s.proxy_username));
+            crate::skin::text_edit(ui,240.0, TextEdit::singleline(&mut s.proxy_username));
             ui.end_row();
             ui.label("Password");
-            ui.add_sized(
-                [240.0, 20.0],
+            crate::skin::text_edit(ui,
+                240.0,
                 TextEdit::singleline(&mut s.proxy_password).password(true),
             );
             ui.end_row();
@@ -622,13 +622,13 @@ fn page_proxy(ui: &mut Ui, s: &mut Settings) {
 
 fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
     heading(ui, "Scheduler");
-    ui.checkbox(&mut s.scheduler_enabled, "Enable scheduler");
+    crate::skin::checkbox_label(ui, &mut s.scheduler_enabled, "Enable scheduler");
     ui.label(
         RichText::new(
             "Each row is a day; each cell is a 30-minute slot. Green means downloading is allowed.",
         )
         .size(11.0)
-        .color(theme::TEXT_MUTED),
+        .color(theme::TEXT_MUTED()),
     );
     ui.add_space(6.0);
     let days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
@@ -649,14 +649,14 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
                     ui.allocate_exact_size(Vec2::new(11.0, 16.0), egui::Sense::click());
                 let on = chars.get(slot).copied().unwrap_or('0') == '1';
                 let fill = if on {
-                    theme::GREEN
+                    theme::GREEN()
                 } else {
-                    Color32::from_rgb(225, 230, 236)
+                    theme::BG_LIGHT()
                 };
                 ui.painter().rect_filled(rect.shrink(0.5), 0.0, fill);
                 if *day == current_day.as_str() && slot == current_slot {
                     ui.painter()
-                        .rect_stroke(rect, 0.0, Stroke::new(1.5_f32, theme::ACCENT));
+                        .rect_stroke(rect, 0.0, Stroke::new(1.5_f32, theme::ACCENT()), egui::StrokeKind::Inside);
                 }
                 if resp.clicked() {
                     click = Some((d, slot));
@@ -681,7 +681,7 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
                 Label::new(
                     RichText::new(format!("{h:02}"))
                         .size(10.5)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 ),
             );
         }
@@ -693,12 +693,12 @@ fn page_scheduler(ui: &mut Ui, s: &mut Settings) {
             Some(t) => format!("{}%", t * 10),
             None => "No limit".into(),
         };
-        egui::ComboBox::from_id_salt("sched_speed")
+        crate::skin::ComboBox::from_id_salt("sched_speed")
             .selected_text(label.clone())
             .show_ui(ui, |ui| {
-                ui.selectable_value(&mut s.startup_speed_limit, None, "No limit");
+                crate::skin::selectable_value(ui, &mut s.startup_speed_limit, None, "No limit");
                 for t in 1..=9u8 {
-                    ui.selectable_value(
+                    crate::skin::selectable_value(ui, 
                         &mut s.startup_speed_limit,
                         Some(t),
                         format!("{}%", t * 10),
@@ -713,19 +713,19 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
     heading(ui, "Servers");
     let mut action = 0u8;
     ui.horizontal(|ui| {
-        if ui.button("Add server").clicked() {
+        if crate::skin::button(ui, "Add server").clicked() {
             action = 1;
         }
-        if ui.button("Edit server").clicked() {
+        if crate::skin::button(ui, "Edit server").clicked() {
             action = 2;
         }
-        if ui.button("Delete server").clicked() {
+        if crate::skin::button(ui, "Delete server").clicked() {
             action = 3;
         }
-        if ui.button("Move up").clicked() {
+        if crate::skin::button(ui, "Move up").clicked() {
             action = 4;
         }
-        if ui.button("Move down").clicked() {
+        if crate::skin::button(ui, "Move down").clicked() {
             action = 5;
         }
     });
@@ -740,7 +740,7 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
             }
             ui.end_row();
             for (i, server) in s.servers.iter_mut().enumerate() {
-                ui.checkbox(&mut server.enabled, "");
+                crate::skin::checkbox_label(ui, &mut server.enabled, "");
                 let selected = app.setup_server_selected == Some(i);
                 if ui
                     .selectable_label(selected, RichText::new(&server.name).size(11.5))
@@ -771,7 +771,7 @@ fn page_servers(ui: &mut Ui, app: &mut App, s: &mut Settings) {
     ui.label(
         RichText::new("A server needs a name, an address and a non-zero port. SSL switches the default port between 563 and 119.")
             .size(11.0)
-            .color(theme::TEXT_MUTED),
+            .color(theme::TEXT_MUTED()),
     );
     match action {
         1 => {
@@ -826,49 +826,49 @@ fn page_unpack(ui: &mut Ui, s: &mut Settings) {
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
             ui.label("Autounpack");
-            ui.checkbox(
+            crate::skin::checkbox_label(ui, 
                 &mut s.auto_unrar,
                 "Collections will be autounpacked after par2 checking",
             );
             ui.end_row();
             ui.label("Overwrite existing files");
-            ui.checkbox(&mut s.overwrite_existing, "");
+            crate::skin::checkbox_label(ui, &mut s.overwrite_existing, "");
             ui.end_row();
             ui.label("Delete archives after unpacking");
-            ui.checkbox(&mut s.delete_archives, "");
+            crate::skin::checkbox_label(ui, &mut s.delete_archives, "");
             ui.end_row();
             ui.label("Strip root folder");
-            ui.checkbox(
+            crate::skin::checkbox_label(ui, 
                 &mut s.strip_root,
                 "Strip common root folder from archive content",
             );
             ui.end_row();
             ui.label("Rename instead of overwrite");
-            ui.checkbox(&mut s.rename_existing, "");
+            crate::skin::checkbox_label(ui, &mut s.rename_existing, "");
             ui.end_row();
             ui.label("Unpack to a different folder");
-            ui.checkbox(&mut s.unrar_to_different, "");
+            crate::skin::checkbox_label(ui, &mut s.unrar_to_different, "");
             ui.end_row();
             ui.label("Unrar folder");
             dir_row(ui, "Path", &mut s.unrar_dir);
             ui.end_row();
             ui.label("Create subfolder based on archive name");
-            ui.checkbox(&mut s.create_dir_archive_name, "");
+            crate::skin::checkbox_label(ui, &mut s.create_dir_archive_name, "");
             ui.end_row();
             ui.label("Create subfolder based on group name");
-            ui.checkbox(&mut s.create_dir_group_name, "");
+            crate::skin::checkbox_label(ui, &mut s.create_dir_group_name, "");
             ui.end_row();
             ui.label("Create subfolder based on NZB name");
-            ui.checkbox(&mut s.create_dir_nzb_name, "");
+            crate::skin::checkbox_label(ui, &mut s.create_dir_nzb_name, "");
             ui.end_row();
             ui.label("Rename single extracted file to collection name");
-            ui.checkbox(&mut s.auto_rename_to_collection, "");
+            crate::skin::checkbox_label(ui, &mut s.auto_rename_to_collection, "");
             ui.end_row();
             ui.label("Delete empty folders after unpacking");
-            ui.checkbox(&mut s.delete_empty_folder, "");
+            crate::skin::checkbox_label(ui, &mut s.delete_empty_folder, "");
             ui.end_row();
             ui.label("Pause downloading while unraring");
-            ui.checkbox(&mut s.pause_while_unraring, "");
+            crate::skin::checkbox_label(ui, &mut s.pause_while_unraring, "");
             ui.end_row();
             ui.label("Move files to unrar folder");
             ui.add(
@@ -891,37 +891,44 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
         .num_columns(2)
         .spacing([12.0, 6.0])
         .show(ui, |ui| {
+            ui.label("Theme");
+            ui.horizontal(|ui| {
+                for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+                    crate::skin::selectable_value(ui, &mut s.ui_theme, value.to_string(), label);
+                }
+            });
+            ui.end_row();
             ui.label("Visible tabs");
             ui.horizontal_wrapped(|ui| {
-                ui.checkbox(&mut s.show_tabs[0], "Download queue");
-                ui.checkbox(&mut s.show_tabs[1], "PAR2");
-                ui.checkbox(&mut s.show_tabs[2], "Explorer");
-                ui.checkbox(&mut s.show_tabs[3], "Log");
-                ui.checkbox(&mut s.show_tabs[4], "RSS");
+                crate::skin::checkbox_label(ui, &mut s.show_tabs[0], "Download queue");
+                crate::skin::checkbox_label(ui, &mut s.show_tabs[1], "PAR2");
+                crate::skin::checkbox_label(ui, &mut s.show_tabs[2], "Explorer");
+                crate::skin::checkbox_label(ui, &mut s.show_tabs[3], "Log");
+                crate::skin::checkbox_label(ui, &mut s.show_tabs[4], "RSS");
             });
             ui.end_row();
             ui.label("Connections panel visible");
-            ui.checkbox(&mut s.thread_list_visible, "");
+            crate::skin::checkbox_label(ui, &mut s.thread_list_visible, "");
             ui.end_row();
             ui.label("Connections panel height");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.thread_list_height)
                     .range(70.0..=520.0)
                     .suffix(" px"),
             );
             ui.end_row();
             ui.label("Explorer folders panel");
-            ui.checkbox(&mut s.exp_folders_visible, "");
+            crate::skin::checkbox_label(ui, &mut s.exp_folders_visible, "");
             ui.end_row();
             ui.label("Explorer folders width");
-            ui.add(
+            crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.exp_folders_width)
                     .range(140.0..=400.0)
                     .suffix(" px"),
             );
             ui.end_row();
         });
-    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(11.0).color(theme::TEXT_MUTED));
+    ui.label(RichText::new("Use the Columns button at the bottom of the Setup window to change queue column visibility and width.").size(11.0).color(theme::TEXT_MUTED()));
 }
 
 fn server_edit_window(app: &mut App, ctx: &egui::Context) {
@@ -940,7 +947,7 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
         ),
         None => "New server".into(),
     };
-    egui::Window::new(title)
+    crate::skin::window(title)
         .default_pos([390.0, 160.0])
         .default_size([500.0, 360.0])
         .resizable(false)
@@ -952,26 +959,24 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                 .spacing([8.0, 7.0])
                 .show(ui, |ui| {
                     ui.label("Name");
-                    ui.add_sized([190.0, 20.0], TextEdit::singleline(&mut draft.name));
+                    crate::skin::text_edit(ui,190.0, TextEdit::singleline(&mut draft.name));
                     ui.label("Nr. of connections");
                     ui.horizontal(|ui| {
-                        ui.add(
+                        crate::skin::drag_value(ui,
                             egui::DragValue::new(&mut draft.connections)
                                 .range(1..=MAX_CONNECTIONS_PER_SERVER),
                         );
-                        ui.checkbox(&mut draft.select_group, "Select group");
+                        crate::skin::checkbox_label(ui, &mut draft.select_group, "Select group");
                     });
                     ui.end_row();
                     ui.label("Address");
-                    ui.add_sized([190.0, 20.0], TextEdit::singleline(&mut draft.address));
+                    crate::skin::text_edit(ui,190.0, TextEdit::singleline(&mut draft.address));
                     ui.label("Port");
                     ui.horizontal(|ui| {
                         let old = draft.ssl;
-                        ui.add_sized(
-                            [64.0, 20.0],
-                            egui::DragValue::new(&mut draft.port).range(1..=65535),
+                        crate::skin::drag_value_sized(ui, 64.0, egui::DragValue::new(&mut draft.port).range(1..=65535),
                         );
-                        if ui.checkbox(&mut draft.ssl, "SSL").changed() || draft.ssl != old {
+                        if crate::skin::checkbox_label(ui, &mut draft.ssl, "SSL").changed() || draft.ssl != old {
                             if draft.ssl && draft.port == PLAIN_PORT {
                                 draft.port = SSL_PORT;
                             } else if !draft.ssl && draft.port == SSL_PORT {
@@ -983,7 +988,7 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                 });
             ui.add_space(6.0);
             ui.group(|ui| {
-                ui.checkbox(&mut draft.auth, "Server requires authentication");
+                crate::skin::checkbox_label(ui, &mut draft.auth, "Server requires authentication");
                 ui.add_enabled_ui(draft.auth, |ui| {
                     egui::Grid::new("auth_grid")
                         .num_columns(2)
@@ -992,16 +997,16 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                             ui.label("Username");
                             ui.label("Password");
                             ui.end_row();
-                            ui.add_sized([180.0, 20.0], TextEdit::singleline(&mut draft.username));
-                            ui.add_sized(
-                                [180.0, 20.0],
+                            crate::skin::text_edit(ui,180.0, TextEdit::singleline(&mut draft.username));
+                            crate::skin::text_edit(ui,
+                                180.0,
                                 TextEdit::singleline(&mut draft.password).password(true),
                             );
                             ui.end_row();
                         });
                 });
-                ui.checkbox(&mut draft.article_cmd, "ARTICLE cmd");
-                ui.checkbox(&mut draft.connected_idle, "Connected while idle");
+                crate::skin::checkbox_label(ui, &mut draft.article_cmd, "ARTICLE cmd");
+                crate::skin::checkbox_label(ui, &mut draft.connected_idle, "Connected while idle");
             });
             ui.add_space(6.0);
             egui::Grid::new("server_edit_grid2")
@@ -1009,16 +1014,16 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                 .spacing([8.0, 6.0])
                 .show(ui, |ui| {
                     ui.label("Server purpose");
-                    ui.add_sized([130.0, 20.0], TextEdit::singleline(&mut draft.purpose));
+                    crate::skin::text_edit(ui,130.0, TextEdit::singleline(&mut draft.purpose));
                     ui.label("Max. age");
-                    ui.add(
+                    crate::skin::drag_value(ui,
                         egui::DragValue::new(&mut draft.max_age)
                             .range(0..=9999)
                             .suffix(" days"),
                     );
                     ui.end_row();
                     ui.label("Network adapter");
-                    ui.add_sized([130.0, 20.0], TextEdit::singleline(&mut draft.nic));
+                    crate::skin::text_edit(ui,130.0, TextEdit::singleline(&mut draft.nic));
                     ui.label("");
                     ui.label("");
                     ui.end_row();
@@ -1027,12 +1032,12 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                 ui.label(
                     RichText::new(&app.server_edit_error)
                         .size(11.5)
-                        .color(theme::RED),
+                        .color(theme::RED()),
                 );
             }
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::skin::button(ui, "Save").clicked() {
                     if draft.name.trim().is_empty()
                         || draft.address.trim().is_empty()
                         || draft.port == 0
@@ -1043,7 +1048,7 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                         save = true;
                     }
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1080,7 +1085,7 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
 
 fn stats_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_stats;
-    egui::Window::new("Statistics & History")
+    crate::skin::window("Statistics & History")
         .default_pos([230.0, 105.0])
         .default_size([820.0, 560.0])
         .min_size([620.0, 420.0])
@@ -1089,11 +1094,11 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.selectable_value(&mut app.stats_tab, 0, "Daily transfer");
-                ui.selectable_value(&mut app.stats_tab, 1, "Monthly transfer");
-                ui.selectable_value(&mut app.stats_tab, 2, "Daily speedgraph");
-                ui.selectable_value(&mut app.stats_tab, 3, "Download history");
-                ui.selectable_value(&mut app.stats_tab, 4, "Misc. stats");
+                crate::skin::selectable_value(ui, &mut app.stats_tab, 0, "Daily transfer");
+                crate::skin::selectable_value(ui, &mut app.stats_tab, 1, "Monthly transfer");
+                crate::skin::selectable_value(ui, &mut app.stats_tab, 2, "Daily speedgraph");
+                crate::skin::selectable_value(ui, &mut app.stats_tab, 3, "Download history");
+                crate::skin::selectable_value(ui, &mut app.stats_tab, 4, "Misc. stats");
             });
             ui.separator();
             match app.stats_tab {
@@ -1107,7 +1112,7 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                         ui.label(
                             RichText::new("(MB per hour)")
                                 .size(11.0)
-                                .color(theme::TEXT_MUTED),
+                                .color(theme::TEXT_MUTED()),
                         );
                     });
                     draw_bars(
@@ -1136,15 +1141,15 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                     ui.horizontal(|ui| {
                         ui.label("Search");
                         let mut q = String::new();
-                        ui.add_sized(
-                            [220.0, 20.0],
+                        crate::skin::text_edit(ui,
+                            220.0,
                             TextEdit::singleline(&mut q).hint_text("Name"),
                         );
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                             ui.label(
                                 RichText::new("Double click to open")
                                     .size(11.0)
-                                    .color(theme::TEXT_MUTED),
+                                    .color(theme::TEXT_MUTED()),
                             );
                         });
                     });
@@ -1167,7 +1172,7 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                                         ui.label(
                                             RichText::new(&item.date)
                                                 .size(11.0)
-                                                .color(theme::TEXT_MUTED),
+                                                .color(theme::TEXT_MUTED()),
                                         );
                                         ui.label(RichText::new(&item.size).size(11.0));
                                         ui.end_row();
@@ -1219,8 +1224,8 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
         egui::Sense::hover(),
     );
     let p = ui.painter();
-    p.rect_filled(rect, 0.0, Color32::from_rgb(250, 252, 255));
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT));
+    p.rect_filled(rect, 0.0, theme::PANEL_WHITE());
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT()), egui::StrokeKind::Inside);
     let max = values.iter().take(count).cloned().fold(1.0f64, f64::max);
     let left = rect.left() + 40.0;
     let bottom = rect.bottom() - 24.0;
@@ -1232,14 +1237,14 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
             egui::pos2(left + i as f32 * width + 2.0, bottom - h),
             egui::pos2(left + (i as f32 + 1.0) * width - 2.0, bottom),
         );
-        p.rect_filled(bar, 0.0, Color32::from_rgb(92, 160, 220));
+        p.rect_filled(bar, 0.0, crate::skin::accent_fill());
         if i % 3 == 0 {
             p.text(
                 egui::pos2(bar.center().x, bottom + 10.0),
                 Align2::CENTER_CENTER,
                 labels.get(i).cloned().unwrap_or_default(),
                 FontId::proportional(10.5),
-                theme::TEXT_MUTED,
+                theme::TEXT_MUTED(),
             );
         }
     }
@@ -1248,14 +1253,14 @@ fn draw_bars(ui: &mut Ui, values: &[f64], count: usize, labels: &[String]) {
             egui::pos2(left, bottom),
             egui::pos2(rect.right() - 8.0, bottom),
         ],
-        Stroke::new(1.0_f32, theme::BORDER),
+        Stroke::new(1.0_f32, theme::BORDER()),
     );
     p.text(
         egui::pos2(left, rect.top() + 6.0),
         Align2::LEFT_TOP,
         format!("max {:.0}", max),
         FontId::proportional(8.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
 }
 
@@ -1265,14 +1270,14 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
         egui::Sense::hover(),
     );
     let p = ui.painter();
-    p.rect_filled(rect, 0.0, Color32::from_rgb(250, 252, 255));
-    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT));
+    p.rect_filled(rect, 0.0, theme::PANEL_WHITE());
+    p.rect_stroke(rect, 0.0, Stroke::new(1.0_f32, theme::BORDER_LIGHT()), egui::StrokeKind::Inside);
     let inner = rect.shrink(20.0);
     for k in 0..=4 {
         let y = inner.top() + inner.height() * k as f32 / 4.0;
         p.line_segment(
             [egui::pos2(inner.left(), y), egui::pos2(inner.right(), y)],
-            Stroke::new(1.0_f32, Color32::from_rgb(225, 232, 240)),
+            Stroke::new(1.0_f32, theme::BG_LIGHT()),
         );
     }
     let n = app.speed_history.len();
@@ -1291,7 +1296,7 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
             .collect();
         p.add(egui::Shape::line(
             points,
-            Stroke::new(1.4_f32, theme::GREEN_DARK),
+            Stroke::new(1.4_f32, theme::GREEN_DARK()),
         ));
     }
     p.text(
@@ -1302,27 +1307,27 @@ fn draw_speed_chart(ui: &mut Ui, app: &App) {
             app.status_mode_speed,
         ),
         FontId::proportional(8.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
     p.text(
         egui::pos2(inner.left(), inner.bottom() + 4.0),
         Align2::LEFT_TOP,
         "2 minutes ago",
         FontId::proportional(10.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
     p.text(
         egui::pos2(inner.right(), inner.bottom() + 4.0),
         Align2::RIGHT_TOP,
         "now",
         FontId::proportional(10.5),
-        theme::TEXT_MUTED,
+        theme::TEXT_MUTED(),
     );
 }
 
 fn about_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_about;
-    egui::Window::new("About")
+    crate::skin::window("About")
         .default_pos([420.0, 240.0])
         .default_size([420.0, 300.0])
         .resizable(false)
@@ -1331,18 +1336,18 @@ fn about_window(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.vertical_centered(|ui| {
                 let (rect, _) = ui.allocate_exact_size(Vec2::new(64.0, 64.0), egui::Sense::hover());
-                ui.painter().rect_filled(rect, egui::Rounding::same(10.0), theme::BG);
-                theme::paint_icon(ui.painter(), rect.shrink(10.0), Icon::Connect, theme::ACCENT);
+                ui.painter().rect_filled(rect, egui::CornerRadius::same(10), theme::BG());
+                theme::paint_icon(ui.painter(), rect.shrink(10.0), Icon::Connect, theme::ACCENT());
                 ui.add_space(6.0);
-                ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::TEXT_GROUP));
+                ui.label(RichText::new(APP_NAME).size(22.0).strong().color(theme::TEXT_GROUP()));
                 ui.label(RichText::new(format!("Version {VERSION}")).size(12.0));
-                ui.label(RichText::new(format!("Build date {BUILD_DATE}")).size(11.5).color(theme::TEXT_MUTED));
+                ui.label(RichText::new(format!("Build date {BUILD_DATE}")).size(11.5).color(theme::TEXT_MUTED()));
                 ui.add_space(8.0);
                 ui.label(RichText::new("A desktop Usenet download queue, rebuilt from the observed layout and behaviour.").size(12.0));
                 ui.add_space(4.0);
-                ui.label(RichText::new("Free version. Independent project; not affiliated with the original application.").size(11.0).color(theme::TEXT_MUTED));
+                ui.label(RichText::new("Free version. Independent project; not affiliated with the original application.").size(11.0).color(theme::TEXT_MUTED()));
                 ui.add_space(10.0);
-                if ui.button("OK").clicked() {
+                if crate::skin::button(ui, "OK").clicked() {
                     app.show_about = false;
                 }
             });
@@ -1352,27 +1357,25 @@ fn about_window(app: &mut App, ctx: &egui::Context) {
 
 fn notes_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_notes;
-    egui::Window::new("Notes")
+    crate::skin::window("Notes")
         .default_pos([390.0, 160.0])
         .default_size([480.0, 500.0])
         .resizable(true)
         .collapsible(false)
         .open(&mut open)
         .show(ctx, |ui| {
-            ui.add_sized(
-                [ui.available_width(), ui.available_height() - 30.0],
-                TextEdit::multiline(&mut app.notes_draft)
+            crate::skin::text_area(ui, TextEdit::multiline(&mut app.notes_draft).desired_rows(((ui.available_height() - 50.0) / 17.0).max(4.0) as usize)
                     .font(egui::TextStyle::Monospace)
                     .hint_text("Type notes here..."),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::skin::button(ui, "Save").clicked() {
                     app.settings.notes = app.notes_draft.clone();
                     app.settings.save();
                     app.show_notes = false;
                     app.toast("Notes saved");
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     app.show_notes = false;
                 }
             });
@@ -1386,7 +1389,7 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
     let mut widths = app.column_width_draft;
     let mut save = false;
     let mut cancel = false;
-    egui::Window::new("Column settings")
+    crate::skin::window("Column settings")
         .default_pos([390.0, 80.0])
         .default_size([520.0, 700.0])
         .resizable(true)
@@ -1401,9 +1404,9 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
                 .striped(true)
                 .show(ui, |ui| {
                     for (i, name) in QUEUE_COLUMN_NAMES.iter().enumerate() {
-                        ui.checkbox(&mut visible[i], "");
+                        crate::skin::checkbox_label(ui, &mut visible[i], "");
                         ui.label(RichText::new(*name).size(11.5));
-                        ui.add(
+                        crate::skin::drag_value(ui,
                             egui::DragValue::new(&mut widths[i])
                                 .range(24.0..=800.0)
                                 .suffix(" px"),
@@ -1413,10 +1416,10 @@ fn columns_window(app: &mut App, ctx: &egui::Context) {
                 });
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::skin::button(ui, "Save").clicked() {
                     save = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1445,7 +1448,7 @@ fn rename_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_rename;
     let mut save = false;
     let mut cancel = false;
-    egui::Window::new("Rename collection")
+    crate::skin::window("Rename collection")
         .default_pos([430.0, 230.0])
         .default_size([360.0, 120.0])
         .resizable(false)
@@ -1453,12 +1456,12 @@ fn rename_window(app: &mut App, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label("Collection name");
-            ui.add_sized([340.0, 20.0], TextEdit::singleline(&mut app.rename_draft));
+            crate::skin::text_edit(ui,340.0, TextEdit::singleline(&mut app.rename_draft));
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::skin::button(ui, "Save").clicked() {
                     save = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1479,7 +1482,7 @@ fn rename_window(app: &mut App, ctx: &egui::Context) {
 
 fn pause_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_pause_for;
-    egui::Window::new("Pause for")
+    crate::skin::window("Pause for")
         .default_pos([460.0, 210.0])
         .default_size([330.0, 300.0])
         .resizable(false)
@@ -1496,7 +1499,7 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
                         format!("{}h", p / 60)
                     };
                     if ui
-                        .add_sized([70.0, 24.0], egui::Button::new(label))
+                        .add_sized([70.0, 24.0], crate::skin::Button::new(label))
                         .clicked()
                     {
                         app.pause_for(p);
@@ -1512,17 +1515,17 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
                 } else {
                     app.pause_minutes
                 };
-                ui.add(
+                crate::skin::drag_value(ui,
                     egui::DragValue::new(&mut mins)
                         .range(1..=1440)
                         .suffix(" min"),
                 );
-                if ui.button("Pause").clicked() {
+                if crate::skin::button(ui, "Pause").clicked() {
                     app.pause_for(mins);
                     app.show_pause_for = false;
                 }
             });
-            if ui.button("Disable").clicked() {
+            if crate::skin::button(ui, "Disable").clicked() {
                 app.pause_for(0);
                 app.show_pause_for = false;
             }
@@ -1533,7 +1536,7 @@ fn pause_window(app: &mut App, ctx: &egui::Context) {
                 ui.label(
                     RichText::new(format!("Remaining: {}m {:02}s", secs / 60, secs % 60))
                         .size(11.0)
-                        .color(theme::TEXT_MUTED),
+                        .color(theme::TEXT_MUTED()),
                 );
             }
         });
@@ -1545,7 +1548,7 @@ fn unrar_password_window(app: &mut App, ctx: &egui::Context) {
     let mut draft = app.unrar_password_draft.clone();
     let mut submit = false;
     let mut cancel = false;
-    egui::Window::new("Enter password")
+    crate::skin::window("Enter password")
         .default_pos([440.0, 270.0])
         .default_size([360.0, 110.0])
         .resizable(false)
@@ -1553,8 +1556,8 @@ fn unrar_password_window(app: &mut App, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label("Password");
-            let edit = ui.add_sized(
-                [320.0, 20.0],
+            let edit = crate::skin::text_edit(ui,
+                320.0,
                 TextEdit::singleline(&mut draft).password(true),
             );
             if edit.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter)) {
@@ -1562,10 +1565,10 @@ fn unrar_password_window(app: &mut App, ctx: &egui::Context) {
             }
             ui.add_space(6.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("OK").clicked() {
+                if crate::skin::button(ui, "OK").clicked() {
                     submit = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1582,7 +1585,7 @@ fn unrar_password_window(app: &mut App, ctx: &egui::Context) {
 
 fn shutdown_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_shutdown;
-    egui::Window::new("Shutdown")
+    crate::skin::window("Shutdown")
         .default_pos([440.0, 240.0])
         .default_size([380.0, 160.0])
         .resizable(false)
@@ -1591,15 +1594,15 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
         .show(ctx, |ui| {
             ui.label(RichText::new("Shutdown method").size(12.0));
             let methods = ["Shutdown Windows", "Hibernate", "Sleep", "Exit"];
-            egui::ComboBox::from_id_salt("shutdown_method")
+            crate::skin::ComboBox::from_id_salt("shutdown_method")
                 .selected_text(app.settings.shutdown_method.clone())
                 .show_ui(ui, |ui| {
                     for m in methods {
-                        ui.selectable_value(&mut app.settings.shutdown_method, m.to_string(), m);
+                        crate::skin::selectable_value(ui, &mut app.settings.shutdown_method, m.to_string(), m);
                     }
                 });
             ui.add_space(6.0);
-            ui.checkbox(&mut app.shutdown_armed, "Run this action when all tasks are done");
+            crate::skin::checkbox_label(ui, &mut app.shutdown_armed, "Run this action when all tasks are done");
             ui.add_space(6.0);
             if let Some(until) = app.shutdown_countdown {
                 let secs = until.saturating_duration_since(std::time::Instant::now()).as_secs();
@@ -1609,9 +1612,9 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                         app.settings.shutdown_method
                     ))
                     .size(12.0)
-                    .color(theme::ORANGE),
+                    .color(theme::ORANGE()),
                 );
-                if ui.button("Abort").clicked() {
+                if crate::skin::button(ui, "Abort").clicked() {
                     app.shutdown_countdown = None;
                     app.shutdown_armed = false;
                     app.log("Shutdown", "Shutdown aborted.");
@@ -1623,10 +1626,10 @@ fn shutdown_window(app: &mut App, ctx: &egui::Context) {
                      Shutdown, Hibernate and Sleep affect Windows; Exit only closes NewsQueue.",
                 )
                 .size(10.5)
-                .color(theme::TEXT_MUTED),
+                .color(theme::TEXT_MUTED()),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("OK").clicked() {
+                if crate::skin::button(ui, "OK").clicked() {
                     app.show_shutdown = false;
                 }
             });
@@ -1639,7 +1642,7 @@ fn execute_command_window(app: &mut App, ctx: &egui::Context) {
     let mut draft = app.execute_command_draft.clone();
     let mut save = false;
     let mut cancel = false;
-    egui::Window::new("Execute command")
+    crate::skin::window("Execute command")
         .default_pos([390.0, 240.0])
         .default_size([520.0, 150.0])
         .resizable(false)
@@ -1647,20 +1650,20 @@ fn execute_command_window(app: &mut App, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label("Runs after download/PAR2/unrar");
-            ui.add_sized(
-                [480.0, 20.0],
+            crate::skin::text_edit(ui,
+                480.0,
                 TextEdit::singleline(&mut draft).hint_text("Example: player.exe {file}"),
             );
             ui.label(
                 RichText::new("Placeholders: {folder}, {name}, {file}")
                     .size(11.0)
-                    .color(theme::TEXT_MUTED),
+                    .color(theme::TEXT_MUTED()),
             );
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::skin::button(ui, "Save").clicked() {
                     save = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1685,7 +1688,7 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
     let mut filters = app.rss_filters_draft.clone();
     let mut save = false;
     let mut cancel = false;
-    egui::Window::new("RSS feeds")
+    crate::skin::window("RSS feeds")
         .default_pos([390.0, 150.0])
         .default_size([560.0, 480.0])
         .resizable(true)
@@ -1693,7 +1696,7 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
         .open(&mut open)
         .show(ctx, |ui| {
             ui.label("One feed URL per line. API keys stay in the local settings file.");
-            ui.add(
+            crate::skin::text_area(ui,
                 TextEdit::multiline(&mut draft)
                     .desired_rows(5)
                     .desired_width(f32::INFINITY)
@@ -1706,9 +1709,9 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
                     "pattern | A[P]  or  pattern | D\nLast matching line wins. P starts the item paused.",
                 )
                 .size(11.0)
-                .color(theme::TEXT_MUTED),
+                .color(theme::TEXT_MUTED()),
             );
-            ui.add(
+            crate::skin::text_area(ui,
                 TextEdit::multiline(&mut filters)
                     .desired_rows(6)
                     .desired_width(f32::INFINITY)
@@ -1716,10 +1719,10 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
             );
             ui.separator();
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Save").clicked() {
+                if crate::skin::button(ui, "Save").clicked() {
                     save = true;
                 }
-                if ui.button("Cancel").clicked() {
+                if crate::skin::button(ui, "Cancel").clicked() {
                     cancel = true;
                 }
             });
@@ -1747,7 +1750,7 @@ fn rss_feeds_window(app: &mut App, ctx: &egui::Context) {
 
 fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_speed_limit;
-    egui::Window::new("Speed limit")
+    crate::skin::window("Speed limit")
         .default_pos([500.0, 200.0])
         .default_size([250.0, 340.0])
         .resizable(false)
@@ -1763,7 +1766,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
                     )
                 ))
                 .size(11.5)
-                .color(theme::TEXT_MUTED),
+                .color(theme::TEXT_MUTED()),
             );
             ui.add_space(4.0);
             if ui
@@ -1792,7 +1795,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
             ui.label(
                 RichText::new("The limit is applied to the total of all connections.")
                     .size(10.5)
-                    .color(theme::TEXT_MUTED),
+                    .color(theme::TEXT_MUTED()),
             );
         });
     app.show_speed_limit = open;
@@ -1800,7 +1803,7 @@ fn speed_limit_window(app: &mut App, ctx: &egui::Context) {
 
 fn filter_help_window(app: &mut App, ctx: &egui::Context) {
     let mut open = app.show_filter_help;
-    egui::Window::new("Filter help")
+    crate::skin::window("Filter help")
         .default_pos([400.0, 220.0])
         .default_size([460.0, 300.0])
         .resizable(false)
@@ -1821,7 +1824,7 @@ fn filter_help_window(app: &mut App, ctx: &egui::Context) {
             );
             ui.add_space(8.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("Close").clicked() {
+                if crate::skin::button(ui, "Close").clicked() {
                     app.show_filter_help = false;
                 }
             });
@@ -1835,7 +1838,7 @@ fn message_window(app: &mut App, ctx: &egui::Context) {
     };
     let mut open = true;
     let mut close = false;
-    egui::Window::new(title)
+    crate::skin::window(title)
         .default_pos([400.0, 260.0])
         .default_size([440.0, 180.0])
         .resizable(false)
@@ -1846,7 +1849,7 @@ fn message_window(app: &mut App, ctx: &egui::Context) {
             ui.label(RichText::new(text).size(12.0));
             ui.add_space(10.0);
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if ui.button("OK").clicked() {
+                if crate::skin::button(ui, "OK").clicked() {
                     close = true;
                 }
             });

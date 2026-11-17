@@ -1,3 +1,4 @@
+#![allow(unsafe_op_in_unsafe_fn)]
 //! Power actions used by the queue-drained shutdown countdown.
 //!
 //! The real implementation is deliberately small and the plan is inspectable so
@@ -111,7 +112,7 @@ pub fn execute(action: PowerAction, mode: ShutdownMode) -> Result<ShutdownOutcom
 #[cfg(target_os = "windows")]
 fn suspend() -> Result<(), String> {
     #[link(name = "powrprof")]
-    extern "system" {
+    unsafe extern "system" {
         fn SetSuspendState(hibernate: i32, force: i32, disable_wake: i32) -> i32;
     }
     let ok = unsafe { SetSuspendState(0, 0, 0) };

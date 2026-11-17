@@ -5,6 +5,7 @@ pub use newsqueue_core::command::MoveDir;
 use newsqueue_core::engine::*;
 use newsqueue_core::host::{EngineHost, TICK_INTERVAL};
 use newsqueue_core::{download, model, par2, rss, unrar};
+mod skin;
 mod dialogs;
 mod shutdown;
 mod theme;
@@ -944,51 +945,38 @@ Unpack cancelled because no password was supplied."),
             return;
         };
         if self.frame >= 120 && !self.screenshot_requested {
-            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot);
             self.screenshot_requested = true;
+            let cb = egui::ScreenshotCallback::new(move |img| save_screenshot(&path, &img));
+            ctx.send_viewport_cmd(egui::ViewportCommand::Screenshot(cb));
         }
-        if self.screenshot_requested && !self.screenshot_saved {
-            if self.frame > 240 {
-                eprintln!("Timed out waiting for the screenshot event");
-                std::process::exit(1);
-            }
-            let mut image: Option<std::sync::Arc<egui::ColorImage>> = None;
-            ctx.input(|i| {
-                for event in &i.events {
-                    if let egui::Event::Screenshot { image: img, .. } = event {
-                        image = Some(img.clone());
-                    }
-                }
-            });
-            if let Some(img) = image {
-                let w = img.width() as u32;
-                let h = img.height() as u32;
-                let mut buf = Vec::with_capacity((w * h * 4) as usize);
-                for px in &img.pixels {
-                    let [r, g, b, a] = px.to_array();
-                    buf.extend_from_slice(&[r, g, b, a]);
-                }
-                if let Some(parent) = std::path::Path::new(&path).parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                match image::RgbaImage::from_raw(w, h, buf) {
-                    Some(img) => match img.save(&path) {
-                        Ok(_) => {
-                            println!("Screenshot saved to {path}");
-                            self.screenshot_saved = true;
-                            std::process::exit(0);
-                        }
-                        Err(e) => {
-                            eprintln!("Could not save screenshot: {e}");
-                            std::process::exit(1);
-                        }
-                    },
-                    None => {
-                        eprintln!("Could not build screenshot image");
-                        std::process::exit(1);
-                    }
-                }
-            }
+        if self.screenshot_requested && self.frame > 240 {
+            eprintln!("Timed out waiting for the screenshot event");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn save_screenshot(path: &str, img: &egui::ColorImage) -> ! {
+    let (w, h) = (img.width() as u32, img.height() as u32);
+    let mut buf = Vec::with_capacity((w * h * 4) as usize);
+    for px in &img.pixels {
+        buf.extend_from_slice(&px.to_array());
+    }
+    if let Some(parent) = std::path::Path::new(path).parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    match image::RgbaImage::from_raw(w, h, buf).map(|i| i.save(path)) {
+        Some(Ok(_)) => {
+            println!("Screenshot saved to {path}");
+            std::process::exit(0);
+        }
+        Some(Err(e)) => {
+            eprintln!("Could not save screenshot: {e}");
+            std::process::exit(1);
+        }
+        None => {
+            eprintln!("Could not build screenshot image");
+            std::process::exit(1);
         }
     }
 }
@@ -1009,21 +997,25 @@ impl Drop for App {
 }
 
 impl eframe::App for App {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // The engine thread ticks it between frames; this frame uses it directly.
+    /// Runs before every frame and also while the window is minimized or
+    /// hidden (eframe 0.37 calls only this then), so tray hiding, the engine
+    /// events and the shutdown countdown keep working without a frame.
+    fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.engine.checkout();
         self.frame += 1;
+        // Screenshots stay deterministic: dark unless NQ_DEMO_THEME says otherwise.
+        let theme_setting = if self.screenshot_path.is_some() {
+            std::env::var("NQ_DEMO_THEME").unwrap_or_else(|_| "dark".into())
+        } else {
+            self.settings.ui_theme.clone()
+        };
+        theme::follow(ctx, &theme_setting);
         self.handle_tray(ctx);
         self.tick();
         if self.shutdown_exit_requested && !self.shutdown_exit_sent {
             self.shutdown_exit_sent = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Close);
         }
-        self.handle_keys(ctx);
-        ui::draw(self, ctx);
-        dialogs::draw(self, ctx);
-        self.handle_screenshot(ctx);
-
         if self.screenshot_path.is_some() {
             ctx.request_repaint();
         } else if self.connected && !self.paused {
@@ -1031,6 +1023,18 @@ impl eframe::App for App {
         } else {
             ctx.request_repaint_after(Duration::from_millis(250));
         }
+        self.engine.checkin();
+    }
+
+    fn ui(&mut self, root: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        let ctx = &root.ctx().clone();
+        // The engine thread ticks it between frames; this frame uses it directly.
+        self.engine.checkout();
+        self.handle_keys(ctx);
+        ui::draw(self, root);
+        dialogs::draw(self, ctx);
+        skin::flush(ctx);
+        self.handle_screenshot(ctx);
         self.engine.checkin();
     }
 }
