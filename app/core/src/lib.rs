@@ -11,3 +11,4 @@ pub mod unrar;
 pub mod engine;
 pub mod command;
 pub mod host;
+pub mod snapshot;

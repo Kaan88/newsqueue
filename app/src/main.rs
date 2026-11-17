@@ -720,7 +720,7 @@ Unpack cancelled because no password was supplied."),
         let now = Instant::now();
         tray::set_options(self.settings.speed_in_tray, self.settings.tray_balloon);
         if !self.engine.threaded() {
-            self.engine.tick();
+            self.engine.tick_local();
         }
         tray::set_speed(self.engine.speed_bps, self.settings.speed_bytes_mode);
         self.handle_engine_events();

@@ -9,7 +9,7 @@ not a source-code or artwork copy.
 Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
 first release built on the core `Engine`.
 
-**Next (GUI_PLAN Phase 0, step 5):** steps 3 (`Command` + `Engine::apply`) and 4 (`EngineHost` timer thread) done 2026-11-18; next a shareable `Snapshot`,
+**Next:** GUI_PLAN Phase 0 steps 3–5 done 2026-11-18 (`Command` + `Engine::apply`, `EngineHost` timer thread, `EngineHandle` with `Snapshot`); the egui UI still reads the engine directly (switch after the theme redesign lands),
 engine on its own thread; then Phase 1 (web server + egui/WASM front end).
 Paused here on 2026-11-18 at the user's request.
  Engine split
