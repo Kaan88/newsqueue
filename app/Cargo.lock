@@ -2094,7 +2094,7 @@ dependencies = [
 
 [[package]]
 name = "newsqueue"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "eframe",
@@ -2112,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "newsqueue-core"
-version = "1.0.3"
+version = "1.0.4"
 dependencies = [
  "chrono",
  "fs2",

@@ -140,7 +140,7 @@ try {
     $main = [IntPtr]::Zero
     for ($i = 0; $i -lt 100; $i++) {
         Start-Sleep -Milliseconds 200
-        $main = [DownloadTrayCheck]::FindWindow([IntPtr]::Zero, 'NewsQueue 1.0.3')
+        $main = [DownloadTrayCheck]::FindWindow([IntPtr]::Zero, 'NewsQueue 1.0.4')
         if ($main -ne [IntPtr]::Zero) { break }
     }
     if ($main -eq [IntPtr]::Zero) { throw 'main window not found' }

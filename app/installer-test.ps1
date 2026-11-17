@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.3'
+$version = '1.0.4'
 $setup = Join-Path $root "dist\NewsQueue-$version-Setup.exe"
 $testDir = Join-Path $env:TEMP 'newsqueue-install-test'
 $startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NewsQueue'

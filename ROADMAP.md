@@ -6,14 +6,20 @@ not a source-code or artwork copy.
 
 ## Current status (2026-11-18)
 
-Self-update confirmed working by the user (1.0.2 → 1.0.3). Engine split
+Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
+first release built on the core `Engine`.
+
+**Next (GUI_PLAN Phase 0, steps 3–5):** `Command` enum, shareable `Snapshot`,
+engine on its own thread; then Phase 1 (web server + egui/WASM front end).
+Paused here on 2026-11-18 at the user's request.
+ Engine split
 started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
 `Engine` (with `Event`s) is in core and the desktop app runs on it;
 `Command`/`Snapshot`/engine thread from GUI_PLAN Phase 0 are not done yet. Core
 builds and passes all 40 tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
-Current app version: **1.0.3** (2026-11-18, UI refresh; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
+Current app version: **1.0.4** (2026-11-18, engine split; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds
 content-based naming for obfuscated posts.

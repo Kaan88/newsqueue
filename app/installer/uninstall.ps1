@@ -3,7 +3,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$version = '1.0.3'
+$version = '1.0.4'
 $silentUninstall = $Silent -or ($env:NQ_SILENT -eq '1')
 $installDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ($installDir.Length -gt 3) {
