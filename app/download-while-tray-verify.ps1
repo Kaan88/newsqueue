@@ -120,7 +120,7 @@ try {
     $main = [IntPtr]::Zero
     for ($i = 0; $i -lt 100 -and $main -eq [IntPtr]::Zero; $i++) {
         Start-Sleep -Milliseconds 200
-        $main = Find-Own 'NewsQueue 1.0.5'
+        $main = Find-Own 'NewsQueue 1.0.6'
     }
     if ($main -eq [IntPtr]::Zero) { throw 'main window not found' }
     Start-Sleep -Seconds 2

@@ -22,7 +22,7 @@ fonts, light and dark colours); **the web UI must stay egui, never
 hand-written HTML.** The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
-- Current app version: **1.0.5**
+- Current app version: **1.0.6**
 - Current build date: **2026-11-18**
 - Parity target: **AltBinz 0.48.4**
 - Platform: Windows x64
@@ -189,7 +189,7 @@ The engine runs on its own thread, so the window can be hidden normally:
 minimize-to-tray and close-to-tray call `ShowWindow(SW_HIDE)` (which also drops
 the taskbar button) and the tray restores with `SW_SHOW`/`SW_RESTORE`. The tray
 thread owns the icon and message loop and finds the main window by its exact
-title (`NewsQueue 1.0.5`). It uses:
+title (`NewsQueue 1.0.6`). It uses:
 - `Shell_NotifyIconW` for the icon, tooltip and balloons.
 - `WM_TIMER` for the speed tooltip.
 - A shared exit flag for tray Exit (the main window then closes normally).
@@ -328,7 +328,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 8. Versioning, packaging and releases
 
-NewsQueue uses independent versions. Current version is **1.0.5** (1.0.2 was the first release that can self-update).
+NewsQueue uses independent versions. Current version is **1.0.6** (1.0.2 was the first release that can self-update).
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
 `v1.0.1`, which adds content-based naming for obfuscated posts. There is no
 `Version?` and a timer (`check_version_minutes`, 0 = never) check GitHub

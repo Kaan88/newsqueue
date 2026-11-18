@@ -1,8 +1,11 @@
 # Handoff — 2026-11-18
 
+**Released as v1.0.6 (2026-11-18)**: everything below plus the native Win32
+desktop in a Windows 2000 look, the egui web UI and Web access.
+
 ## Later the same day: roadmap finished (not released)
 
-Commits after v1.0.5 on `main` (not pushed, no new version):
+Commits after v1.0.5 on `main` (now in v1.0.6):
 
 - On-demand PAR2: `.volNN` files are held, fetched only for the blocks a
   repair needs (`par2_on_demand`).

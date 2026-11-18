@@ -1,7 +1,7 @@
 # Build a self-contained portable NewsQueue folder under app/dist/.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.5'
+$version = '1.0.6'
 Push-Location $root
 try {
     cargo build --release

@@ -7,10 +7,12 @@ not a source-code or artwork copy.
 ## Current status (2026-11-18)
 
 Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
-first release built on the core `Engine`. 1.0.5 adds the Instrument skin
-(light/dark/system, egui 0.37) and runs the engine on its own thread.
+first release built on the core `Engine`. 1.0.5 runs the engine on its own
+thread. 1.0.6 (2026-11-18) ships everything below: the native Win32 desktop
+in a Windows 2000 look, the egui web UI and Web access, the Inno Setup
+installer and every planned feature.
 
-**GUI_PLAN done (2026-11-18, unreleased):** Phase 0 (engine split,
+**GUI_PLAN done (2026-11-18, released in 1.0.6):** Phase 0 (engine split,
 `Command`/`Snapshot`/engine thread), Phase 1 (`newsqueue-server` JSON API with
 key/cookie auth and SSE, the egui web UI compiled to WebAssembly in `app/web`,
 Docker files) and Phase 2: the desktop app is now **native Win32** (`windows`
@@ -28,7 +30,7 @@ resume-all, pause-for, the RSS timer and starting a PAR2 check.
 Core builds and passes its tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
-Current app version: **1.0.5** (2026-11-18, Instrument skin + engine thread; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
+Current app version: **1.0.6** (2026-11-18, native Win32 desktop, web UI, Inno Setup installer; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds
 content-based naming for obfuscated posts.
@@ -49,7 +51,7 @@ content-based naming for obfuscated posts.
 | Installer/release | Done for private use | Portable zip, Inno Setup 7 per-user installer (replaces IExpress installs), shortcuts, Add/Remove Programs entry, uninstaller |
 | Desktop UI | Done (native Win32) | GUI_PLAN Phase 2: every window and dialog native; goldens from `PrintWindow` |
 | Web UI | Done | egui WebAssembly front end served by `newsqueue-server` or by the desktop app (Web access) |
-| Verification | Baseline done | 111 tests, mock NNTP, golden screenshots, packaging, tray/download/shutdown scripts against the native window |
+| Verification | Baseline done | 113 tests (+1 web), mock NNTP, golden screenshots, packaging, tray/download/shutdown scripts against the native window |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a second server |
 
@@ -366,9 +368,8 @@ None are started. Categories stay cut (see `REMOVED.md`).
 4. Done 2026-11-18: every planned feature (1-12), the Inno Setup installer,
    the server/web follow-ups and the per-setting checklist
    (`SETTINGS_CHECKLIST.md`).
-5. Still to try: a real
-   1.0.5 → Inno self-update round trip, and a release (version bump to
-   1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload).
+5. Done 2026-11-18: release 1.0.6. Still to try: a real 1.0.5 → 1.0.6
+   (IExpress → Inno) self-update round trip.
    `installer-test.ps1` passes against the native desktop build (2026-11-18),
    using a test-named installer variant beside a real install.
 6. Optional: code signing and shortcut polish.
