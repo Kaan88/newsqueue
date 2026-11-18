@@ -11,3 +11,4 @@ newsqueue-*.json
 *.nqpart
 shots
 win32/shots
+.smoke.*

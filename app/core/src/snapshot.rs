@@ -42,6 +42,41 @@ pub struct FileRow {
     pub done: bool,
 }
 
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Par2Row {
+    pub name: String,
+    pub size_mb: f64,
+    pub blocks: u32,
+    pub info: String,
+    pub unrar: bool,
+    pub progress: f32,
+    pub status: String,
+}
+
+/// An RSS item; its URL can hold an indexer key and is not included.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct RssRow {
+    pub name: String,
+    pub date: String,
+    pub description: String,
+}
+
+/// Counters for the Statistics window.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
+pub struct Stats {
+    /// Bytes per hour of today and per month of this year.
+    pub daily: Vec<f64>,
+    pub monthly: Vec<f64>,
+    pub session_bytes: u64,
+    pub session_secs: u64,
+    pub session_collections: u64,
+    pub total_collections: u64,
+    pub startups: u64,
+    pub longest_uptime_secs: u64,
+    /// Recent speed samples (bytes/s), oldest first.
+    pub speed_history: Vec<f32>,
+}
+
 /// A server without its password. `username` is not serialized with the
 /// snapshot; `GET /api/servers` adds it for the settings page.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
@@ -93,6 +128,16 @@ pub struct Snapshot {
     /// only sent by `GET /api/rss`.
     #[serde(skip)]
     pub rss_urls: Vec<String>,
+    pub par2: Vec<Par2Row>,
+    pub rss: Vec<RssRow>,
+    pub rss_timer: bool,
+    /// Download connections (the Connections panel).
+    pub threads: Vec<crate::model::ThreadRow>,
+    pub stats: Stats,
+    /// Downloading, PAR2 and unpacking are all finished (shutdown waits for it).
+    pub all_done: bool,
+    pub scheduler_hold: bool,
+    pub total_bytes: u64,
 }
 
 pub const LOG_TAIL: usize = 50;
@@ -173,6 +218,36 @@ impl Snapshot {
                 })
                 .collect(),
             rss_urls: engine.settings.rss_urls.clone(),
+            par2: engine
+                .par2
+                .iter()
+                .map(|p| Par2Row {
+                    name: p.name.clone(),
+                    size_mb: p.size_mb,
+                    blocks: p.blocks,
+                    info: p.info.clone(),
+                    unrar: p.unrar,
+                    progress: p.progress,
+                    status: p.status.clone(),
+                })
+                .collect(),
+            rss: engine.rss.iter().map(|r| RssRow { name: r.name.clone(), date: r.date.clone(), description: r.description.clone() }).collect(),
+            rss_timer: engine.rss_timer,
+            threads: engine.threads.clone(),
+            stats: Stats {
+                daily: engine.daily_transfer.to_vec(),
+                monthly: engine.monthly_transfer.to_vec(),
+                session_bytes: engine.transfered_session,
+                session_secs: engine.session_start.elapsed().as_secs(),
+                session_collections: engine.session_collections,
+                total_collections: engine.total_collections,
+                startups: engine.startups,
+                longest_uptime_secs: engine.longest_uptime_secs,
+                speed_history: engine.speed_history.iter().copied().collect(),
+            },
+            all_done: engine.all_tasks_done(),
+            scheduler_hold: engine.scheduler_hold,
+            total_bytes: engine.total_queue_size(),
         }
     }
 }

@@ -202,7 +202,7 @@ impl Collection {
         self.files.iter().any(|f| !f.segments.is_empty())
     }
 }
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct ThreadRow {
     pub number: u32,
     pub action: String,
@@ -370,7 +370,7 @@ impl ProxyConfig {
 /// Settings never shown or changed over the API.
 pub const PRIVATE_SETTINGS: &[&str] = &["servers", "proxy_username", "proxy_password", "rss_urls", "notify_url"];
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
     pub download_dir: String,

@@ -56,6 +56,14 @@ pub enum Command {
     SetServers(Vec<serde_json::Value>),
     /// Replace the RSS feed URLs.
     SetRssUrls(Vec<String>),
+    /// Replace every setting (the desktop's Setup window; it holds the
+    /// passwords itself). Saved at once.
+    ReplaceSettings(Box<Settings>),
+    /// Verify/repair the PAR2 set at this row of the PAR2 list.
+    StartPar2Set(usize),
+    /// Periodic RSS refresh on or off.
+    SetRssTimer(bool),
+    PauseAll(bool),
 }
 
 /// What [`Engine::apply`] did, for front ends that track a row.
@@ -154,6 +162,30 @@ impl Engine {
                 }
                 self.log("RSS", &format!("Feeds changed: {} configured", self.settings.rss_urls.len()));
                 return Applied::Done;
+            }
+            ReplaceSettings(settings) => {
+                self.settings = *settings;
+                if !self.demo {
+                    self.settings.save();
+                }
+                self.log("Main", "Settings saved.");
+                return Applied::Done;
+            }
+            StartPar2Set(index) => {
+                if index >= self.par2.len() {
+                    return Applied::Ignored;
+                }
+                self.start_par2_for_set(index);
+            }
+            SetRssTimer(on) => {
+                self.rss_timer = on;
+                self.log("RSS", if on { "RSS timer started." } else { "RSS timer stopped." });
+            }
+            PauseAll(pause) => {
+                let ids: Vec<u64> = self.queue.iter().map(|c| c.id).collect();
+                for id in ids {
+                    self.pause_collection(id, pause);
+                }
             }
             AddNzbFile(path, paused) => {
                 return match parse_nzb(std::path::Path::new(&path)) {
