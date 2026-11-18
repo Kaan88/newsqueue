@@ -205,6 +205,33 @@ every dialog exists, the tray/shutdown/installer scripts pass, the golden
 screenshots are regenerated from the native window, and no egui dependency
 remains in `desktop`.
 
+## Verification 2026-11-18
+
+Checked item by item against the code and by running both front ends:
+
+- Phase 0: `core` has no egui or `windows` crate imports (only cfg-gated
+  `std::os::windows`); `cargo test` passes (113 tests); the engine runs on
+  its own thread behind `EngineHandle`/`Snapshot`/`Command`.
+- Phase 1, server: every listed endpoint exists (`/api/state`, history,
+  log, `nzb` upload and `nzb/url`, queue actions, password, pause/resume,
+  speed limit, settings by GET and POST or PUT, SSE `events`, health,
+  login); API key, login cookie and the non-loopback password rule are
+  tested in `server`.
+- Phase 1, web UI: queue tree with expand and drag reorder, History, PAR2,
+  Log, RSS, Add NZB (Browse, URL, drag-and-drop of files), Options (servers,
+  folders, download, connection, PAR2/unpack, scheduler, RSS, log), light and
+  dark from the system. Phone layout checked in a 375 px frame (not on a
+  physical phone).
+- Phase 1, Docker: `Dockerfile` (volumes `/config`, `/downloads`,
+  `/incomplete`, `/watch`, `PUID`/`PGID`, `TZ`, health check) and
+  `compose.yaml`; `docker-smoke.sh` passed on the Debian host.
+- Phase 2: no egui/eframe/rfd in the desktop package; every dialog is in
+  the goldens (`screenshots.ps1 -Check` passes); `tray-verify.ps1`,
+  `shutdown-verify.ps1`, `download-while-tray-verify.ps1` and
+  `installer-test.ps1` pass. Frames, captions, caption buttons (maximize,
+  restore and close clicked live), menu bar and scroll bars are drawn in
+  the Windows 2000 colours.
+
 ## Order and effort
 
 1. Phase 0 engine split: ~1 week.

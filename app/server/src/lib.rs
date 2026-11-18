@@ -328,7 +328,7 @@ impl Api {
             ("GET", ["api", "history"]) => json(200, self.handle.read(|s| serde_json::to_value(&s.history).unwrap_or_default())),
             ("GET", ["api", "log"]) => json(200, self.handle.read(|s| serde_json::to_value(&s.log_tail).unwrap_or_default())),
             ("GET", ["api", "settings"]) => json(200, self.handle.read(|s| s.settings.clone())),
-            ("POST", ["api", "settings"]) => {
+            ("POST" | "PUT", ["api", "settings"]) => {
                 let Ok(patch) = serde_json::from_slice::<serde_json::Value>(body) else {
                     return error(400, "send a JSON object");
                 };

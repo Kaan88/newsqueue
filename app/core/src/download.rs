@@ -2,7 +2,7 @@
 //!
 //! The UI runs one job at a time, but a job uses the server's configured
 //! connection count so several articles are fetched in parallel. It reports
-//! progress through a small shared snapshot so the egui thread never blocks
+//! progress through a small shared snapshot so the UI thread never blocks
 //! on the network.
 
 use crate::container;

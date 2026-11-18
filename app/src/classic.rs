@@ -9,9 +9,10 @@
 //! 0A246A) and fall back to the system for anything else. Nothing outside
 //! the process changes: `SetSysColors` is never called.
 //!
-//! Drawing done inside user32/win32k itself (scroll bars, `DrawEdge`, the
-//! title bar) still uses the system colours; the menu bar gets the face
-//! colour through `face_menus`.
+//! Drawing done inside user32/win32k itself (`DrawEdge`, frames) still uses
+//! the system colours; the menu bar gets the face colour through
+//! `face_menus`, and title bars and scroll bars are painted again here
+//! (see the caption and scroll bar sections).
 
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
 use windows::Win32::Foundation::{COLORREF, HANDLE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
@@ -190,8 +191,12 @@ pub fn install() -> usize {
         ORIG_BRUSH.store(brush as usize, Ordering::Relaxed);
         ORIG_FILL.store(fill as usize, Ordering::Relaxed);
         let ours = [get_sys_color as *const () as usize, get_sys_color_brush as *const () as usize, fill_rect as *const () as usize];
-        let pairs = [(color as usize, ours[0]), (brush as usize, ours[1]), (fill as usize, ours[2])];
-        let names = [("GetSysColor", ours[0]), ("GetSysColorBrush", ours[1]), ("FillRect", ours[2])];
+        let mut pairs = vec![(color as usize, ours[0]), (brush as usize, ours[1]), (fill as usize, ours[2])];
+        let mut names = vec![("GetSysColor", ours[0]), ("GetSysColorBrush", ours[1]), ("FillRect", ours[2])];
+        for (name, from, to) in scroll_imports(user32) {
+            pairs.push((from, to));
+            names.push((name, to));
+        }
         let mut modules = [HMODULE::default(); 512];
         let mut needed = 0u32;
         let process = HANDLE(-1isize as *mut _); // GetCurrentProcess()
@@ -232,6 +237,7 @@ pub fn face_menus(menu: HMENU) {
     };
     unsafe {
         let _ = SetMenuInfo(menu, &info);
+        owner_draw_bar(menu);
     }
 }
 
@@ -270,6 +276,7 @@ unsafe extern "system" fn cbt_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
         if style & WS_CHILD.0 == 0 && style & WS_CAPTION.0 == WS_CAPTION.0 {
             classic_caption(HWND(wp.0 as *mut _));
         }
+        maybe_classic_scroll(HWND(wp.0 as *mut _));
     }
     CallNextHookEx(Some(HHOOK::default()), code, wp, lp)
 }
@@ -289,6 +296,12 @@ unsafe extern "system" fn caption_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, 
     use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
     use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
     use windows::Win32::UI::WindowsAndMessaging::*;
+    if let Some(r) = menu_bar_message(h, m, wp, lp) {
+        return r;
+    }
+    if m == WM_NCLBUTTONDOWN && track_caption_button(h, wp.0 as u32) {
+        return LRESULT(0);
+    }
     match m {
         WM_NCPAINT | WM_SETTEXT | WM_NCACTIVATE | WM_SETICON | WM_NCLBUTTONDOWN | WM_NCLBUTTONUP | WM_NCMOUSEMOVE | WM_NCMOUSELEAVE => {
             let r = DefSubclassProc(h, m, wp, lp);
@@ -333,6 +346,7 @@ unsafe fn paint_caption(h: HWND, dc: HDC, active: bool) {
     let mut wi = WINDOWINFO { cbSize: std::mem::size_of::<WINDOWINFO>() as u32, ..Default::default() };
     if GetWindowInfo(h, &mut wi).is_ok() {
         bar.left = wi.cxWindowBorders as i32;
+        paint_frame(dc, wr.right - wr.left, wr.bottom - wr.top, wi.cxWindowBorders as i32, wi.cyWindowBorders as i32);
     }
     // The bar runs up to the first caption button; buttons stay as drawn.
     let mut right = bar.right;
@@ -396,6 +410,621 @@ unsafe fn paint_caption(h: HWND, dc: HDC, active: bool) {
     SelectObject(dc, old);
     let _ = DeleteObject(font.into());
     let _ = RestoreDC(dc, saved);
+    paint_caption_buttons(h, dc, &info, &to_window);
+}
+
+// --------------------------------------------------------- scroll bars ---
+//
+// Window scroll bars are drawn inside user32 with the system's face colour
+// (F0F0F0 on Windows 11), which the import patch cannot reach. Controls of
+// the classes in `SCROLL_CLASSES` are subclassed when they are created and
+// their bars painted again, Windows 2000 style, after every non-client paint
+// and every change of a scroll position (`SetScrollInfo` and friends are
+// redirected in the import tables like the colour functions).
+
+const SCROLL_SUBCLASS_ID: usize = 0x4E51_5342; // "NQSB"
+const SCROLL_CLASSES: [&str; 4] = ["SysListView32", "ListBox", "Edit", "ComboLBox"];
+const STATE_SYSTEM_UNAVAILABLE: u32 = 0x1;
+const STATE_SYSTEM_PRESSED: u32 = 0x8;
+const STATE_SYSTEM_OFFSCREEN: u32 = 0x10000;
+
+static ORIG_SET_INFO: AtomicUsize = AtomicUsize::new(0);
+static ORIG_SET_POS: AtomicUsize = AtomicUsize::new(0);
+static ORIG_SHOW: AtomicUsize = AtomicUsize::new(0);
+static ORIG_ENABLE: AtomicUsize = AtomicUsize::new(0);
+
+type SetInfoFn = unsafe extern "system" fn(isize, i32, *const std::ffi::c_void, i32) -> i32;
+type SetPosFn = unsafe extern "system" fn(isize, i32, i32, i32) -> i32;
+type ShowFn = unsafe extern "system" fn(isize, i32, i32) -> i32;
+type EnableFn = unsafe extern "system" fn(isize, u32, u32) -> i32;
+
+unsafe extern "system" fn set_scroll_info(h: isize, bar: i32, si: *const std::ffi::c_void, redraw: i32) -> i32 {
+    let f: SetInfoFn = std::mem::transmute(ORIG_SET_INFO.load(Ordering::Relaxed));
+    let r = f(h, bar, si, redraw);
+    if redraw != 0 && bar != 2 {
+        repaint_bars(HWND(h as *mut _));
+    }
+    r
+}
+
+unsafe extern "system" fn set_scroll_pos(h: isize, bar: i32, pos: i32, redraw: i32) -> i32 {
+    let f: SetPosFn = std::mem::transmute(ORIG_SET_POS.load(Ordering::Relaxed));
+    let r = f(h, bar, pos, redraw);
+    if redraw != 0 && bar != 2 {
+        repaint_bars(HWND(h as *mut _));
+    }
+    r
+}
+
+unsafe extern "system" fn show_scroll_bar(h: isize, bar: i32, show: i32) -> i32 {
+    let f: ShowFn = std::mem::transmute(ORIG_SHOW.load(Ordering::Relaxed));
+    let r = f(h, bar, show);
+    if bar != 2 {
+        repaint_bars(HWND(h as *mut _));
+    }
+    r
+}
+
+unsafe extern "system" fn enable_scroll_bar(h: isize, flags: u32, arrows: u32) -> i32 {
+    let f: EnableFn = std::mem::transmute(ORIG_ENABLE.load(Ordering::Relaxed));
+    let r = f(h, flags, arrows);
+    if flags != 2 {
+        repaint_bars(HWND(h as *mut _));
+    }
+    r
+}
+
+/// The redirections `install` adds for the scroll functions.
+unsafe fn scroll_imports(user32: HMODULE) -> Vec<(&'static str, usize, usize)> {
+    let mut out = Vec::new();
+    for (name, cname, orig, ours) in [
+        ("SetScrollInfo", s!("SetScrollInfo"), &ORIG_SET_INFO, set_scroll_info as *const () as usize),
+        ("SetScrollPos", s!("SetScrollPos"), &ORIG_SET_POS, set_scroll_pos as *const () as usize),
+        ("ShowScrollBar", s!("ShowScrollBar"), &ORIG_SHOW, show_scroll_bar as *const () as usize),
+        ("EnableScrollBar", s!("EnableScrollBar"), &ORIG_ENABLE, enable_scroll_bar as *const () as usize),
+    ] {
+        if let Some(f) = GetProcAddress(user32, cname) {
+            orig.store(f as usize, Ordering::Relaxed);
+            out.push((name, f as usize, ours));
+        }
+    }
+    out
+}
+
+/// Subclasses `h` for classic scroll bars when its class has bars.
+unsafe fn maybe_classic_scroll(h: HWND) {
+    use windows::Win32::UI::Shell::SetWindowSubclass;
+    use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
+    let mut buf = [0u16; 64];
+    let n = GetClassNameW(h, &mut buf) as usize;
+    let class = String::from_utf16_lossy(&buf[..n]);
+    if SCROLL_CLASSES.iter().any(|c| c.eq_ignore_ascii_case(&class)) {
+        let _ = SetWindowSubclass(h, Some(scroll_proc), SCROLL_SUBCLASS_ID, 0);
+    }
+}
+
+fn is_classic_scroll(h: HWND) -> bool {
+    use windows::Win32::UI::Shell::GetWindowSubclass;
+    let mut data = 0usize;
+    unsafe { GetWindowSubclass(h, Some(scroll_proc), SCROLL_SUBCLASS_ID, Some(&mut data)).as_bool() }
+}
+
+unsafe fn repaint_bars(h: HWND) {
+    use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
+    if h.is_invalid() || !is_classic_scroll(h) {
+        return;
+    }
+    let dc = GetWindowDC(Some(h));
+    if !dc.is_invalid() {
+        paint_bars(h, dc);
+        ReleaseDC(Some(h), dc);
+    }
+}
+
+unsafe extern "system" fn scroll_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    use windows::Win32::Graphics::Gdi::HDC;
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    match m {
+        WM_NCPAINT | WM_VSCROLL | WM_HSCROLL | WM_MOUSEWHEEL | WM_MOUSEHWHEEL | WM_SIZE | WM_NCLBUTTONDOWN | WM_NCLBUTTONUP
+        | WM_NCLBUTTONDBLCLK | WM_NCMOUSEMOVE | WM_NCMOUSELEAVE | WM_ENABLE | WM_STYLECHANGED | WM_KEYDOWN | WM_CAPTURECHANGED => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            repaint_bars(h);
+            r
+        }
+        WM_PRINT => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            if lp.0 as u32 & PRF_NONCLIENT as u32 != 0 {
+                paint_bars(h, HDC(wp.0 as *mut _));
+            }
+            r
+        }
+        WM_NCDESTROY => {
+            let _ = RemoveWindowSubclass(h, Some(scroll_proc), SCROLL_SUBCLASS_ID);
+            DefSubclassProc(h, m, wp, lp)
+        }
+        _ => DefSubclassProc(h, m, wp, lp),
+    }
+}
+
+/// Paints the visible scroll bars of `h` into its window DC `dc`.
+unsafe fn paint_bars(h: HWND, dc: HDC) {
+    use windows::Win32::UI::WindowsAndMessaging::{GetScrollBarInfo, GetWindowRect, OBJID_HSCROLL, OBJID_VSCROLL, SCROLLBARINFO};
+    let mut wr = RECT::default();
+    if GetWindowRect(h, &mut wr).is_err() {
+        return;
+    }
+    let mut shown = [None, None];
+    for (i, obj) in [OBJID_VSCROLL, OBJID_HSCROLL].into_iter().enumerate() {
+        let mut sbi = SCROLLBARINFO { cbSize: std::mem::size_of::<SCROLLBARINFO>() as u32, ..Default::default() };
+        if GetScrollBarInfo(h, obj, &mut sbi).is_err() || sbi.rgstate[0] & (STATE_SYSTEM_INVISIBLE | STATE_SYSTEM_OFFSCREEN) != 0 {
+            continue;
+        }
+        let r = sbi.rcScrollBar;
+        let bar = RECT { left: r.left - wr.left, top: r.top - wr.top, right: r.right - wr.left, bottom: r.bottom - wr.top };
+        if bar.right <= bar.left || bar.bottom <= bar.top {
+            continue;
+        }
+        paint_bar(dc, bar, i == 0, &sbi);
+        shown[i] = Some(bar);
+    }
+    // The size box between two bars.
+    if let (Some(v), Some(hz)) = (shown[0], shown[1]) {
+        fill(dc, RECT { left: v.left, top: hz.top, right: v.right, bottom: hz.bottom }, FACE);
+    }
+}
+
+const FACE: u32 = rgb(0xD4, 0xD0, 0xC8);
+const WHITE: u32 = rgb(0xFF, 0xFF, 0xFF);
+const SHADOW: u32 = rgb(0x80, 0x80, 0x80);
+const DKSHADOW: u32 = rgb(0x40, 0x40, 0x40);
+
+unsafe fn fill(dc: HDC, r: RECT, color: u32) {
+    use windows::Win32::Graphics::Gdi::{DeleteObject, FillRect};
+    let b = CreateSolidBrush(COLORREF(color));
+    FillRect(dc, &r, b);
+    let _ = DeleteObject(b.into());
+}
+
+/// A raised Windows 2000 button: face, light/white top-left and
+/// shadow/dark shadow bottom-right.
+unsafe fn raised(dc: HDC, r: RECT) {
+    let (l, t, rt, b) = (r.left, r.top, r.right, r.bottom);
+    fill(dc, r, FACE);
+    fill(dc, RECT { left: l, top: b - 1, right: rt, bottom: b }, DKSHADOW);
+    fill(dc, RECT { left: rt - 1, top: t, right: rt, bottom: b }, DKSHADOW);
+    fill(dc, RECT { left: l + 1, top: t + 1, right: rt - 2, bottom: t + 2 }, WHITE);
+    fill(dc, RECT { left: l + 1, top: t + 1, right: l + 2, bottom: b - 2 }, WHITE);
+    fill(dc, RECT { left: l + 1, top: b - 2, right: rt - 1, bottom: b - 1 }, SHADOW);
+    fill(dc, RECT { left: rt - 2, top: t + 1, right: rt - 1, bottom: b - 1 }, SHADOW);
+}
+
+/// The dither of a scroll bar track: white and face pixels in turn.
+unsafe fn dither(dc: HDC, r: RECT, dark: bool) {
+    use windows::Win32::Graphics::Gdi::{CreateBitmap, CreatePatternBrush, DeleteObject, FillRect, SetBkColor, SetBrushOrgEx, SetTextColor};
+    if dark {
+        fill(dc, r, DKSHADOW);
+        return;
+    }
+    let bits: [u16; 8] = [0xAAAA, 0x5555, 0xAAAA, 0x5555, 0xAAAA, 0x5555, 0xAAAA, 0x5555];
+    let bmp = CreateBitmap(8, 8, 1, 1, Some(bits.as_ptr() as *const _));
+    let brush = CreatePatternBrush(bmp);
+    let old_text = SetTextColor(dc, COLORREF(FACE));
+    let old_bk = SetBkColor(dc, COLORREF(WHITE));
+    let _ = SetBrushOrgEx(dc, 0, 0, None);
+    FillRect(dc, &r, brush);
+    SetTextColor(dc, old_text);
+    SetBkColor(dc, old_bk);
+    let _ = DeleteObject(brush.into());
+    let _ = DeleteObject(bmp.into());
+}
+
+/// A scroll arrow's triangle pointing `dir` (0 up, 1 down, 2 left, 3 right).
+unsafe fn arrow_glyph(dc: HDC, r: RECT, dir: u8, enabled: bool, pressed: bool) {
+    let size = ((r.right - r.left).min(r.bottom - r.top) * 7 / 16).max(3) | 1; // odd width
+    let half = size / 2;
+    let (mut cx, mut cy) = ((r.left + r.right) / 2, (r.top + r.bottom) / 2);
+    if pressed {
+        cx += 1;
+        cy += 1;
+    }
+    let draw = |dx: i32, dy: i32, color: u32| {
+        // Rows of the triangle, from its point to its base.
+        for k in 0..=half {
+            let (x0, y0, x1, y1) = match dir {
+                0 => (cx - k, cy - half / 2 + k, cx + k + 1, cy - half / 2 + k + 1),
+                1 => (cx - k, cy + half / 2 - k, cx + k + 1, cy + half / 2 - k + 1),
+                2 => (cx - half / 2 + k, cy - k, cx - half / 2 + k + 1, cy + k + 1),
+                _ => (cx + half / 2 - k, cy - k, cx + half / 2 - k + 1, cy + k + 1),
+            };
+            fill(dc, RECT { left: x0 + dx, top: y0 + dy, right: x1 + dx, bottom: y1 + dy }, color);
+        }
+    };
+    if enabled {
+        draw(0, 0, 0);
+    } else {
+        draw(1, 1, WHITE);
+        draw(0, 0, SHADOW);
+    }
+}
+
+unsafe fn paint_bar(dc: HDC, bar: RECT, vertical: bool, sbi: &windows::Win32::UI::WindowsAndMessaging::SCROLLBARINFO) {
+    let enabled = sbi.rgstate[0] & STATE_SYSTEM_UNAVAILABLE == 0;
+    let len = if vertical { bar.bottom - bar.top } else { bar.right - bar.left };
+    let arrow = sbi.dxyLineButton.min(len / 2).max(0);
+    let (a, b) = if vertical {
+        (RECT { bottom: bar.top + arrow, ..bar }, RECT { top: bar.bottom - arrow, ..bar })
+    } else {
+        (RECT { right: bar.left + arrow, ..bar }, RECT { left: bar.right - arrow, ..bar })
+    };
+    let track = if vertical { RECT { top: a.bottom, bottom: b.top, ..bar } } else { RECT { left: a.right, right: b.left, ..bar } };
+    let has_thumb = enabled && sbi.xyThumbBottom > sbi.xyThumbTop && sbi.rgstate[3] & STATE_SYSTEM_INVISIBLE == 0;
+    let thumb = if vertical {
+        RECT { top: bar.top + sbi.xyThumbTop, bottom: bar.top + sbi.xyThumbBottom, ..bar }
+    } else {
+        RECT { left: bar.left + sbi.xyThumbTop, right: bar.left + sbi.xyThumbBottom, ..bar }
+    };
+    // Track, darker where it is held down.
+    if has_thumb {
+        let (before, after) = if vertical {
+            (RECT { bottom: thumb.top, ..track }, RECT { top: thumb.bottom, ..track })
+        } else {
+            (RECT { right: thumb.left, ..track }, RECT { left: thumb.right, ..track })
+        };
+        dither(dc, before, sbi.rgstate[2] & STATE_SYSTEM_PRESSED != 0);
+        dither(dc, after, sbi.rgstate[4] & STATE_SYSTEM_PRESSED != 0);
+        raised(dc, thumb);
+    } else {
+        dither(dc, track, false);
+    }
+    for (r, state, dir) in [(a, sbi.rgstate[1], if vertical { 0 } else { 2 }), (b, sbi.rgstate[5], if vertical { 1 } else { 3 })] {
+        let on = enabled && state & STATE_SYSTEM_UNAVAILABLE == 0;
+        let pressed = on && state & STATE_SYSTEM_PRESSED != 0;
+        if pressed {
+            fill(dc, r, SHADOW);
+            fill(dc, RECT { left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1 }, FACE);
+        } else {
+            raised(dc, r);
+        }
+        arrow_glyph(dc, r, dir, on, pressed);
+    }
+}
+
+// ----------------------------------------------------- caption buttons ---
+//
+// user32 draws the minimize/maximize/close buttons with the system face
+// colour, so `paint_caption` paints them again as raised Windows 2000
+// buttons with Marlett glyphs, and `track_caption_button` runs the press
+// itself so the held-down state is classic too.
+
+/// The window and `TITLEBARINFOEX` button index (2 min, 3 max, 4 help,
+/// 5 close) being held down, if any.
+static PRESSED_WINDOW: AtomicIsize = AtomicIsize::new(0);
+static PRESSED_BUTTON: AtomicUsize = AtomicUsize::new(0);
+
+/// Paints the caption buttons from `info` (window coordinates via `to_window`).
+unsafe fn paint_caption_buttons(h: HWND, dc: HDC, info: &windows::Win32::UI::WindowsAndMessaging::TITLEBARINFOEX, to_window: &dyn Fn(RECT) -> RECT) {
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::WindowsAndMessaging::IsZoomed;
+    let held = if PRESSED_WINDOW.load(Ordering::Relaxed) == h.0 as isize { PRESSED_BUTTON.load(Ordering::Relaxed) } else { 0 };
+    for i in 2..=5 {
+        let b = info.rgrect[i];
+        if info.rgstate[i] & STATE_SYSTEM_INVISIBLE != 0 || b.right <= b.left {
+            continue;
+        }
+        let r = to_window(b);
+        let pressed = held == i;
+        if pressed {
+            sunken(dc, r);
+        } else {
+            raised(dc, r);
+        }
+        let glyph = match i {
+            2 => '0',
+            3 if IsZoomed(h).as_bool() => '2',
+            3 => '1',
+            4 => 's',
+            _ => 'r',
+        };
+        let enabled = info.rgstate[i] & STATE_SYSTEM_UNAVAILABLE == 0;
+        let height = ((r.bottom - r.top) * 9 / 16).max(6);
+        let font = CreateFontW(height, 0, 0, 0, 400, 0, 0, 0, SYMBOL_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS, DEFAULT_QUALITY, DEFAULT_PITCH.0 as u32, w!("Marlett"));
+        let old = SelectObject(dc, font.into());
+        SetBkMode(dc, TRANSPARENT);
+        let mut text = [glyph as u16];
+        let shift = if pressed { 1 } else { 0 };
+        let mut draw = |dx: i32, color: u32| {
+            SetTextColor(dc, COLORREF(color));
+            let mut tr = RECT { left: r.left + shift + dx, top: r.top + shift + dx, right: r.right + shift + dx, bottom: r.bottom + shift + dx };
+            DrawTextW(dc, &mut text, &mut tr, DT_CENTER | DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX);
+        };
+        if enabled {
+            draw(0, 0);
+        } else {
+            draw(1, WHITE);
+            draw(0, SHADOW);
+        }
+        SelectObject(dc, old);
+        let _ = DeleteObject(font.into());
+    }
+}
+
+/// The window frame (`bx`/`by` thick) of a `w` x `h` window: a raised
+/// Windows 2000 edge around a face-coloured border.
+unsafe fn paint_frame(dc: HDC, w: i32, h: i32, bx: i32, by: i32) {
+    if bx < 2 || by < 2 {
+        return;
+    }
+    fill(dc, RECT { left: 0, top: 0, right: w, bottom: by }, FACE);
+    fill(dc, RECT { left: 0, top: h - by, right: w, bottom: h }, FACE);
+    fill(dc, RECT { left: 0, top: 0, right: bx, bottom: h }, FACE);
+    fill(dc, RECT { left: w - bx, top: 0, right: w, bottom: h }, FACE);
+    fill(dc, RECT { left: 1, top: 1, right: w - 2, bottom: 2 }, WHITE);
+    fill(dc, RECT { left: 1, top: 1, right: 2, bottom: h - 2 }, WHITE);
+    fill(dc, RECT { left: 1, top: h - 2, right: w - 1, bottom: h - 1 }, SHADOW);
+    fill(dc, RECT { left: w - 2, top: 1, right: w - 1, bottom: h - 1 }, SHADOW);
+    fill(dc, RECT { left: 0, top: h - 1, right: w, bottom: h }, DKSHADOW);
+    fill(dc, RECT { left: w - 1, top: 0, right: w, bottom: h }, DKSHADOW);
+}
+
+/// A pushed Windows 2000 button: the raised edge inverted.
+unsafe fn sunken(dc: HDC, r: RECT) {
+    let (l, t, rt, b) = (r.left, r.top, r.right, r.bottom);
+    fill(dc, r, FACE);
+    fill(dc, RECT { left: l, top: t, right: rt, bottom: t + 1 }, DKSHADOW);
+    fill(dc, RECT { left: l, top: t, right: l + 1, bottom: b }, DKSHADOW);
+    fill(dc, RECT { left: l + 1, top: t + 1, right: rt - 1, bottom: t + 2 }, SHADOW);
+    fill(dc, RECT { left: l + 1, top: t + 1, right: l + 2, bottom: b - 1 }, SHADOW);
+    fill(dc, RECT { left: l, top: b - 1, right: rt, bottom: b }, WHITE);
+    fill(dc, RECT { left: rt - 1, top: t, right: rt, bottom: b }, WHITE);
+}
+
+/// Runs a press of the caption button under hit-test code `hit` the way
+/// user32 would (pushed while the mouse is on it, the command on release
+/// over it), but painted classic. Returns false for other hit codes.
+unsafe fn track_caption_button(h: HWND, hit: u32) -> bool {
+    use windows::Win32::Foundation::POINT;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{GetCapture, ReleaseCapture, SetCapture};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let index = match hit {
+        HTMINBUTTON => 2,
+        HTMAXBUTTON => 3,
+        HTHELP => 4,
+        HTCLOSE => 5,
+        _ => return false,
+    };
+    let mut info = TITLEBARINFOEX { cbSize: std::mem::size_of::<TITLEBARINFOEX>() as u32, ..Default::default() };
+    SendMessageW(h, WM_GETTITLEBARINFOEX, Some(WPARAM(0)), Some(LPARAM(&mut info as *mut _ as isize)));
+    if info.rgstate[index] & (STATE_SYSTEM_UNAVAILABLE | STATE_SYSTEM_INVISIBLE) != 0 {
+        return true;
+    }
+    let button = info.rgrect[index];
+    let over = || {
+        let mut p = POINT::default();
+        let _ = GetCursorPos(&mut p);
+        p.x >= button.left && p.x < button.right && p.y >= button.top && p.y < button.bottom
+    };
+    let show = |pressed: bool| {
+        PRESSED_WINDOW.store(if pressed { h.0 as isize } else { 0 }, Ordering::Relaxed);
+        PRESSED_BUTTON.store(if pressed { index } else { 0 }, Ordering::Relaxed);
+        repaint_caption(h);
+    };
+    SetCapture(h);
+    let mut inside = true;
+    show(true);
+    let mut msg = MSG::default();
+    loop {
+        if GetCapture() != h {
+            inside = false;
+            break;
+        }
+        if !GetMessageW(&mut msg, None, 0, 0).as_bool() {
+            PostQuitMessage(msg.wParam.0 as i32);
+            inside = false;
+            break;
+        }
+        match msg.message {
+            WM_MOUSEMOVE => {
+                let now = over();
+                if now != inside {
+                    inside = now;
+                    show(inside);
+                }
+            }
+            WM_LBUTTONUP => {
+                inside = over();
+                break;
+            }
+            WM_KEYDOWN if msg.wParam.0 == 0x1B => {
+                inside = false;
+                break;
+            }
+            _ => {
+                let _ = TranslateMessage(&msg);
+                DispatchMessageW(&msg);
+            }
+        }
+    }
+    if GetCapture() == h {
+        let _ = ReleaseCapture();
+    }
+    show(false);
+    if inside {
+        let command = match index {
+            2 => SC_MINIMIZE,
+            3 if IsZoomed(h).as_bool() => SC_RESTORE,
+            3 => SC_MAXIMIZE,
+            4 => SC_CONTEXTHELP,
+            _ => SC_CLOSE,
+        };
+        let _ = PostMessageW(Some(h), WM_SYSCOMMAND, WPARAM(command as usize), LPARAM(0));
+    }
+    true
+}
+
+unsafe fn repaint_caption(h: HWND) {
+    use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
+    use windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow;
+    let dc = GetWindowDC(Some(h));
+    if !dc.is_invalid() {
+        let active = FORCE_ACTIVE.load(Ordering::Relaxed) || windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() == h || GetForegroundWindow() == h;
+        paint_caption(h, dc, active);
+        ReleaseDC(Some(h), dc);
+    }
+}
+
+// ------------------------------------------------------------ menu bar ---
+//
+// With visual styles off Windows 10/11 draw the menu bar "flat": a blue
+// highlight on the hot item and grey text while the window is inactive.
+// `face_menus` makes the top-level items owner-drawn and the caption
+// subclass draws them like Windows 2000: black text, a thin raised edge on
+// the hot item and a thin sunken one on the open item.
+
+/// Top-level menu items drawn here: their item data points into this list.
+static BAR_ITEMS: std::sync::Mutex<Vec<usize>> = std::sync::Mutex::new(Vec::new());
+
+fn is_bar_item(data: usize) -> bool {
+    data != 0 && BAR_ITEMS.lock().map(|v| v.contains(&data)).unwrap_or(false)
+}
+
+/// The text of an owner-drawn bar item (with its `&` mnemonic marker).
+unsafe fn bar_text(data: usize) -> &'static [u16] {
+    &*(data as *const Vec<u16>)
+}
+
+unsafe fn owner_draw_bar(menu: HMENU) {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let n = GetMenuItemCount(Some(menu));
+    for i in 0..n.max(0) as u32 {
+        let mut buf = [0u16; 128];
+        let len = GetMenuStringW(menu, i, Some(&mut buf), MF_BYPOSITION) as usize;
+        let text: &'static mut Vec<u16> = Box::leak(Box::new(buf[..len].to_vec()));
+        let data = text as *mut Vec<u16> as usize;
+        // The string stays on the item too: user32 matches Alt+letter
+        // against it.
+        let mut z: Vec<u16> = text.iter().copied().chain(std::iter::once(0)).collect();
+        let info = MENUITEMINFOW {
+            cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32,
+            fMask: MIIM_FTYPE | MIIM_DATA | MIIM_STRING,
+            fType: MFT_OWNERDRAW,
+            dwItemData: data,
+            dwTypeData: windows::core::PWSTR(z.as_mut_ptr()),
+            cch: len as u32,
+            ..Default::default()
+        };
+        if SetMenuItemInfoW(menu, i, true, &info).is_ok() {
+            if let Ok(mut v) = BAR_ITEMS.lock() {
+                v.push(data);
+            }
+        }
+    }
+}
+
+/// The menu font, sized for the window's DPI.
+unsafe fn menu_font(h: HWND) -> windows::Win32::Graphics::Gdi::HFONT {
+    use windows::Win32::Graphics::Gdi::CreateFontIndirectW;
+    use windows::Win32::UI::HiDpi::{GetDpiForWindow, SystemParametersInfoForDpi};
+    use windows::Win32::UI::WindowsAndMessaging::{NONCLIENTMETRICSW, SPI_GETNONCLIENTMETRICS, SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS};
+    let mut ncm = NONCLIENTMETRICSW { cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
+    let dpi = GetDpiForWindow(h).max(96);
+    let _ = SystemParametersInfoForDpi(SPI_GETNONCLIENTMETRICS.0, ncm.cbSize, Some(&mut ncm as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0).0, dpi);
+    CreateFontIndirectW(&ncm.lfMenuFont)
+}
+
+/// Handles the owner-draw messages of the menu bar; None for anything else.
+unsafe fn menu_bar_message(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> Option<LRESULT> {
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::Controls::{DRAWITEMSTRUCT, MEASUREITEMSTRUCT, ODS_DISABLED, ODS_GRAYED, ODS_HOTLIGHT, ODS_NOACCEL, ODS_SELECTED, ODT_MENU};
+    use windows::Win32::UI::HiDpi::GetDpiForWindow;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    match m {
+        WM_MEASUREITEM => {
+            let mis = &mut *(lp.0 as *mut MEASUREITEMSTRUCT);
+            if mis.CtlType != ODT_MENU || !is_bar_item(mis.itemData) {
+                return None;
+            }
+            let text: Vec<u16> = bar_text(mis.itemData).iter().copied().filter(|c| *c != '&' as u16).collect();
+            let dc = GetDC(Some(h));
+            let font = menu_font(h);
+            let old = SelectObject(dc, font.into());
+            let mut size = windows::Win32::Foundation::SIZE::default();
+            let _ = GetTextExtentPoint32W(dc, &text, &mut size);
+            SelectObject(dc, old);
+            let _ = DeleteObject(font.into());
+            ReleaseDC(Some(h), dc);
+            let pad = (6 * GetDpiForWindow(h).max(96) / 96) as i32;
+            mis.itemWidth = (size.cx + 2 * pad) as u32;
+            mis.itemHeight = GetSystemMetrics(SM_CYMENU) as u32;
+            Some(LRESULT(1))
+        }
+        WM_DRAWITEM => {
+            let dis = &*(lp.0 as *const DRAWITEMSTRUCT);
+            if dis.CtlType != ODT_MENU || !is_bar_item(dis.itemData) {
+                return None;
+            }
+            let dc = dis.hDC;
+            let r = dis.rcItem;
+            let state = dis.itemState;
+            fill(dc, r, FACE);
+            let open = state.0 & ODS_SELECTED.0 != 0;
+            let hot = state.0 & ODS_HOTLIGHT.0 != 0;
+            if open {
+                fill(dc, RECT { bottom: r.top + 1, ..r }, SHADOW);
+                fill(dc, RECT { right: r.left + 1, ..r }, SHADOW);
+                fill(dc, RECT { top: r.bottom - 1, ..r }, WHITE);
+                fill(dc, RECT { left: r.right - 1, ..r }, WHITE);
+            } else if hot {
+                fill(dc, RECT { bottom: r.top + 1, ..r }, WHITE);
+                fill(dc, RECT { right: r.left + 1, ..r }, WHITE);
+                fill(dc, RECT { top: r.bottom - 1, ..r }, SHADOW);
+                fill(dc, RECT { left: r.right - 1, ..r }, SHADOW);
+            }
+            let font = menu_font(h);
+            let old = SelectObject(dc, font.into());
+            SetBkMode(dc, TRANSPARENT);
+            let disabled = state.0 & (ODS_GRAYED.0 | ODS_DISABLED.0) != 0;
+            let mut text = bar_text(dis.itemData).to_vec();
+            let mut flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
+            if state.0 & ODS_NOACCEL.0 != 0 {
+                flags |= DT_HIDEPREFIX;
+            }
+            let shift = if open { 1 } else { 0 };
+            let mut tr = RECT { left: r.left + shift, top: r.top + shift, right: r.right + shift, bottom: r.bottom + shift };
+            if disabled {
+                SetTextColor(dc, COLORREF(WHITE));
+                let mut t2 = RECT { left: tr.left + 1, top: tr.top + 1, right: tr.right + 1, bottom: tr.bottom + 1 };
+                DrawTextW(dc, &mut text.clone(), &mut t2, flags);
+            }
+            SetTextColor(dc, COLORREF(if disabled { SHADOW } else { 0 }));
+            DrawTextW(dc, &mut text, &mut tr, flags);
+            SelectObject(dc, old);
+            let _ = DeleteObject(font.into());
+            Some(LRESULT(1))
+        }
+        WM_MENUCHAR => {
+            // Owner-drawn items lose the automatic Alt+letter: find it here.
+            let menu = HMENU(lp.0 as *mut _);
+            if GetMenu(h) != menu {
+                return None;
+            }
+            let ch = char::from_u32(wp.0 as u32 & 0xFFFF)?.to_lowercase().next()?;
+            let n = GetMenuItemCount(Some(menu)).max(0) as u32;
+            for i in 0..n {
+                let info = &mut MENUITEMINFOW { cbSize: std::mem::size_of::<MENUITEMINFOW>() as u32, fMask: MIIM_DATA, ..Default::default() };
+                if GetMenuItemInfoW(menu, i, true, info).is_err() || !is_bar_item(info.dwItemData) {
+                    continue;
+                }
+                let text = String::from_utf16_lossy(bar_text(info.dwItemData));
+                let mnemonic = text.split('&').nth(1).and_then(|s| s.chars().next()).and_then(|c| c.to_lowercase().next());
+                if mnemonic == Some(ch) {
+                    return Some(LRESULT(((MNC_EXECUTE as isize) << 16) | i as isize));
+                }
+            }
+            None
+        }
+        _ => None,
+    }
 }
 
 #[cfg(test)]
