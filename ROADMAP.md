@@ -271,9 +271,9 @@ Cut on 2026-11-18; see `REMOVED.md`.
    silent mid-BODY costs one read timeout; the article is fetched again on a
    new connection. Failover, 430, CRC and dropped-connection paths were
    already covered.
-7. **Self-update needs public releases.** The check works but the repo is
-   private, so GitHub answers 404. Only releases built after 2026-11-18 can
-   self-update.
+7. **Done: self-update source is public.** The repo is public, so the
+   release check reaches GitHub; 1.0.6 is the first release with the Inno
+   Setup installer.
 8. **Minor shortcut polish** and any remaining peripheral settings.
 9. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.
