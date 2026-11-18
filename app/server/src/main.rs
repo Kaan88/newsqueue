@@ -136,10 +136,14 @@ pub struct Api {
 pub struct Reply {
     pub status: u16,
     pub body: String,
+    pub content_type: &'static str,
 }
 
+/// The web UI: one self-contained page that talks to the JSON API.
+pub const INDEX_HTML: &str = include_str!("index.html");
+
 fn json(status: u16, value: serde_json::Value) -> Reply {
-    Reply { status, body: value.to_string() }
+    Reply { status, body: value.to_string(), content_type: "application/json" }
 }
 
 fn error(status: u16, message: &str) -> Reply {
@@ -211,7 +215,7 @@ impl Api {
             self.route(&method, &url, header_key.as_deref(), &body)
         };
         let content_type =
-            tiny_http::Header::from_bytes("Content-Type", "application/json").expect("header");
+            tiny_http::Header::from_bytes("Content-Type", reply.content_type).expect("header");
         let response = tiny_http::Response::from_string(reply.body)
             .with_status_code(reply.status)
             .with_header(content_type);
@@ -222,6 +226,10 @@ impl Api {
     /// without a socket.
     pub fn route(&self, method: &str, url: &str, header_key: Option<&str>, body: &[u8]) -> Reply {
         let (path, query) = url.split_once('?').unwrap_or((url, ""));
+        // The page holds no data; it asks for the API key and sends it itself.
+        if method == "GET" && (path == "/" || path == "/index.html") {
+            return Reply { status: 200, body: INDEX_HTML.into(), content_type: "text/html; charset=utf-8" };
+        }
         if path == "/api/health" {
             return json(200, serde_json::json!({ "ok": true, "version": VERSION }));
         }
@@ -359,6 +367,9 @@ mod tests {
     fn health_is_open_and_the_rest_needs_the_key() {
         let (_host, api) = demo();
         assert_eq!(api.route("GET", "/api/health", None, b"").status, 200);
+        let page = api.route("GET", "/", None, b"");
+        assert_eq!(page.status, 200);
+        assert!(page.content_type.starts_with("text/html"));
         assert_eq!(api.route("GET", "/api/state", None, b"").status, 401);
         assert_eq!(api.route("GET", "/api/state", Some("nope"), b"").status, 401);
         assert_eq!(api.route("GET", "/api/state", Some("k3y"), b"").status, 200);
