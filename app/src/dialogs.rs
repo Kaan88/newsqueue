@@ -515,6 +515,22 @@ fn page_misc3(ui: &mut Ui, s: &mut Settings) {
                     .suffix(" min"),
             );
             ui.end_row();
+            ui.label("Duplicate NZBs");
+            crate::skin::ComboBox::from_id_salt("dup_check")
+                .selected_text(match s.duplicate_check {
+                    0 => "Add normally",
+                    1 => "Warn",
+                    _ => "Add paused",
+                })
+                .show_ui(ui, |ui| {
+                    crate::skin::selectable_value(ui, &mut s.duplicate_check, 0, "Add normally");
+                    crate::skin::selectable_value(ui, &mut s.duplicate_check, 1, "Warn");
+                    crate::skin::selectable_value(ui, &mut s.duplicate_check, 2, "Add paused");
+                });
+            ui.end_row();
+            ui.label("Notification URL (webhook/ntfy)");
+            crate::skin::text_edit(ui, 260.0, TextEdit::singleline(&mut s.notify_url));
+            ui.end_row();
         });
 }
 
@@ -1036,8 +1052,12 @@ fn server_edit_window(app: &mut App, ctx: &egui::Context) {
                     ui.end_row();
                     ui.label("Network adapter");
                     crate::skin::text_edit(ui,130.0, TextEdit::singleline(&mut draft.nic));
-                    ui.label("");
-                    ui.label("");
+                    ui.label("Monthly quota");
+                    crate::skin::drag_value(ui,
+                        egui::DragValue::new(&mut draft.quota_gb)
+                            .range(0..=100000)
+                            .suffix(" GB"),
+                    );
                     ui.end_row();
                 });
             if !app.server_edit_error.is_empty() {
@@ -1171,15 +1191,18 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                         .auto_shrink([false, false])
                         .show(ui, |ui| {
                             egui::Grid::new("history_grid")
-                                .num_columns(3)
+                                .num_columns(5)
                                 .spacing([24.0, 5.0])
                                 .striped(true)
                                 .show(ui, |ui| {
                                     ui.label(RichText::new("Name").size(11.0).strong());
                                     ui.label(RichText::new("Date").size(11.0).strong());
                                     ui.label(RichText::new("Size").size(11.0).strong());
+                                    ui.label(RichText::new("Status").size(11.0).strong());
+                                    ui.label("");
                                     ui.end_row();
-                                    for item in &app.history {
+                                    let mut retry = None;
+                                    for (index, item) in app.history.iter().enumerate() {
                                         ui.label(RichText::new(&item.name).size(11.5));
                                         ui.label(
                                             RichText::new(&item.date)
@@ -1187,7 +1210,18 @@ fn stats_window(app: &mut App, ctx: &egui::Context) {
                                                 .color(theme::TEXT_MUTED()),
                                         );
                                         ui.label(RichText::new(&item.size).size(11.0));
+                                        ui.label(RichText::new(&item.status).size(11.0));
+                                        if !item.source.is_empty()
+                                            && crate::skin::button(ui, "Retry").on_hover_text("Queue this NZB again").clicked()
+                                        {
+                                            retry = Some(index);
+                                        } else if item.source.is_empty() {
+                                            ui.label("");
+                                        }
                                         ui.end_row();
+                                    }
+                                    if let Some(index) = retry {
+                                        app.engine.apply(newsqueue_core::command::Command::RetryHistory(index));
                                     }
                                 });
                         });

@@ -255,6 +255,22 @@ pub struct Server {
     pub connected_idle: bool,
     pub nic: String,
     pub purpose: String,
+    /// Monthly data cap in GB (0 = none); the server is skipped once
+    /// `used_bytes` reaches it.
+    pub quota_gb: u32,
+    /// Bytes downloaded from this server in `quota_month` (YYYY-MM).
+    pub used_bytes: u64,
+    pub quota_month: String,
+}
+
+impl Server {
+    /// Whether this server can be used for a post `age_days` old this month.
+    pub fn usable_for(&self, age_days: f64, month: &str) -> bool {
+        let within_retention = self.max_age == 0 || age_days <= self.max_age as f64;
+        let used = if self.quota_month == month { self.used_bytes } else { 0 };
+        let within_quota = self.quota_gb == 0 || used < self.quota_gb as u64 * 1_000_000_000;
+        within_retention && within_quota
+    }
 }
 impl Default for Server {
     fn default() -> Self {
@@ -278,6 +294,9 @@ impl Default for Server {
             connected_idle: true,
             nic: "default".into(),
             purpose: "Level 0 (Primary)".into(),
+            quota_gb: 0,
+            used_bytes: 0,
+            quota_month: String::new(),
         }
     }
 }
@@ -392,6 +411,12 @@ pub struct Settings {
     pub precheck_articles: bool,
     /// Extract RAR volumes while the rest of the set downloads.
     pub direct_unpack: bool,
+    /// What to do with an NZB whose name is already in the history or the
+    /// queue: 0 = nothing, 1 = warn, 2 = add it paused.
+    pub duplicate_check: u8,
+    /// Webhook for finished/failed jobs. An ntfy URL gets a plain-text POST
+    /// with a Title header; anything else gets JSON {title, text}.
+    pub notify_url: String,
     pub auto_unrar: bool,
     pub create_dir_nzb_name: bool,
     pub create_dir_group_name: bool,
@@ -483,6 +508,8 @@ impl Default for Settings {
             abort_hopeless: true,
             precheck_articles: false,
             direct_unpack: false,
+            duplicate_check: 1,
+            notify_url: String::new(),
             auto_unrar: false,
             create_dir_nzb_name: false,
             create_dir_group_name: false,

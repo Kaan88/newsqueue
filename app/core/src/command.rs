@@ -43,6 +43,8 @@ pub enum Command {
     RefreshRss,
     /// Parse an NZB file on disk and queue it (optionally paused).
     AddNzbFile(String, bool),
+    /// Queue the NZB of history entry N again.
+    RetryHistory(usize),
 }
 
 /// What [`Engine::apply`] did, for front ends that track a row.
@@ -84,6 +86,7 @@ impl Engine {
             SetSpeedLimit(tag) => self.set_speed_limit(tag),
             Cleanup => self.cleanup(),
             RefreshRss => self.refresh_rss(),
+            RetryHistory(index) => return self.retry_history(index),
             AddNzbFile(path, paused) => {
                 return match parse_nzb(std::path::Path::new(&path)) {
                     Ok(nzb) => Applied::Added(self.add_nzb_from_parsed(nzb, path, paused)),
@@ -284,6 +287,103 @@ mod tests {
     }
 
     #[test]
+    fn duplicates_are_warned_or_added_paused() {
+        let mut e = Engine::new(Settings::default(), true);
+        e.queue.clear();
+        e.history.clear();
+        e.add_history("Rel".into(), 1, "Completed", String::new());
+        e.settings.duplicate_check = 1;
+        let id = e.add_nzb_from_parsed(nzb_with(&["a.rar"]), String::new(), false);
+        assert!(e.logs.iter().any(|l| l.message.starts_with("Duplicate: Rel")));
+        assert_eq!(e.queue[e.index_of(id).unwrap()].status, crate::model::ItemStatus::Queued);
+        e.settings.duplicate_check = 2;
+        let id = e.add_nzb_from_parsed(nzb_with(&["a.rar"]), String::new(), false);
+        assert_eq!(e.queue[e.index_of(id).unwrap()].status, crate::model::ItemStatus::Paused);
+        // A failed attempt in the history is no reason to warn.
+        e.queue.clear();
+        e.history.clear();
+        e.add_history("Rel".into(), 1, "Failed", String::new());
+        e.logs.clear();
+        e.add_nzb_from_parsed(nzb_with(&["a.rar"]), String::new(), false);
+        assert!(!e.logs.iter().any(|l| l.message.starts_with("Duplicate")));
+    }
+
+    #[test]
+    fn history_entries_can_be_retried() {
+        let dir = std::env::temp_dir().join(format!("newsqueue-retry-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let nzb = dir.join("again.nzb");
+        std::fs::write(
+            &nzb,
+            r#"<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><file poster="p" date="1" subject="again.rar (1/1)"><groups><group>a.b</group></groups><segments><segment bytes="10" number="1">x@y</segment></segments></file></nzb>"#,
+        )
+        .unwrap();
+        let mut e = Engine::new(Settings::default(), true);
+        e.queue.clear();
+        e.history.clear();
+        e.add_history("again".into(), 10, "Failed", nzb.to_string_lossy().to_string());
+        e.add_history("gone".into(), 10, "Failed", dir.join("gone.nzb").to_string_lossy().to_string());
+        assert_eq!(e.apply(Command::RetryHistory(0)), Applied::Failed, "gone.nzb is missing");
+        assert!(matches!(e.apply(Command::RetryHistory(1)), Applied::Added(_)));
+        assert_eq!(e.queue.len(), 1);
+        assert_eq!(e.apply(Command::RetryHistory(9)), Applied::Ignored);
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn notifications_post_json_or_ntfy_text() {
+        use std::io::{BufRead, BufReader, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = std::thread::spawn(move || {
+            let mut seen = Vec::new();
+            for _ in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut head = String::new();
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if let Some(v) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                        length = v.trim().parse().unwrap();
+                    }
+                    if line == "\r\n" {
+                        break;
+                    }
+                    head.push_str(&line);
+                }
+                let mut body = vec![0; length];
+                reader.read_exact(&mut body).unwrap();
+                let _ = stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+                seen.push((head, String::from_utf8(body).unwrap()));
+            }
+            seen
+        });
+        crate::engine::send_webhook(&format!("http://127.0.0.1:{port}/hook"), "Download complete", "Rel").unwrap();
+        crate::engine::send_webhook(&format!("http://127.0.0.1:{port}/ntfy/topic"), "Download failed", "Rel").unwrap();
+        let seen = server.join().unwrap();
+        assert!(seen[0].0.contains("application/json"));
+        assert!(seen[0].1.contains("\"title\":\"Download complete\"") && seen[0].1.contains("\"text\":\"Rel\""));
+        assert!(seen[1].0.contains("Title: Download failed"), "{}", seen[1].0);
+        assert_eq!(seen[1].1, "Rel");
+    }
+
+    #[test]
+    fn servers_respect_retention_and_monthly_quota() {
+        let mut s = crate::model::Server::default();
+        assert!(s.usable_for(5000.0, "2026-11"));
+        s.max_age = 1000;
+        assert!(s.usable_for(999.0, "2026-11"));
+        assert!(!s.usable_for(1001.0, "2026-11"));
+        s.quota_gb = 1;
+        s.quota_month = "2026-11".into();
+        s.used_bytes = 1_000_000_000;
+        assert!(!s.usable_for(1.0, "2026-11"), "quota used up");
+        assert!(s.usable_for(1.0, "2026-12"), "a new month starts at zero");
+    }
+
+    #[test]
     fn direct_unpack_extracts_while_downloading() {
         use crate::download::tests::{local_server, mock_server_counted, yenc_part};
         if !crate::unrar::unrar_available() {
@@ -336,6 +436,9 @@ mod tests {
         assert!(!e.logs.iter().any(|l| l.message.starts_with("Unpack started")), "no second unpack");
         let found = walk(&root).into_iter().find(|p| p.ends_with("payload.bin")).expect("payload extracted");
         assert_eq!(std::fs::metadata(found).unwrap().len(), 150_000);
+        // The bytes count against the server's monthly use.
+        assert!(e.settings.servers[0].used_bytes >= 150_000, "{}", e.settings.servers[0].used_bytes);
+        assert_eq!(e.history[0].status, "Completed");
         let _ = std::fs::remove_dir_all(root);
     }
 

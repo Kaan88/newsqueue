@@ -81,6 +81,11 @@ pub struct Engine {
     pub pending_unrar: VecDeque<u64>,
     /// Direct unpack: extraction running while its collection downloads.
     pub active_direct: Option<unrar::DirectUnrar>,
+    /// Servers of the running job (address, port, user) and the bytes
+    /// already counted against their quota.
+    job_servers: Vec<(String, u16, String)>,
+    job_server_bytes: Vec<u64>,
+    no_server_warned: bool,
     /// Collections direct unpack has tried, and whether it extracted them
     /// (`None` while it still runs).
     pub direct_result: HashMap<u64, Option<bool>>,
@@ -187,6 +192,9 @@ impl Engine {
             active_par2: None,
             pending_unrar: VecDeque::new(),
             active_direct: None,
+            job_servers: Vec::new(),
+            job_server_bytes: Vec::new(),
+            no_server_warned: false,
             direct_result: HashMap::new(),
             resume_after_unrar: false,
             demo,
@@ -212,6 +220,37 @@ impl Engine {
 
     pub fn notify(&mut self, title: &str, text: &str) {
         self.events.push(Event::Notify(title.to_string(), text.to_string()));
+        let url = self.settings.notify_url.trim().to_string();
+        if !url.is_empty() {
+            let (title, text) = (title.to_string(), text.to_string());
+            std::thread::spawn(move || {
+                let _ = send_webhook(&url, &title, &text);
+            });
+        }
+    }
+
+    pub fn add_history(&mut self, name: String, total: u64, status: &str, source: String) {
+        self.history.insert(
+            0,
+            HistoryItem { name, date: now_datetime(), size: format_size_short(total), status: status.into(), source },
+        );
+        if self.history.len() > 50 {
+            self.history.pop();
+        }
+    }
+
+    /// Queue a history entry's NZB again.
+    pub fn retry_history(&mut self, index: usize) -> crate::command::Applied {
+        let Some(item) = self.history.get(index).cloned() else {
+            return crate::command::Applied::Ignored;
+        };
+        if item.source.is_empty() || !Path::new(&item.source).is_file() {
+            self.log("Queue", &format!("Cannot retry {}: its NZB is no longer on disk", item.name));
+            self.toast("NZB no longer on disk");
+            return crate::command::Applied::Failed;
+        }
+        self.log("Queue", &format!("Retrying from history: {}", item.name));
+        self.apply(crate::command::Command::AddNzbFile(item.source, false))
     }
 
     /// Saves settings, queue, history and statistics (not in demo mode).
@@ -449,6 +488,17 @@ impl Engine {
     }
 
     pub fn add_nzb_from_parsed(&mut self, nzb: ParsedNzb, source: String, filter_paused: bool) -> u64 {
+        let duplicate = self.settings.duplicate_check > 0 && {
+            let name = nzb.name.to_lowercase();
+            self.history.iter().any(|h| h.name.to_lowercase() == name && h.status != "Failed")
+                || self.queue.iter().any(|c| c.subject.to_lowercase() == name)
+        };
+        if duplicate {
+            let paused = if self.settings.duplicate_check >= 2 { " (added paused)" } else { "" };
+            self.log("Queue", &format!("Duplicate: {} is already in the queue or history{paused}", nzb.name));
+            self.toast("Duplicate NZB");
+        }
+        let filter_paused = filter_paused || (duplicate && self.settings.duplicate_check >= 2);
         let mut files: Vec<QueueFile> = nzb
             .files
             .iter()
@@ -999,6 +1049,34 @@ impl Engine {
         self.run_execute_hook(id);
     }
 
+    /// Adds what each server delivered since the last tick to its monthly use.
+    fn count_server_bytes(&mut self, totals: &[u64]) {
+        let month = chrono::Local::now().format("%Y-%m").to_string();
+        for (k, &total) in totals.iter().enumerate() {
+            let before = self.job_server_bytes.get(k).copied().unwrap_or(0);
+            let delta = total.saturating_sub(before);
+            if delta == 0 {
+                continue;
+            }
+            if let Some(slot) = self.job_server_bytes.get_mut(k) {
+                *slot = total;
+            }
+            let Some((address, port, user)) = self.job_servers.get(k).cloned() else { continue };
+            if let Some(server) = self
+                .settings
+                .servers
+                .iter_mut()
+                .find(|s| s.address == address && s.port == port && s.username == user)
+            {
+                if server.quota_month != month {
+                    server.quota_month = month.clone();
+                    server.used_bytes = 0;
+                }
+                server.used_bytes = server.used_bytes.saturating_add(delta);
+            }
+        }
+    }
+
     /// Direct unpack: start UnRAR on the first finished RAR volume of the
     /// collection being downloaded, tell it which volumes are complete, and
     /// stop it when articles go missing (PAR2 has to repair first then).
@@ -1327,13 +1405,23 @@ impl Engine {
                 .iter()
                 .position(|c| c.status == ItemStatus::Queued && c.has_segments())
             {
+                let month = chrono::Local::now().format("%Y-%m").to_string();
+                let age = self.queue[i].age_days;
                 let servers: Vec<Server> = self
                     .settings
                     .enabled_servers()
                     .into_iter()
+                    .filter(|s| s.usable_for(age, &month))
                     .cloned()
                     .collect();
+                if servers.is_empty() && !self.no_server_warned {
+                    self.no_server_warned = true;
+                    self.log("Queue", "No server can take the next job (retention or monthly quota); waiting.");
+                }
                 if !servers.is_empty() {
+                    self.no_server_warned = false;
+                    self.job_servers = servers.iter().map(|s| (s.address.clone(), s.port, s.username.clone())).collect();
+                    self.job_server_bytes = vec![0; servers.len()];
                     let mut job = download::job_for_collection(
                         &self.queue[i],
                         self.settings.skip_existing,
@@ -1364,6 +1452,7 @@ impl Engine {
             .and_then(|a| a.snapshot.lock().ok().map(|s| s.clone()));
         if let Some(snapshot) = snapshot {
             self.drive_direct(&snapshot);
+            self.count_server_bytes(&snapshot.server_bytes);
             let mut clear = false;
             let mut delta = 0.0;
             let mut completed: Option<(String, u64)> = None;
@@ -1445,6 +1534,12 @@ impl Engine {
                 self.total_collections = self.total_collections.saturating_add(1);
                 self.session_collections = self.session_collections.saturating_add(1);
             }
+            let (source, total_bytes) = self
+                .queue
+                .iter()
+                .find(|c| c.id == snapshot.id)
+                .map(|c| (c.source.clone(), c.total_bytes))
+                .unwrap_or_default();
             if let Some((subject, total)) = completed {
                 self.log("Main", &format!("Download complete: {subject}"));
                 if count_collection {
@@ -1452,17 +1547,12 @@ impl Engine {
                 } else {
                     self.notify("Download incomplete", &subject);
                 }
-                self.history.insert(
-                    0,
-                    HistoryItem {
-                        name: subject,
-                        date: now_datetime(),
-                        size: format_size_short(total),
-                    },
-                );
-                if self.history.len() > 50 {
-                    self.history.pop();
-                }
+                let status = if count_collection { "Completed" } else { "Incomplete" };
+                self.add_history(subject, total, status, source.clone());
+            }
+            if let Some((subject, _)) = &failed {
+                self.notify("Download failed", subject);
+                self.add_history(subject.clone(), total_bytes, "Failed", source);
             }
             if let Some((subject, message)) = failed {
                 self.log(
@@ -1603,10 +1693,34 @@ impl Engine {
     }}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
 pub struct HistoryItem {
     pub name: String,
     pub date: String,
     pub size: String,
+    /// "Completed", "Incomplete" or "Failed" (empty in old files).
+    pub status: String,
+    /// The NZB it came from, for Retry.
+    pub source: String,
+}
+
+impl Default for HistoryItem {
+    fn default() -> Self {
+        Self { name: String::new(), date: String::new(), size: String::new(), status: String::new(), source: String::new() }
+    }
+}
+
+/// Posts a notification: ntfy gets plain text with a Title header, any
+/// other URL a JSON body {"title", "text", "app"}.
+pub fn send_webhook(url: &str, title: &str, text: &str) -> Result<(), String> {
+    let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)).build();
+    let result = if url.contains("ntfy") {
+        agent.post(url).set("Title", title).send_string(text)
+    } else {
+        let body = serde_json::json!({ "title": title, "text": text, "app": "NewsQueue" });
+        agent.post(url).set("Content-Type", "application/json").send_string(&body.to_string())
+    };
+    result.map(|_| ()).map_err(|e| e.to_string())
 }
 
 /// How many missing articles the collection's PAR2 recovery volumes can
@@ -1732,16 +1846,22 @@ pub fn sample_history() -> Vec<HistoryItem> {
             name: "Quiet Harbor Sessions".into(),
             date: "2026-11-02 19:42".into(),
             size: "2.41 GB".into(),
+            status: "Completed".into(),
+            source: String::new(),
         },
         HistoryItem {
             name: "Field Notes Collection".into(),
             date: "2026-11-01 08:15".into(),
             size: "918.2 MB".into(),
+            status: "Completed".into(),
+            source: String::new(),
         },
         HistoryItem {
             name: "Toolkit Archive 2024".into(),
             date: "2026-10-29 22:05".into(),
             size: "4.12 GB".into(),
+            status: "Failed".into(),
+            source: String::new(),
         },
     ]
 }

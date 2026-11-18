@@ -314,15 +314,20 @@ None are started. Categories stay cut (see `REMOVED.md`).
 
 ### Medium value
 
-6. **Duplicate detection.** Warn or skip when an NZB name or title matches
+6. **Done (2026-11-18): duplicate detection** (Misc #3: add normally / warn /
+   add paused; failed history entries do not count). Warn or skip when an NZB name or title matches
    an item in history.
-7. **Post-success cleanup.** After a clean extract, delete `.par2`, `.sfv`,
+7. **Done: post-success cleanup** — the Unpack page's delete-after-unrar
+   patterns and delete-archives run only after a clean extract. After a clean extract, delete `.par2`, `.sfv`,
    `.nzb`, `.nfo` and sample files (each optional, configurable patterns).
-8. **Retry from History.** History keeps enough to re-queue a failed or
+8. **Done (2026-11-18): retry from History** (failed jobs are listed too;
+   Retry re-adds the NZB while it is still on disk). History keeps enough to re-queue a failed or
    incomplete job with one click.
-9. **Notifications.** Webhook, ntfy/Pushover and email on completed/failed
+9. **Done (2026-11-18): notifications** via `notify_url` (ntfy plain text
+   with Title header, otherwise JSON); email/Pushover-native left out. Webhook, ntfy/Pushover and email on completed/failed
    jobs; needed once the engine runs headless in Docker.
-10. **Per-server quota and retention.** A data cap per server and skipping a
+10. **Done (2026-11-18): per-server quota and retention** (`quota_gb` per
+    month, `max_age` days; servers out of either are skipped for the job). A data cap per server and skipping a
     server for posts older than its retention.
 
 ### With the Docker/web work

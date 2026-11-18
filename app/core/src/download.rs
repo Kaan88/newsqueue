@@ -43,6 +43,8 @@ pub struct DownloadSnapshot {
     pub paths: Vec<Option<PathBuf>>,
     /// Decoded size of each file from its yEnc header (0 = not known yet).
     pub sizes: Vec<u64>,
+    /// Bytes downloaded from each server of the job, in the order given.
+    pub server_bytes: Vec<u64>,
     /// Number of NNTP connections this job uses.
     pub workers: usize,
     pub speed_bps: f64,
@@ -256,6 +258,7 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         file_progress: vec![0; job.files.len()],
         paths: vec![None; job.files.len()],
         sizes: vec![0; job.files.len()],
+        server_bytes: vec![0; servers.len()],
         workers: planned_workers,
         speed_bps: 0.0,
         message: "Connecting".into(),
@@ -1029,6 +1032,9 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         }
         if let Ok(mut s) = ctx.snap.lock() {
             s.bytes = s.bytes.saturating_add(chunk);
+            if let Some(b) = s.server_bytes.get_mut(ctx.server_index) {
+                *b = b.saturating_add(chunk);
+            }
             s.file_index = task.file_index;
             if let Some(progress) = s.file_progress.get_mut(task.file_index) {
                 *progress = progress.saturating_add(chunk);
