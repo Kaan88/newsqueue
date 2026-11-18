@@ -13,6 +13,7 @@
 
 #[macro_use]
 mod util;
+mod classic;
 mod cli;
 mod dialogs;
 mod form;
@@ -246,9 +247,16 @@ fn main() {
             dwICC: ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_UPDOWN_CLASS | ICC_TAB_CLASSES | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES,
         };
         let _ = InitCommonControlsEx(&icc);
-        // The classic look: 3D bevelled controls drawn from the system
-        // colours (comctl32 v6 features stay); only the title bar is themed.
-        SetThemeAppProperties(SET_THEME_APP_PROPERTIES_FLAGS(1) /* STAP_ALLOW_NONCLIENT */);
+        // The classic look: no visual styles at all, so controls, frames,
+        // scroll bars and the menu bar draw 3D bevels from the system
+        // colours (comctl32 v6 features stay)...
+        SetThemeAppProperties(SET_THEME_APP_PROPERTIES_FLAGS(0));
+        // ...in the Windows 2000 colours (this process only; see classic.rs).
+        let patched = classic::install();
+        classic::face_classes();
+        if patched == 0 {
+            eprintln!("classic colours: no import slots found");
+        }
     }
     if demo && std::env::var("NQ_DPI").is_err() {
         // Goldens are rendered at 100 % whatever the monitor.
@@ -496,7 +504,7 @@ fn create_main() -> HWND {
         let y = wa.top + ((wa.bottom - wa.top) - oh).max(0) / 2;
         let main = mkpx("NewsQueueMain", &format!("{APP_NAME} {VERSION}"), style, WS_EX_ACCEPTFILES.0, x, y, ow, oh, None, 0);
         DragAcceptFiles(main, true);
-        let _ = SetMenu(main, Some(menu_bar()));
+        let _ = SetMenu(main, Some({ let m = menu_bar(); classic::face_menus(m); m }));
         let tb = toolbar(
             main,
             32,

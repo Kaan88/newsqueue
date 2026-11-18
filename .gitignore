@@ -32,3 +32,6 @@
 Thumbs.db
 /app/web/dist/
 /app/docker/
+
+# screenshots.ps1 -Check output
+app/shots/check/

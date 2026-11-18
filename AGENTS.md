@@ -42,13 +42,14 @@ cargo run -- --screenshot shots/now.png
 - `rss.rs` — RSS/Atom fetch, filter matching and NZB autodownload using `ureq` with native TLS.
 - `update.rs` — GitHub release check and verified silent self-update.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit), detects password-protected archives for the UI prompt, and builds archive/group/NZB subfolders. Do not delete the tool.
+- `src/classic.rs` — Windows 2000 colours for the desktop process (import-table redirect; never `SetSysColors`).
 - `web/src/skin.rs`, `web/src/theme.rs` — the classic (Windows 2000) widgets, palette and drawn icons of the egui web UI.
 - `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, minimize/close-to-tray with `SW_HIDE`, speed tooltip, balloon hints and the shared exit flag. `--screenshot` never starts the tray.
 - `shutdown.rs` — queue-drained power actions (`shutdown.exe /s`, `/h`, `SetSuspendState`, or app exit) with inspectable plans and a mock mode used by tests.
 - `package.ps1` / `build-installer.ps1` — portable release zip and Inno Setup exe (`installer/newsqueue.iss`): per-user files, shortcuts, HKCU uninstall entry and `unins000.exe`; it replaces an older IExpress install.
 - `installer-test.ps1` — end-to-end install/uninstall check against the built setup; uses temp paths and a clean state.
 - `tray-verify.ps1` / `shutdown-verify.ps1` / `download-while-tray-verify.ps1` — scripted tray, shutdown-countdown and mock-NNTP download checks against the native window.
-- `screenshots.ps1` — regenerates `shots/golden/` from the native window.
+- `screenshots.ps1` — regenerates `shots/golden/` from the native window; `-Check` compares fresh captures with them (0.5 % tolerance).
 
 ## Gotchas
 

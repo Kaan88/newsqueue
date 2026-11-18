@@ -172,7 +172,7 @@ windows-rs is too verbose. Not `native-windows-gui` (unmaintained).
 - **No dark mode (decided 2026-11-18).** Win32 common controls have no
   complete dark theme (a test left tabs, status bar, edits and progress bars
   light or broken); the native app is light-only with the classic look
-  (visual styles off for the client area, a menu bar).
+  (visual styles off, Windows 2000 colours for the process, a menu bar).
   Mockups from real controls: `mockups/win32/shots/` (`nqmock --capture`).
 - Step 2, main window and queue: toolbar with the measured buttons and
   drawn icons, tab control, queue secondary toolbar, status bar with the
@@ -191,7 +191,8 @@ windows-rs is too verbose. Not `native-windows-gui` (unmaintained).
 - Step 5, tray and cleanup: keep the `Shell_NotifyIconW` code but hide with
   `SW_HIDE`; drop the off-screen placement and `ITaskbarList3` tab removal.
   Rewrite `tray-verify.ps1`, `download-while-tray-verify.ps1` and
-  `screenshots.ps1` (`PrintWindow` captures, compared with a tolerance),
+  `screenshots.ps1` (`PrintWindow` captures; `-Check` compares them with
+  the goldens at a 0.5 % pixel tolerance),
   regenerate `shots/golden/`, then remove eframe/egui/egui_extras and update
   CLAUDE.md, AGENTS.md and ROADMAP.md.
 - Optional: a "Web access" setting that starts the same server inside the

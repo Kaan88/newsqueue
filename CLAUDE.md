@@ -13,8 +13,8 @@ source-code or artwork copy of the original. **AltBinz parity is no longer a
 requirement (2026-11-18):** prefer a sensible app with useful settings over
 measured AltBinz behaviour; the measurements remain as reference. The desktop
 has a classic, Windows 2000-style look: comctl32 v6 controls with visual
-styles turned off for the client area (`SetThemeAppProperties`, only the
-title bar stays themed), a menu bar, light only, per-monitor DPI v2;
+styles turned off (`SetThemeAppProperties(0)`), the Windows 2000 colours for
+this process only (`classic.rs`), a menu bar, light only, per-monitor DPI v2;
 `--screenshot` renders at 96 DPI. The web UI (`app/web`) is egui compiled to
 WebAssembly and drawn as a classic Windows 2000 window too (`web/src/skin.rs`
 widgets, `web/src/theme.rs` palette and drawn icons, bundled DejaVu Sans
@@ -56,6 +56,7 @@ first three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/src/setup.rs` | Modeless Setup: 15 pages from the `FIELDS` table bound to `Settings` JSON, server list + editor, scheduler grid |
 | `app/src/pick.rs` | File/folder pickers (`IFileOpenDialog`/`IFileSaveDialog`) |
 | `app/src/cli.rs` | `--download-test`, `--par2-test`, `--unrar-test`, `--rss-test`, `--rss-download-test`, `--update-test` |
+| `app/src/classic.rs` | Windows 2000 colours for this process (import-table redirect of `GetSysColor`/`GetSysColorBrush`/`FillRect`, menu face) |
 | `app/src/util.rs` | DPI scaling, fonts, window creation, icons/image lists, `PrintWindow` capture for screenshots |
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
@@ -290,7 +291,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 111 unit/integration tests currently pass (78 in core, 21 in desktop, 12 in server).
+- 113 unit/integration tests currently pass (78 in core, 23 in desktop, 12 in server).
 - `SETTINGS_CHECKLIST.md` lists every `Settings` field, its Setup page and
   the code that reads it; regenerate/extend it when adding a setting.
 - `download.rs` has a mock NNTP server used for success, missing-article,
@@ -316,7 +317,10 @@ you intend to format; do not claim the check passed unless it was run.
   NQ_WAIT_PID/NQ_RELAUNCH and installed-exe launch, then uninstalls. It never
   touches a real NewsQueue install, its shortcuts or uninstall entry.
 - `screenshots.ps1` regenerates `shots/golden/` from the native window (queue,
-  PAR2/Log/RSS tabs, every dialog, three Setup pages). `util::capture` takes
+  PAR2/Log/RSS tabs, every dialog, three Setup pages) and reports how much
+  each image changed; `screenshots.ps1 -Check` captures into `shots/check/`
+  and fails when an image differs from its golden by more than 0.5 % of
+  pixels. `util::capture` takes
   the frame with `PrintWindow(PW_RENDERFULLCONTENT)` and the client area with
   `PW_CLIENTONLY` (DWM's copy can miss controls painted just before); custom
   painted windows answer `WM_PRINTCLIENT`.
@@ -380,10 +384,17 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 ## 9. Visual/UI conventions
 
 - Classic look: comctl32 v6 controls (manifest `app/newsqueue.manifest`,
-  embedded by `build.rs` with `app.rc`) with client-area visual styles off
-  (`SetThemeAppProperties(STAP_ALLOW_NONCLIENT)` in `main()`), so controls
-  draw 3D bevels from the system colours; theme APIs (`OpenThemeData`)
-  return null, so custom draw must not rely on them. Segoe UI, light only (no
+  embedded by `build.rs` with `app.rc`) with visual styles off
+  (`SetThemeAppProperties(0)` in `main()`), so controls, frames, scroll bars
+  and the menu bar draw 3D bevels from the system colours; theme APIs
+  (`OpenThemeData`) return null, so custom draw must not rely on them.
+  `classic::install` redirects `GetSysColor`, `GetSysColorBrush` and
+  `FillRect` (for `COLOR_x + 1` brushes) in the import tables of this exe and
+  the loaded modules to the Windows 2000 "Windows Standard" scheme (face
+  D4D0C8, selection 0A246A), then makes comctl32 re-read its cached colours.
+  This is process-local: never call `SetSysColors`. Drawing inside
+  user32/win32k (`DrawEdge`, scroll bars, captions) keeps the system
+  colours. Segoe UI, light only (no
   dark mode). Per-monitor DPI v2; sizes are written at 96 DPI and scaled with
   `util::s()`. The main window has a menu bar (File, Queue, View, Tools,
   Help; `menu_bar`/`update_menu` in `main.rs`) besides the toolbars; Ctrl+O
@@ -415,7 +426,9 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   (`skin::dialog`; buttons right to left, Cancel added before OK). Options is
   a modal property sheet (`settings.rs`). Use the `skin.rs` widgets, never
   stock egui ones; colours are functions with a light and a dark value
-  (View > Dark colors). Below 720 points wide it switches to a phone layout.
+  (View > Dark colors; until that is used, the browser's
+  `prefers-color-scheme`). Below 720 points wide it switches to a phone
+  layout.
   Try it with `.claude/launch.json` `web-demo` (`newsqueue-server --demo`).
 
 ## 10. Known gotchas

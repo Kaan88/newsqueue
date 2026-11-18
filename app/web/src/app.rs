@@ -122,6 +122,14 @@ pub fn store(name: &str, value: &str) {
     let _ = (name, value);
 }
 
+/// Whether the browser asks for dark colours (`prefers-color-scheme`).
+fn system_dark() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    return web_sys::window().and_then(|w| w.match_media("(prefers-color-scheme: dark)").ok().flatten()).is_some_and(|m| m.matches());
+    #[cfg(not(target_arch = "wasm32"))]
+    false
+}
+
 /// The API key: `?apikey=` in the address, else the one saved in this browser.
 fn initial_key() -> String {
     #[cfg(target_arch = "wasm32")]
@@ -138,7 +146,12 @@ fn initial_key() -> String {
 
 impl WebApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        let dark = stored("nq-theme").as_deref() == Some("dark");
+        // View > Dark colors wins; until it is used, follow the system.
+        let dark = match stored("nq-theme").as_deref() {
+            Some("dark") => true,
+            Some("light") => false,
+            _ => system_dark(),
+        };
         theme::install(&cc.egui_ctx, dark);
         let key = initial_key();
         Self {

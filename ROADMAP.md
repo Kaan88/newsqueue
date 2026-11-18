@@ -19,8 +19,8 @@ toolbar, tabs, owner-data queue tree with custom-drawn progress, PAR2/Log/RSS
 tabs, the 15-page Setup bound by a table, server editor and every other
 dialog; the tray hides with `SW_HIDE`. The desktop can also serve the web UI
 itself (Setup → Miscellaneous #3 → Web access). Both front ends now have a
-classic Windows 2000 look: the desktop turns visual styles off for its
-controls and has a menu bar; the egui web UI draws the same classic window
+classic Windows 2000 look: the desktop turns visual styles off, draws in
+the Windows 2000 colours (process-local, `classic.rs`) and has a menu bar; the egui web UI draws the same classic window
 (menu bar, toolbar, tabs, list views, status bar, modal dialogs, an Options
 property sheet, light and dark colours). The server API gained pause-all,
 resume-all, pause-for, the RSS timer and starting a PAR2 check.
