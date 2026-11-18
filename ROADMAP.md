@@ -30,7 +30,7 @@ resume-all, pause-for, the RSS timer and starting a PAR2 check.
 Core builds and passes its tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
-Current app version: **1.0.6** (2026-11-18, native Win32 desktop, web UI, Inno Setup installer; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
+Current app version: **1.0.7** (2026-11-18: fixes a 1.0.6 crash when a menu opened; 1.0.6 brought the native Win32 desktop, web UI and Inno Setup installer; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds
 content-based naming for obfuscated posts.
@@ -368,7 +368,7 @@ None are started. Categories stay cut (see `REMOVED.md`).
 4. Done 2026-11-18: every planned feature (1-12), the Inno Setup installer,
    the server/web follow-ups and the per-setting checklist
    (`SETTINGS_CHECKLIST.md`).
-5. Done 2026-11-18: release 1.0.6. Still to try: a real 1.0.5 → 1.0.6
+5. Done 2026-11-18: releases 1.0.6 and 1.0.7 (menu crash fix). Still to try: a real 1.0.5 → 1.0.6
    (IExpress → Inno) self-update round trip.
    `installer-test.ps1` passes against the native desktop build (2026-11-18),
    using a test-named installer variant beside a real install.

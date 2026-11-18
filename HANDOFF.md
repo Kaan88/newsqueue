@@ -1,5 +1,6 @@
 # Handoff — 2026-11-18
 
+**v1.0.7 (2026-11-18)** fixes a 1.0.6 crash whenever a menu opened.
 **Released as v1.0.6 (2026-11-18)**: everything below plus the native Win32
 desktop in a Windows 2000 look, the egui web UI and Web access.
 

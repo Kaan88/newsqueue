@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "NewsQueue";
-pub const VERSION: &str = "1.0.6";
+pub const VERSION: &str = "1.0.7";
 /// GitHub `owner/name` used for the Home button and the update check.
 pub const HOME_REPO: &str = "Kaan88/newsqueue";
 pub const HOME_URL: &str = "https://github.com/Kaan88/newsqueue";

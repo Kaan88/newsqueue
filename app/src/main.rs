@@ -218,7 +218,37 @@ fn refresh_soon() {
 
 // ------------------------------------------------------------- startup ----
 
+/// A panic inside a window procedure cannot unwind into Windows, so the
+/// process ends at once (0xC0000409) and a release build has no console.
+/// The hook writes the message, place and backtrace to `log\crash.log`
+/// first.
+fn install_crash_log() {
+    let default = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let dir = newsqueue_core::model::app_base().join("log");
+        let _ = std::fs::create_dir_all(&dir);
+        let text = format!(
+            "[{}] NewsQueue {} panicked: {}\n{}\n\n",
+            chrono_free_now(),
+            newsqueue_core::model::VERSION,
+            info,
+            std::backtrace::Backtrace::force_capture()
+        );
+        if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(dir.join("crash.log")) {
+            use std::io::Write;
+            let _ = f.write_all(text.as_bytes());
+        }
+        default(info);
+    }));
+}
+
+/// Seconds since the Unix epoch (the log needs no calendar here).
+fn chrono_free_now() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
+}
+
 fn main() {
+    install_crash_log();
     let args: Vec<String> = std::env::args().collect();
     if let Some(code) = cli::run(&args) {
         std::process::exit(code);
@@ -747,7 +777,9 @@ fn menu_bar() -> HMENU {
 
 /// Ticks and greys the menu items as the queue and settings stand now.
 fn update_menu(menu: HMENU) {
-    let (connected, paused, has_sel, tab) = ui(|u| (u.snap.connected, u.snap.paused, u.sel.is_some(), current_tab()));
+    // current_tab() borrows the UI state itself: never call it inside ui().
+    let (connected, paused, has_sel) = ui(|u| (u.snap.connected, u.snap.paused, u.sel.is_some()));
+    let tab = current_tab();
     let checks = [
         (ID_CONNECT, connected),
         (ID_PAUSE, paused),

@@ -1,6 +1,6 @@
 [package]
 name = "newsqueue-core"
-version = "1.0.6"
+version = "1.0.7"
 edition = "2021"
 description = "NewsQueue engine: NNTP/yEnc downloader, NZB, PAR2, unrar, RSS, settings and queue. No UI."
 

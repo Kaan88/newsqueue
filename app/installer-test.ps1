@@ -8,7 +8,7 @@
 # NewsQueue install on this machine; everything else is the real script.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.6'
+$version = '1.0.7'
 $name = 'NewsQueue Install Test'
 $guid = 'C0FFEE00-5E7A-4B1D-9A2C-7E57DEADBEEF'
 $folder = Join-Path $root "dist\NewsQueue-$version"

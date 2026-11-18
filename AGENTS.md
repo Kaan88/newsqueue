@@ -3,7 +3,7 @@
 ## Project
 
 - Read `CLAUDE.md` for the full architecture, verification and release guide, and `ROADMAP.md` for current work and blockers.
-- `app/` is the whole Rust 2021 workspace: the native Win32 desktop app (`newsqueue`, root package), `core` (engine), `server` (JSON API library + headless binary) and `web` (egui web UI for WebAssembly). A from-scratch clone of AltBinz, presented as NewsQueue 1.0.6. The web UI must stay egui.
+- `app/` is the whole Rust 2021 workspace: the native Win32 desktop app (`newsqueue`, root package), `core` (engine), `server` (JSON API library + headless binary) and `web` (egui web UI for WebAssembly). A from-scratch clone of AltBinz, presented as NewsQueue 1.0.7. The web UI must stay egui.
 - `app/MECHANICS.md` records measured constants, formulas and function addresses from the original Delphi binary; `app/mechanics.json` is the machine-checked list. Keep both in sync with `model.rs`, and only mark a value "estimated" after searching the evidence.
 - `capture/`, `investigation.cany/`, `altbinz_original/` and `reference/` are read-only evidence. Harness files (`craft.json`, `feed.json`, `build-activity.log`, `checks/`) are generated; don't edit them. 
 - Ghidra 12.1.4 is installed at `C:\Users\kaank\AppData\Roaming\craft-anything\engines\ghidra\ghidra_12.1.4_PUBLIC`. Use it when the recorded evidence is insufficient to verify a value or behavior; do not guess mechanics.
@@ -22,8 +22,8 @@ cargo run -- --screenshot shots/now.png
 - `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close the debug NewsQueue. It runs in a temporary `NQ_CONFIG` folder and checks the tray icon, speed tooltip, balloon API result, minimize to tray (hidden, no taskbar button), continued engine tick (queue autosave), click-to-restore, close-to-tray and tray Exit.
-- `.\build-installer.ps1` runs `package.ps1`, compiles `installer\newsqueue.iss` with Inno Setup 7 into `dist\NewsQueue-1.0.6-Setup.exe` and writes its SHA256.
-- `.\installer-test.ps1` compiles a test variant of the installer (`NewsQueue Install Test`, own AppId) from `dist\NewsQueue-1.0.6` (run `package.ps1` first), installs it into a temp folder over a simulated IExpress install, checks files/registry/shortcuts/relaunch, launches the installed exe and uninstalls. It never touches a real NewsQueue install.
+- `.\build-installer.ps1` runs `package.ps1`, compiles `installer\newsqueue.iss` with Inno Setup 7 into `dist\NewsQueue-1.0.7-Setup.exe` and writes its SHA256.
+- `.\installer-test.ps1` compiles a test variant of the installer (`NewsQueue Install Test`, own AppId) from `dist\NewsQueue-1.0.7` (run `package.ps1` first), installs it into a temp folder over a simulated IExpress install, checks files/registry/shortcuts/relaunch, launches the installed exe and uninstalls. It never touches a real NewsQueue install.
 - `.\shutdown-verify.ps1` arms the safe `Exit` shutdown path in a debug build, hides the window in the tray and checks the 15-second countdown still exits the app (temporary `NQ_CONFIG`).
 - `.\download-while-tray-verify.ps1` runs a local mock NNTP server, hides the app in the tray, and verifies a download still completes and the payload is correct. It works in a temporary `NQ_CONFIG` folder; `app/*.json` are not touched.
 - Release builds use the Windows GUI subsystem, so they do not open a console. Use the debug build (`cargo run`) for CLI diagnostics and unit tests.
