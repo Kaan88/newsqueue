@@ -127,6 +127,13 @@ pub struct QueueFile {
     pub parts: u32,
     #[serde(default)]
     pub segments: Vec<Segment>,
+    /// A PAR2 recovery volume kept back until a repair needs it
+    /// (`par2_on_demand`).
+    #[serde(default)]
+    pub held: bool,
+    /// Already on disk: a later download round of the collection skips it.
+    #[serde(default)]
+    pub done: bool,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Collection {
@@ -375,6 +382,9 @@ pub struct Settings {
     pub par2_checking: bool,
     pub par2_repairing: bool,
     pub cleanup_after_repair: bool,
+    /// Download only the PAR2 index first; fetch recovery volumes when a
+    /// verify finds damage, and only as many blocks as the repair needs.
+    pub par2_on_demand: bool,
     pub auto_unrar: bool,
     pub create_dir_nzb_name: bool,
     pub create_dir_group_name: bool,
@@ -462,6 +472,7 @@ impl Default for Settings {
             par2_checking: true,
             par2_repairing: true,
             cleanup_after_repair: true,
+            par2_on_demand: true,
             auto_unrar: false,
             create_dir_nzb_name: false,
             create_dir_group_name: false,
@@ -674,6 +685,7 @@ pub struct ParsedFile {
     pub parts: u32,
     pub segments: Vec<Segment>,
 }
+#[derive(Clone, Debug, Default)]
 pub struct ParsedNzb {
     pub name: String,
     pub total_bytes: u64,
@@ -1104,6 +1116,8 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         let each = total / file_count as f64;
         (1..=file_count)
             .map(|i| QueueFile {
+                held: false,
+                done: false,
                 name: format!("{}.part{:02}.rar", name, i),
                 bytes: each as u64,
                 downloaded: 0.0,

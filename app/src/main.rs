@@ -375,6 +375,8 @@ impl App {
                     .files
                     .iter()
                     .map(|f| QueueFile {
+                        held: false,
+                        done: false,
                         name: f.name.clone(),
                         bytes: f.bytes,
                         downloaded: 0.0,

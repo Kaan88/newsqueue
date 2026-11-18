@@ -22,6 +22,63 @@ pub struct Par2Options {
     /// that were never posted (an `.nfo`); those are reported as "not in
     /// the NZB" rather than as damage. Empty: no such distinction.
     pub nzb_files: Vec<String>,
+    /// Held recovery volumes exist: when blocks are short, report
+    /// `NEED_BLOCKS` instead of failing, so they can be fetched.
+    pub fetch_more: bool,
+}
+
+/// Error prefix: the set needs this many more recovery blocks.
+pub const NEED_BLOCKS: &str = "PAR2 needs more recovery blocks: ";
+
+/// "You need 12 more recovery blocks to be able to repair."
+pub fn blocks_needed(output: &str) -> Option<u32> {
+    let lower = output.to_ascii_lowercase();
+    let at = lower.find("you need ")?;
+    lower[at + 9..].split_whitespace().next()?.parse().ok()
+}
+
+/// Recovery blocks in a volume named `x.vol003+004.par2` (4).
+pub fn volume_blocks(name: &str) -> Option<u32> {
+    let lower = name.to_ascii_lowercase();
+    let at = lower.rfind(".vol")?;
+    let rest = &lower[at + 4..];
+    let plus = rest.find('+')?;
+    let end = rest[plus + 1..].find(|c: char| !c.is_ascii_digit())? + plus + 1;
+    rest[plus + 1..end].parse().ok()
+}
+
+/// Indexes of `volumes` (index, blocks) to fetch for `need` blocks: the
+/// fewest blocks that cover the need, or all of them when they cannot.
+pub fn pick_volumes(volumes: &[(usize, u32)], need: u32) -> Vec<usize> {
+    let total: u32 = volumes.iter().map(|v| v.1).sum();
+    if total <= need {
+        return volumes.iter().map(|v| v.0).collect();
+    }
+    // Small sets: exact search for the least overshoot; else greedy.
+    if volumes.len() <= 16 {
+        let mut best: Option<(u32, u32)> = None; // (blocks, mask)
+        for mask in 1u32..(1 << volumes.len()) {
+            let sum: u32 = (0..volumes.len()).filter(|i| mask & (1 << i) != 0).map(|i| volumes[i].1).sum();
+            if sum >= need && best.map(|b| sum < b.0).unwrap_or(true) {
+                best = Some((sum, mask));
+            }
+        }
+        if let Some((_, mask)) = best {
+            return (0..volumes.len()).filter(|i| mask & (1 << i) != 0).map(|i| volumes[i].0).collect();
+        }
+    }
+    let mut sorted = volumes.to_vec();
+    sorted.sort_by(|a, b| b.1.cmp(&a.1));
+    let mut picked = Vec::new();
+    let mut sum = 0;
+    for (i, blocks) in sorted {
+        if sum >= need {
+            break;
+        }
+        picked.push(i);
+        sum += blocks;
+    }
+    picked
 }
 
 impl Par2Options {
@@ -30,7 +87,13 @@ impl Par2Options {
             repair: settings.par2_repairing,
             purge: settings.cleanup_after_repair,
             nzb_files: Vec::new(),
+            fetch_more: false,
         }
+    }
+
+    pub fn with_fetch_more(mut self, fetch_more: bool) -> Self {
+        self.fetch_more = fetch_more;
+        self
     }
 
     pub fn with_nzb_files(mut self, files: Vec<String>) -> Self {
@@ -181,6 +244,11 @@ pub fn verify_or_repair(
             tail(&output)
         ));
     }
+    if let Some(n) = blocks_needed(&output) {
+        if options.fetch_more {
+            return Err(format!("{NEED_BLOCKS}{n}"));
+        }
+    }
     if output.to_ascii_lowercase().contains("repair is not possible") {
         return Err(format!(
             "PAR2 could not repair {par2_name}: {}",
@@ -311,10 +379,84 @@ mod tests {
             repair: true,
             purge: false,
             nzb_files: Vec::new(),
+            fetch_more: false,
         };
         let message = verify_or_repair(&root, &par2_file, &options).unwrap();
         assert!(message.contains("repaired"), "{message}");
         assert_eq!(fs::read(&payload).unwrap(), data);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn on_demand_helpers() {
+        assert_eq!(volume_blocks("Rel.vol003+004.par2"), Some(4));
+        assert_eq!(volume_blocks("Rel.VOL00+01.PAR2"), Some(1));
+        assert_eq!(volume_blocks("Rel.par2"), None);
+        assert_eq!(volume_blocks("Rel.volume.par2"), None);
+        assert_eq!(blocks_needed("Repair is not possible.\r\nYou need 12 more recovery blocks to be able to repair."), Some(12));
+        assert_eq!(blocks_needed("All files are correct"), None);
+        let vols = [(3, 1), (4, 2), (5, 4), (6, 8)];
+        assert_eq!(pick_volumes(&vols, 3), vec![3, 4]);
+        assert_eq!(pick_volumes(&vols, 4), vec![5]);
+        assert_eq!(pick_volumes(&vols, 99), vec![3, 4, 5, 6]);
+    }
+
+    #[test]
+    fn missing_volumes_are_reported_as_blocks_to_fetch() {
+        if find_par2_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("newsqueue-par2-od-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let data: Vec<u8> = (0..60_000u32).map(|i| (i.wrapping_mul(13) % 251) as u8).collect();
+        fs::write(root.join("payload.rar"), &data).unwrap();
+        let exe = find_par2_exe().unwrap();
+        let out = Command::new(&exe)
+            .args(["c", "-q", "-s4000", "-r20", "payload.par2", "payload.rar"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+        // Hold every recovery volume back, as the downloader does.
+        let held = root.join("held");
+        fs::create_dir_all(&held).unwrap();
+        for e in fs::read_dir(&root).unwrap().flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if volume_blocks(&name).is_some() {
+                fs::rename(e.path(), held.join(&name)).unwrap();
+            }
+        }
+        let mut damaged = data.clone();
+        damaged[10] ^= 0xff;
+        damaged[30_000] ^= 0xff;
+        fs::write(root.join("payload.rar"), &damaged).unwrap();
+        let par2_file = root.join("payload.par2");
+        let opts = Par2Options { repair: true, purge: false, nzb_files: Vec::new(), fetch_more: true };
+        let err = verify_or_repair(&root, &par2_file, &opts).unwrap_err();
+        assert!(err.starts_with(NEED_BLOCKS), "{err}");
+        let need: u32 = err[NEED_BLOCKS.len()..].parse().unwrap();
+        assert_eq!(need, 2);
+        // Bring back just enough volumes, then the repair succeeds.
+        let vols: Vec<(usize, u32, String)> = fs::read_dir(&held)
+            .unwrap()
+            .flatten()
+            .enumerate()
+            .map(|(i, e)| {
+                let n = e.file_name().to_string_lossy().to_string();
+                (i, volume_blocks(&n).unwrap(), n)
+            })
+            .collect();
+        let picked = pick_volumes(&vols.iter().map(|v| (v.0, v.1)).collect::<Vec<_>>(), need);
+        let fetched: u32 = vols.iter().filter(|v| picked.contains(&v.0)).map(|v| v.1).sum();
+        assert!(fetched >= need && fetched < vols.iter().map(|v| v.1).sum::<u32>());
+        for v in vols.iter().filter(|v| picked.contains(&v.0)) {
+            fs::rename(held.join(&v.2), root.join(&v.2)).unwrap();
+        }
+        let message = verify_or_repair(&root, &par2_file, &opts).unwrap();
+        assert!(message.contains("repaired"), "{message}");
+        assert_eq!(fs::read(root.join("payload.rar")).unwrap(), data);
         let _ = fs::remove_dir_all(root);
     }
 
@@ -356,12 +498,12 @@ mod tests {
         let par2_file = root.join("payload.par2");
         let nzb = vec!["payload.rar".to_string(), "payload.par2".to_string()];
         // Repair off: still a clean result, the NFO is named.
-        let check = Par2Options { repair: false, purge: false, nzb_files: nzb.clone() };
+        let check = Par2Options { repair: false, purge: false, nzb_files: nzb.clone(), fetch_more: false };
         let message = verify_or_repair(&root, &par2_file, &check).unwrap();
         assert!(message.contains("not in the NZB") && message.contains("release.nfo"), "{message}");
         assert!(!message.contains("repaired"), "{message}");
         // Repair on: the NFO is rebuilt, reported the same way.
-        let repair = Par2Options { repair: true, purge: false, nzb_files: nzb };
+        let repair = Par2Options { repair: true, purge: false, nzb_files: nzb, fetch_more: false };
         let message = verify_or_repair(&root, &par2_file, &repair).unwrap();
         assert!(message.contains("rebuilt files not in the NZB: release.nfo"), "{message}");
         assert!(!message.contains("repaired"), "{message}");
@@ -408,6 +550,7 @@ mod tests {
             repair: true,
             purge: false,
             nzb_files: Vec::new(),
+            fetch_more: false,
         };
         let message = verify_or_repair(&root, &par2_file, &options).unwrap();
         assert!(message.contains("repaired"), "{message}");

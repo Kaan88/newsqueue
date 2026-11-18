@@ -442,10 +442,12 @@ impl Engine {
     }
 
     pub fn add_nzb_from_parsed(&mut self, nzb: ParsedNzb, source: String, filter_paused: bool) -> u64 {
-        let files: Vec<QueueFile> = nzb
+        let mut files: Vec<QueueFile> = nzb
             .files
             .iter()
             .map(|file| QueueFile {
+                held: false,
+                done: false,
                 name: file.name.clone(),
                 bytes: file.bytes,
                 downloaded: 0.0,
@@ -453,6 +455,7 @@ impl Engine {
                 segments: file.segments.clone(),
             })
             .collect();
+        let held = self.hold_par2_volumes(&mut files);
         let id = self.queue.iter().map(|collection| collection.id).max().unwrap_or(0) + 1;
         let paused = self.paused || filter_paused;
         let group = if nzb.group.is_empty() {
@@ -502,6 +505,9 @@ impl Engine {
         }
         self.queue.push(collection);
         self.log("Queue", &format!("Added: {subject}"));
+        if held > 0 {
+            self.log("PAR2", &format!("{subject}: {held} PAR2 recovery volume(s) held until a repair needs them"));
+        }
         if !nzb.password.is_empty() {
             // The password itself never goes to the log.
             self.log("Queue", &format!("{subject}: archive password taken from the NZB"));
@@ -725,7 +731,9 @@ impl Engine {
             id,
             source,
             par2_file,
-            par2::Par2Options::from_settings(&self.settings).with_nzb_files(expected),
+            par2::Par2Options::from_settings(&self.settings)
+                .with_nzb_files(expected)
+                .with_fetch_more(collection.files.iter().any(|f| f.held)),
         ));
         true
     }
@@ -843,26 +851,95 @@ impl Engine {
                 }
                 self.run_execute_hook(active.collection_id);
             }
-            Some(Err(error)) => {
-                if let Some(collection) = self
-                    .queue
-                    .iter_mut()
-                    .find(|collection| collection.id == active.collection_id)
-                {
-                    collection.status = ItemStatus::Incomplete;
+            Some(Err(error)) if error.starts_with(par2::NEED_BLOCKS) => {
+                let need: u32 = error[par2::NEED_BLOCKS.len()..].trim().parse().unwrap_or(u32::MAX);
+                if !self.release_par2_volumes(active.collection_id, need) {
+                    self.fail_par2(active.collection_id, format!("PAR2 repair is not possible: {need} more recovery blocks are needed"));
                 }
-                for set in &mut self.par2 {
-                    if set.collection_id == Some(active.collection_id)
-                        || (active.collection_id == 0 && set.status == "Repairing")
-                    {
-                        set.status = "Incomplete".into();
-                        set.info = error.clone();
-                    }
-                }
-                self.log("PAR2", &error);
-                self.events.push(Event::Message("PAR2".into(), error));
+            }
+            Some(Err(error)) => self.fail_par2(active.collection_id, error),
+        }
+    }
+
+    /// With `par2_on_demand`, marks the recovery volumes of a set that also
+    /// has its small index `.par2` as held. Returns how many were held.
+    pub fn hold_par2_volumes(&self, files: &mut [QueueFile]) -> usize {
+        let s = &self.settings;
+        if !(s.par2_on_demand && s.par2_checking && s.par2_repairing) {
+            return 0;
+        }
+        let is_par2 = |n: &str| n.to_ascii_lowercase().ends_with(".par2");
+        let has_index = files
+            .iter()
+            .any(|f| is_par2(&f.name) && par2::volume_blocks(&f.name).is_none());
+        if !has_index {
+            return 0;
+        }
+        let mut held = 0;
+        for f in files.iter_mut() {
+            if is_par2(&f.name) && par2::volume_blocks(&f.name).is_some() {
+                f.held = true;
+                held += 1;
             }
         }
+        held
+    }
+
+    /// Queues held recovery volumes worth at least `need` blocks for
+    /// download; PAR2 runs again when they arrive. False when none are held.
+    pub fn release_par2_volumes(&mut self, id: u64, need: u32) -> bool {
+        let Some(c) = self.queue.iter_mut().find(|c| c.id == id) else {
+            return false;
+        };
+        let volumes: Vec<(usize, u32)> = c
+            .files
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f.held)
+            .map(|(i, f)| (i, par2::volume_blocks(&f.name).unwrap_or(1)))
+            .collect();
+        if volumes.is_empty() {
+            return false;
+        }
+        let picked = par2::pick_volumes(&volumes, need);
+        let blocks: u32 = volumes.iter().filter(|v| picked.contains(&v.0)).map(|v| v.1).sum();
+        for f in c.files.iter_mut() {
+            if !f.held {
+                f.done = true;
+            }
+        }
+        for &i in &picked {
+            c.files[i].held = false;
+            c.files[i].downloaded = 0.0;
+        }
+        let extra: u64 = picked.iter().map(|&i| c.files[i].bytes).sum();
+        c.downloaded = (c.downloaded - extra as f64).max(0.0);
+        c.status = ItemStatus::Queued;
+        let subject = c.subject.clone();
+        self.log(
+            "PAR2",
+            &format!(
+                "{subject}: {need} recovery block(s) needed; fetching {} volume(s) with {blocks} block(s)",
+                picked.len()
+            ),
+        );
+        true
+    }
+
+    fn fail_par2(&mut self, collection_id: u64, error: String) {
+        if let Some(collection) = self.queue.iter_mut().find(|c| c.id == collection_id) {
+            collection.status = ItemStatus::Incomplete;
+        }
+        for set in &mut self.par2 {
+            if set.collection_id == Some(collection_id)
+                || (collection_id == 0 && set.status == "Repairing")
+            {
+                set.status = "Incomplete".into();
+                set.info = error.clone();
+            }
+        }
+        self.log("PAR2", &error);
+        self.events.push(Event::Message("PAR2".into(), error));
     }
 
     pub fn schedule_after_download(&mut self, id: u64) {

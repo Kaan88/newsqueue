@@ -264,4 +264,58 @@ mod tests {
         assert!(e.index_of(id).is_none());
         assert_eq!(e.apply(Command::Delete(id)), Applied::Ignored);
     }
+
+    fn nzb_with(names: &[&str]) -> crate::model::ParsedNzb {
+        crate::model::ParsedNzb {
+            name: "Rel".into(),
+            total_bytes: 100 * names.len() as u64,
+            parts: names.len() as u32,
+            files: names
+                .iter()
+                .map(|n| crate::model::ParsedFile {
+                    name: n.to_string(),
+                    bytes: 100,
+                    parts: 1,
+                    segments: vec![crate::model::Segment { number: 1, bytes: 100, id: format!("{n}@x") }],
+                })
+                .collect(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn par2_volumes_are_held_then_released_on_demand() {
+        let mut e = Engine::new(Settings::default(), true);
+        e.queue.clear();
+        let id = e.add_nzb_from_parsed(
+            nzb_with(&["Rel.part1.rar", "Rel.par2", "Rel.vol00+01.par2", "Rel.vol01+02.par2", "Rel.vol03+04.par2"]),
+            String::new(),
+            true,
+        );
+        let c = &e.queue[e.index_of(id).unwrap()];
+        let held: Vec<&str> = c.files.iter().filter(|f| f.held).map(|f| f.name.as_str()).collect();
+        assert_eq!(held, ["Rel.vol00+01.par2", "Rel.vol01+02.par2", "Rel.vol03+04.par2"]);
+        let job = crate::download::job_for_collection(c, false, 0, 1, 3, 0, 30, Default::default());
+        assert_eq!(job.files.iter().filter(|f| f.skip).count(), 3);
+
+        // A verify that is two blocks short releases the +02 volume only.
+        assert!(e.release_par2_volumes(id, 2));
+        let c = &e.queue[e.index_of(id).unwrap()];
+        assert_eq!(c.status, crate::model::ItemStatus::Queued);
+        let fetch: Vec<&str> = c.files.iter().filter(|f| !f.held && !f.done).map(|f| f.name.as_str()).collect();
+        assert_eq!(fetch, ["Rel.vol01+02.par2"]);
+        let job = crate::download::job_for_collection(c, false, 0, 1, 3, 0, 30, Default::default());
+        assert_eq!(job.files.iter().filter(|f| !f.skip).count(), 1);
+
+        // Off: nothing is held; a set without an index .par2 is never held.
+        let mut s = Settings::default();
+        s.par2_on_demand = false;
+        let mut e = Engine::new(s, true);
+        let id = e.add_nzb_from_parsed(nzb_with(&["a.rar", "a.par2", "a.vol0+1.par2"]), String::new(), true);
+        assert!(e.queue[e.index_of(id).unwrap()].files.iter().all(|f| !f.held));
+        let mut e = Engine::new(Settings::default(), true);
+        let id = e.add_nzb_from_parsed(nzb_with(&["a.rar", "a.vol0+1.par2"]), String::new(), true);
+        assert!(e.queue[e.index_of(id).unwrap()].files.iter().all(|f| !f.held));
+        assert!(!e.release_par2_volumes(id, 1));
+    }
 }

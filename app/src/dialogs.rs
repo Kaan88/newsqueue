@@ -577,6 +577,9 @@ fn page_par2(ui: &mut Ui, s: &mut Settings) {
             ui.label("Cleanup after PAR2 repair");
             crate::skin::checkbox_label(ui, &mut s.cleanup_after_repair, "");
             ui.end_row();
+            ui.label("Fetch recovery volumes only when needed");
+            crate::skin::checkbox_label(ui, &mut s.par2_on_demand, "");
+            ui.end_row();
         });
 }
 

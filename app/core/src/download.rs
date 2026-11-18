@@ -63,6 +63,8 @@ impl Drop for ActiveDownload {
 
 #[derive(Clone, Debug)]
 pub struct DownloadFile {
+    /// Not part of this round (a held PAR2 volume, or already downloaded).
+    pub skip: bool,
     pub name: String,
     pub bytes: u64,
     pub segments: Vec<Segment>,
@@ -106,6 +108,7 @@ pub fn job_for_collection(
             .files
             .iter()
             .map(|f| DownloadFile {
+                skip: f.held || f.done,
                 name: f.name.clone(),
                 bytes: f.bytes,
                 segments: f.segments.clone(),
@@ -333,6 +336,17 @@ fn run_job(
             quit_all(&mut lookups);
             snapshot_set(snap, |s| s.stage = Stage::Stopped);
             return Ok(());
+        }
+        if file.skip {
+            skipped[index] = true;
+            done_bytes = done_bytes.saturating_add(file.bytes);
+            snapshot_set(snap, |s| {
+                s.bytes = done_bytes;
+                if let Some(p) = s.file_progress.get_mut(index) {
+                    *p = file.bytes;
+                }
+            });
+            continue;
         }
         let mut segments = file.segments.clone();
         if segments.is_empty() {
@@ -1830,6 +1844,7 @@ mod tests {
             cache_cleanup_minutes: 30,
             proxy: ProxyConfig::default(),
             files: vec![DownloadFile {
+                skip: false,
                 name: "mock.bin".into(),
                 bytes,
                 segments,
@@ -2127,6 +2142,7 @@ mod tests {
             proxy: ProxyConfig::default(),
             files: vec![
                 DownloadFile {
+                    skip: false,
                     name: "one.bin".into(),
                     bytes: data.len() as u64,
                     segments: vec![Segment {
@@ -2136,6 +2152,7 @@ mod tests {
                     }],
                 },
                 DownloadFile {
+                    skip: false,
                     name: "two.bin".into(),
                     bytes: data.len() as u64,
                     segments: vec![Segment {
@@ -2335,6 +2352,7 @@ mod tests {
         job.files = ["a", "b"]
             .iter()
             .map(|id| DownloadFile {
+                skip: false,
                 name: "Same.Name.bin".into(),
                 bytes: 6,
                 segments: vec![Segment {
@@ -2432,6 +2450,29 @@ mod tests {
     }
 
     #[test]
+    fn skipped_files_are_neither_fetched_nor_written() {
+        let root = temp_root("skip");
+        let (port, count) = mock_server_counted(vec![("p2".into(), yenc_part(b"FGHIJ", 5, 1))]);
+        let mut job = two_part_job(&root);
+        let first = DownloadFile {
+            skip: true,
+            name: "held.vol00+01.par2".into(),
+            bytes: 5,
+            segments: vec![Segment { number: 1, bytes: 5, id: "p1".into() }],
+        };
+        job.files[0].segments.remove(0);
+        job.files[0].bytes = 5;
+        job.files.insert(0, first);
+        let active = spawn(job, vec![local_server(port, 1)], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert!(!root.join("held.vol00+01.par2").exists());
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"FGHIJ");
+        assert_eq!(count.load(Ordering::Relaxed), 1, "only p2 is fetched");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn missing_article_marks_the_job_incomplete() {
         let root = std::env::temp_dir().join(format!("newsqueue-mock-miss-{}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
@@ -2498,6 +2539,7 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
             .files
             .iter()
             .map(|f| DownloadFile {
+                skip: false,
                 name: f.name.clone(),
                 bytes: f.bytes,
                 segments: f.segments.clone(),
