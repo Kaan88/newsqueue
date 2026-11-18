@@ -235,14 +235,22 @@ Checked item by item against the code and by running both front ends:
   open File/Queue/View/Tools/Help on the owner-drawn menu bar (posted
   `SC_KEYMENU`, traced through `WM_INITMENUPOPUP`; no synthetic input).
 
-### Web UI review in progress (2026-11-18)
+### Web UI review (2026-11-18)
 
-- Done: queue, History, PAR2 and RSS tabs reviewed in light and dark at
-  800x600; progress bar captions are black on a light fill (the orange of a
-  paused job) and white on the dark highlight.
-- Open: the RSS list shows a horizontal scroll bar although its columns
-  fit; Log tab, dialogs (Add NZB, Options, Stats) and the phone layout
-  still to review. Not checked on a physical phone.
+Every tab (queue, History, PAR2, Log, RSS) and the Add NZB, Options and
+Stats dialogs reviewed in light and dark at 800x600, and the phone layout
+at 375 px (in a frame and in Chrome's phone emulation; not on a physical
+phone). Fixed:
+
+- Progress captions are black on the orange of a paused job (web and
+  desktop) and white on the dark highlight.
+- RSS and Log lists fit an 800 px window by default (no needless
+  horizontal scroll bar).
+- A click right after closing a dialog is no longer swallowed: egui keeps
+  the dialog as the top modal until the next frame, so the dialog asks for
+  that frame at once.
+- The queue summary ("3 jobs, ...") is shortened, or left out, instead of
+  being drawn over the filter on a very narrow page.
 
 ## Order and effort
 

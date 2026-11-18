@@ -748,7 +748,7 @@ pub fn progress(p: &egui::Painter, r: Rect, fraction: f32, text: &str, fill: Col
     // White on the dark highlight, black on a light fill (the orange of a
     // paused job), so the caption stays readable across the boundary.
     let luma = 0.299 * fill.r() as f32 + 0.587 * fill.g() as f32 + 0.114 * fill.b() as f32;
-    let on_fill = if luma > 140.0 { Color32::BLACK } else { Color32::WHITE };
+    let on_fill = if luma > 120.0 { Color32::BLACK } else { Color32::WHITE };
     p.with_clip_rect(fill_r).text(inner.center(), Align2::CENTER_CENTER, text, font.clone(), on_fill);
     let rest = Rect::from_min_max(pos2(fill_r.right(), inner.top()), inner.max);
     p.with_clip_rect(rest).text(inner.center(), Align2::CENTER_CENTER, text, font, TEXT());
@@ -809,6 +809,12 @@ pub fn dialog<R>(ctx: &egui::Context, id: &str, title: &str, width: f32, add: im
     edge(&ctx.layer_painter(shown.response.layer_id), shown.response.rect, Edge::Raised);
     if shown.is_top_modal && !shown.any_popup_open && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         close = true;
+    }
+    // A click or key here may close the dialog. egui keeps it as the top
+    // modal until the next frame, which would swallow the next click on the
+    // window below, so run that frame now instead of on the next input.
+    if close || ctx.input(|i| i.pointer.any_released() || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
+        ctx.request_repaint();
     }
     (shown.inner, close)
 }

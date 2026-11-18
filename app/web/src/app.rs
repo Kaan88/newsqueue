@@ -182,8 +182,8 @@ impl WebApp {
             cols_conns: Columns::new("conns", &[("#", 32.0, true), ("Action", 90.0, false), ("Description", 380.0, false), ("Status", 120.0, false), ("Server", 180.0, false)]),
             cols_hist: Columns::new("history", &[("Name", 380.0, false), ("Status", 110.0, false), ("Size", 84.0, true), ("Finished", 140.0, false)]),
             cols_par2: Columns::new("par2", &[("Name", 300.0, false), ("Size", 84.0, true), ("Blocks", 60.0, true), ("Info", 220.0, false), ("Unrar", 50.0, false), ("Status", 160.0, false)]),
-            cols_log: Columns::new("log", &[("Time", 70.0, false), ("Area", 90.0, false), ("Message", 900.0, false)]),
-            cols_rss: Columns::new("rss", &[("Name", 380.0, false), ("Date", 130.0, false), ("Description", 500.0, false)]),
+            cols_log: Columns::new("log", &[("Time", 70.0, false), ("Area", 90.0, false), ("Message", 600.0, false)]),
+            cols_rss: Columns::new("rss", &[("Name", 380.0, false), ("Date", 130.0, false), ("Description", 270.0, false)]),
         }
     }
 
@@ -774,9 +774,15 @@ impl WebApp {
         button_row(ui, |ui| {
             let n = snap.queue.len();
             let total: u64 = snap.queue.iter().map(|r| r.total_bytes).sum();
-            skin::label(ui, &format!("{n} job{}, {}", if n == 1 { "" } else { "s" }, size(total as f64)));
+            let field_w = if narrow { 120.0 } else { 190.0 };
+            // Shortened, never drawn over the filter on a very narrow page.
+            let room = ui.available_width() - field_w - 56.0;
+            let summary = format!("{n} job{}, {}", if n == 1 { "" } else { "s" }, size(total as f64));
+            if room >= 40.0 {
+                skin::label(ui, &elide(ui.painter(), &summary, theme::font(BODY), room));
+            }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                skin::field(ui, if narrow { 120.0 } else { 190.0 }, 1, egui::TextEdit::singleline(&mut self.queue_filter).hint_text("Filter subjects"));
+                skin::field(ui, field_w, 1, egui::TextEdit::singleline(&mut self.queue_filter).hint_text("Filter subjects"));
                 skin::label(ui, "Filter:");
             });
         });

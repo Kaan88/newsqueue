@@ -1586,8 +1586,11 @@ unsafe fn queue_draw(lp: LPARAM, queue: HWND) -> LRESULT {
         return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
     classic_progress(dc, bar, fill_right, kind);
-    // The text over the fill is white, the rest black.
-    for (l, rr, col) in [(bar.left, fill_right, rgb(255, 255, 255)), (fill_right, bar.right, rgb(0, 0, 0))] {
+    // The text over the dark highlight or red fill is white, over the
+    // orange of a paused job black (white on orange is hard to read), the
+    // rest black.
+    let on_fill = if matches!(kind, Bar::Paused) { rgb(0, 0, 0) } else { rgb(255, 255, 255) };
+    for (l, rr, col) in [(bar.left, fill_right, on_fill), (fill_right, bar.right, rgb(0, 0, 0))] {
         if rr <= l {
             continue;
         }
