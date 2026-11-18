@@ -62,7 +62,14 @@ newsqueue-server [--bind 127.0.0.1:8480] [--config DIR] [--api-key KEY]
   compose, container smoke test. Graceful shutdown (Ctrl+C → `save_all`) is
   missing; it relies on the engine's periodic autosave.
 
-## Native Win32 (GUI_PLAN Phase 2) — on hold, mockups only
+## Native Win32 (GUI_PLAN Phase 2) — resumed
+
+First slice in `app/win32` (see GUI_PLAN Phase 2): main window, queue/log,
+actions, add NZB, password prompt, driven by the real engine. Verified: builds,
+`--capture` with a queued NZB, queue saved on exit. Toolbar/menu clicks were
+not driven by a test. Next: tray (`SW_HIDE`), setup dialog, file rows.
+
+### Mockups
 
 - `mockups/win32/` is a standalone throwaway crate (`windows` 0.61, own
   `[workspace]`, not part of `app/`). `cargo build; target\debug\nqmock.exe

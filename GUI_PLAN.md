@@ -131,9 +131,16 @@ Testing:
 
 ## Phase 2: Windows desktop front end (native Win32)
 
-**On hold (2026-11-18).** AltBinz parity is no longer a requirement and the
-egui front end is kept for the web build, so the desktop app stays on egui
-unless there is a concrete reason to go native. The original proposal follows.
+**Resumed (2026-11-18), first slice done.** `app/win32` = `newsqueue-win32`
+(workspace member, not a default member; `cargo build -p newsqueue-win32`).
+It drives the engine through `EngineHost`/`EngineHandle` only: toolbar
+(connect, pause, add NZB, clean up, move, unpack, delete), Queue/Log tabs as
+virtual ListViews, custom-drawn progress in the Status column, status bar,
+queue context menu, Delete key, Add NZB (`GetOpenFileNameW`), drag-and-drop,
+`.nzb` paths on the command line, archive-password prompt, save on exit.
+`--config DIR` and `--capture out.png` (`win32/shots/main.png`). No tray, no
+setup dialogs, no collection/file tree yet. The window minimizes normally:
+the engine thread keeps ticking. The original proposal follows.
 
 The desktop app is rewritten on native Win32. This is required, not an
 experiment: egui is removed from the desktop build at the end of this phase.
