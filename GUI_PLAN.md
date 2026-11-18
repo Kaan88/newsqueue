@@ -229,8 +229,11 @@ Checked item by item against the code and by running both front ends:
   the goldens (`screenshots.ps1 -Check` passes); `tray-verify.ps1`,
   `shutdown-verify.ps1`, `download-while-tray-verify.ps1` and
   `installer-test.ps1` pass. Frames, captions, caption buttons (maximize,
-  restore and close clicked live), menu bar and scroll bars are drawn in
-  the Windows 2000 colours.
+  restore and close clicked live), menu bar, scroll bars, push and spin
+  buttons, client edges, check boxes and group boxes are drawn in the
+  Windows 2000 colours (pixel colours read from the goldens). Alt+F/Q/V/T/H
+  open File/Queue/View/Tools/Help on the owner-drawn menu bar (posted
+  `SC_KEYMENU`, traced through `WM_INITMENUPOPUP`; no synthetic input).
 
 ## Order and effort
 

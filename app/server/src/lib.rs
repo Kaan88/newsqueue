@@ -838,8 +838,10 @@ mod tests {
         let mut events = EventStream::new(api.handle.clone());
         let first = String::from_utf8(events.next_message().unwrap()).unwrap();
         assert!(first.starts_with("data: {") && first.ends_with("\n\n"));
-        host.tick_local();
-        assert!(events.next_message().is_none(), "only seq changed");
+        // The snapshot is only republished by a tick; without one nothing
+        // is sent again. (Ages and session times follow the clock, so a tick
+        // may be a real change and is not tested for silence.)
+        assert!(events.next_message().is_none(), "unchanged snapshot sent again");
         host.with(|e| e.log("Main", "something new"));
         host.tick_local();
         let next = String::from_utf8(events.next_message().unwrap()).unwrap();

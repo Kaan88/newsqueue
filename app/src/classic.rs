@@ -276,7 +276,10 @@ unsafe extern "system" fn cbt_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT
         if style & WS_CHILD.0 == 0 && style & WS_CAPTION.0 == WS_CAPTION.0 {
             classic_caption(HWND(wp.0 as *mut _));
         }
-        maybe_classic_scroll(HWND(wp.0 as *mut _));
+        maybe_classic_scroll(HWND(wp.0 as *mut _), style);
+        if cs.dwExStyle.0 & windows::Win32::UI::WindowsAndMessaging::WS_EX_CLIENTEDGE.0 != 0 {
+            let _ = windows::Win32::UI::Shell::SetWindowSubclass(HWND(wp.0 as *mut _), Some(edge_proc), EDGE_SUBCLASS_ID, 0);
+        }
     }
     CallNextHookEx(Some(HHOOK::default()), code, wp, lp)
 }
@@ -482,6 +485,8 @@ unsafe fn scroll_imports(user32: HMODULE) -> Vec<(&'static str, usize, usize)> {
         ("SetScrollPos", s!("SetScrollPos"), &ORIG_SET_POS, set_scroll_pos as *const () as usize),
         ("ShowScrollBar", s!("ShowScrollBar"), &ORIG_SHOW, show_scroll_bar as *const () as usize),
         ("EnableScrollBar", s!("EnableScrollBar"), &ORIG_ENABLE, enable_scroll_bar as *const () as usize),
+        ("DrawEdge", s!("DrawEdge"), &ORIG_DRAW_EDGE, draw_edge as *const () as usize),
+        ("DrawFrameControl", s!("DrawFrameControl"), &ORIG_DRAW_FRAME, draw_frame_control as *const () as usize),
     ] {
         if let Some(f) = GetProcAddress(user32, cname) {
             orig.store(f as usize, Ordering::Relaxed);
@@ -492,7 +497,7 @@ unsafe fn scroll_imports(user32: HMODULE) -> Vec<(&'static str, usize, usize)> {
 }
 
 /// Subclasses `h` for classic scroll bars when its class has bars.
-unsafe fn maybe_classic_scroll(h: HWND) {
+unsafe fn maybe_classic_scroll(h: HWND, style: u32) {
     use windows::Win32::UI::Shell::SetWindowSubclass;
     use windows::Win32::UI::WindowsAndMessaging::GetClassNameW;
     let mut buf = [0u16; 64];
@@ -501,6 +506,7 @@ unsafe fn maybe_classic_scroll(h: HWND) {
     if SCROLL_CLASSES.iter().any(|c| c.eq_ignore_ascii_case(&class)) {
         let _ = SetWindowSubclass(h, Some(scroll_proc), SCROLL_SUBCLASS_ID, 0);
     }
+    maybe_classic_button(h, &class, style);
 }
 
 fn is_classic_scroll(h: HWND) -> bool {
@@ -1025,6 +1031,384 @@ unsafe fn menu_bar_message(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> Option<LR
         }
         _ => None,
     }
+}
+
+// ------------------------------------------------ push and spin buttons ---
+//
+// comctl32 draws push buttons and up-down arrows through user32 frame
+// functions with the system face colour (F0F0F0) while their text uses the
+// redirected colours, so every caption sat on a darker box. Both are
+// painted here in full instead, the Windows 2000 way.
+
+const BUTTON_SUBCLASS_ID: usize = 0x4E51_4255; // "NQBU"
+const MOUSE_LEAVE: u32 = 0x02A3; // WM_MOUSELEAVE
+const SPIN_SUBCLASS_ID: usize = 0x4E51_5350; // "NQSP"
+
+/// Subclasses push buttons and up-down controls for classic painting.
+unsafe fn maybe_classic_button(h: HWND, class: &str, style: u32) {
+    use windows::Win32::UI::Shell::SetWindowSubclass;
+    if class.eq_ignore_ascii_case("Button") && matches!(style & 0xF, 0 | 1) {
+        let _ = SetWindowSubclass(h, Some(button_proc), BUTTON_SUBCLASS_ID, 0);
+    } else if class.eq_ignore_ascii_case("msctls_updown32") {
+        let _ = SetWindowSubclass(h, Some(spin_proc), SPIN_SUBCLASS_ID, 0);
+    }
+}
+
+unsafe fn paint_now(h: HWND, paint: unsafe fn(HWND, HDC)) {
+    use windows::Win32::Graphics::Gdi::{GetDC, ReleaseDC};
+    let dc = GetDC(Some(h));
+    if !dc.is_invalid() {
+        paint(h, dc);
+        ReleaseDC(Some(h), dc);
+    }
+}
+
+unsafe extern "system" fn button_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    match m {
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let dc = BeginPaint(h, &mut ps);
+            paint_button(h, dc);
+            let _ = EndPaint(h, &ps);
+            LRESULT(0)
+        }
+        WM_PRINTCLIENT => {
+            paint_button(h, HDC(wp.0 as *mut _));
+            LRESULT(0)
+        }
+        // The button repaints itself for these without WM_PAINT.
+        WM_LBUTTONDOWN | WM_LBUTTONUP | WM_LBUTTONDBLCLK | WM_MOUSEMOVE | WM_KEYDOWN | WM_KEYUP | WM_SETFOCUS | WM_KILLFOCUS | WM_CAPTURECHANGED
+        | WM_ENABLE | WM_SETTEXT | WM_UPDATEUISTATE | MOUSE_LEAVE => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            paint_now(h, paint_button);
+            r
+        }
+        _ if m == BM_SETSTATE || m == BM_SETSTYLE || m == BM_CLICK => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            paint_now(h, paint_button);
+            r
+        }
+        WM_NCDESTROY => {
+            let _ = RemoveWindowSubclass(h, Some(button_proc), BUTTON_SUBCLASS_ID);
+            DefSubclassProc(h, m, wp, lp)
+        }
+        _ => DefSubclassProc(h, m, wp, lp),
+    }
+}
+
+/// A Windows 2000 push button: raised; the default button (or one being
+/// pushed) gets a black frame; pushed it is flat with a shadow line and the
+/// caption moves down-right; disabled text is embossed.
+unsafe fn paint_button(h: HWND, dc: HDC) {
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let mut r = RECT::default();
+    if GetClientRect(h, &mut r).is_err() || r.right <= r.left {
+        return;
+    }
+    let state = SendMessageW(h, BM_GETSTATE, None, None).0 as u32;
+    let pushed = state & 0x4 != 0; // BST_PUSHED
+    let focused = state & 0x8 != 0; // BST_FOCUS
+    let style = GetWindowLongW(h, GWL_STYLE) as u32;
+    let default = style & 0xF == 1 || focused;
+    let enabled = IsWindowEnabled(h).as_bool();
+    let ui = SendMessageW(h, WM_QUERYUISTATE, None, None).0 as u32;
+    let (hide_focus, hide_accel) = (ui & 0x1 != 0, ui & 0x2 != 0); // UISF_HIDEFOCUS, UISF_HIDEACCEL
+    let mut face = r;
+    if default {
+        // The black frame of the default button.
+        fill(dc, r, 0);
+        face = RECT { left: r.left + 1, top: r.top + 1, right: r.right - 1, bottom: r.bottom - 1 };
+    }
+    if pushed {
+        fill(dc, face, SHADOW);
+        fill(dc, RECT { left: face.left + 1, top: face.top + 1, right: face.right - 1, bottom: face.bottom - 1 }, FACE);
+    } else {
+        raised(dc, face);
+    }
+    // Caption.
+    let len = GetWindowTextLengthW(h);
+    let mut text = vec![0u16; len as usize + 1];
+    let n = GetWindowTextW(h, &mut text) as usize;
+    text.truncate(n);
+    let font = HFONT(SendMessageW(h, WM_GETFONT, None, None).0 as *mut _);
+    let old = if font.is_invalid() { None } else { Some(SelectObject(dc, font.into())) };
+    SetBkMode(dc, TRANSPARENT);
+    let shift = if pushed { 1 } else { 0 };
+    let mut flags = DT_CENTER | DT_VCENTER | DT_SINGLELINE;
+    if hide_accel {
+        flags |= DT_HIDEPREFIX;
+    }
+    let mut tr = RECT { left: face.left + 2 + shift, top: face.top + shift, right: face.right - 2 + shift, bottom: face.bottom + shift };
+    if enabled {
+        SetTextColor(dc, COLORREF(0));
+        DrawTextW(dc, &mut text.clone(), &mut tr, flags);
+    } else {
+        SetTextColor(dc, COLORREF(WHITE));
+        let mut t2 = RECT { left: tr.left + 1, top: tr.top + 1, right: tr.right + 1, bottom: tr.bottom + 1 };
+        DrawTextW(dc, &mut text.clone(), &mut t2, flags);
+        SetTextColor(dc, COLORREF(SHADOW));
+        DrawTextW(dc, &mut text, &mut tr, flags);
+    }
+    if let Some(old) = old {
+        SelectObject(dc, old);
+    }
+    if focused && !hide_focus {
+        let fr = RECT { left: face.left + 3, top: face.top + 3, right: face.right - 3, bottom: face.bottom - 3 };
+        SetTextColor(dc, COLORREF(0));
+        SetBkColor(dc, COLORREF(WHITE));
+        let _ = DrawFocusRect(dc, &fr);
+    }
+}
+
+/// The half of an up-down control held down: 0 none, 1 up, 2 down.
+static SPIN_HELD: AtomicUsize = AtomicUsize::new(0);
+static SPIN_WINDOW: AtomicIsize = AtomicIsize::new(0);
+
+unsafe extern "system" fn spin_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    use windows::Win32::Graphics::Gdi::{BeginPaint, EndPaint, PAINTSTRUCT};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    match m {
+        WM_PAINT => {
+            let mut ps = PAINTSTRUCT::default();
+            let dc = BeginPaint(h, &mut ps);
+            paint_spin(h, dc);
+            let _ = EndPaint(h, &ps);
+            LRESULT(0)
+        }
+        WM_PRINTCLIENT => {
+            paint_spin(h, HDC(wp.0 as *mut _));
+            LRESULT(0)
+        }
+        WM_LBUTTONDOWN | WM_LBUTTONDBLCLK => {
+            let mut r = RECT::default();
+            let _ = GetClientRect(h, &mut r);
+            let y = ((lp.0 >> 16) & 0xFFFF) as i16 as i32;
+            SPIN_WINDOW.store(h.0 as isize, Ordering::Relaxed);
+            SPIN_HELD.store(if y < (r.top + r.bottom) / 2 { 1 } else { 2 }, Ordering::Relaxed);
+            let res = DefSubclassProc(h, m, wp, lp);
+            paint_now(h, paint_spin);
+            res
+        }
+        WM_LBUTTONUP | WM_CAPTURECHANGED => {
+            let res = DefSubclassProc(h, m, wp, lp);
+            if SPIN_WINDOW.load(Ordering::Relaxed) == h.0 as isize {
+                SPIN_HELD.store(0, Ordering::Relaxed);
+            }
+            paint_now(h, paint_spin);
+            res
+        }
+        WM_MOUSEMOVE | WM_TIMER | WM_ENABLE | MOUSE_LEAVE => {
+            let res = DefSubclassProc(h, m, wp, lp);
+            paint_now(h, paint_spin);
+            res
+        }
+        WM_NCDESTROY => {
+            let _ = RemoveWindowSubclass(h, Some(spin_proc), SPIN_SUBCLASS_ID);
+            DefSubclassProc(h, m, wp, lp)
+        }
+        _ => DefSubclassProc(h, m, wp, lp),
+    }
+}
+
+/// Two raised arrow buttons, the held one pushed.
+unsafe fn paint_spin(h: HWND, dc: HDC) {
+    use windows::Win32::UI::Input::KeyboardAndMouse::IsWindowEnabled;
+    use windows::Win32::UI::WindowsAndMessaging::GetClientRect;
+    let mut r = RECT::default();
+    if GetClientRect(h, &mut r).is_err() || r.bottom - r.top < 4 {
+        return;
+    }
+    let enabled = IsWindowEnabled(h).as_bool();
+    let held = if SPIN_WINDOW.load(Ordering::Relaxed) == h.0 as isize { SPIN_HELD.load(Ordering::Relaxed) } else { 0 };
+    let mid = (r.top + r.bottom) / 2;
+    for (half, part, dir) in [(1, RECT { bottom: mid, ..r }, 0u8), (2, RECT { top: mid, ..r }, 1u8)] {
+        let pushed = enabled && held == half;
+        if pushed {
+            fill(dc, part, SHADOW);
+            fill(dc, RECT { left: part.left + 1, top: part.top + 1, right: part.right - 1, bottom: part.bottom - 1 }, FACE);
+        } else {
+            raised(dc, part);
+        }
+        arrow_glyph(dc, part, dir, enabled, pushed);
+    }
+}
+
+// ----------------------------------------------------------- client edge ---
+//
+// The sunken 3D border of fields and lists (WS_EX_CLIENTEDGE) is drawn by
+// user32 in the Windows 11 greys; it is painted again in the Windows 2000
+// ones: shadow over dark shadow top-left, white over face bottom-right.
+
+const EDGE_SUBCLASS_ID: usize = 0x4E51_4345; // "NQCE"
+
+unsafe extern "system" fn edge_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    match m {
+        WM_NCPAINT | WM_ENABLE | WM_STYLECHANGED | WM_SIZE => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            let dc = GetWindowDC(Some(h));
+            if !dc.is_invalid() {
+                paint_client_edge(h, dc);
+                ReleaseDC(Some(h), dc);
+            }
+            r
+        }
+        WM_PRINT => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            if lp.0 as u32 & PRF_NONCLIENT as u32 != 0 {
+                paint_client_edge(h, HDC(wp.0 as *mut _));
+            }
+            r
+        }
+        WM_NCDESTROY => {
+            let _ = RemoveWindowSubclass(h, Some(edge_proc), EDGE_SUBCLASS_ID);
+            DefSubclassProc(h, m, wp, lp)
+        }
+        _ => DefSubclassProc(h, m, wp, lp),
+    }
+}
+
+unsafe fn paint_client_edge(h: HWND, dc: HDC) {
+    use windows::Win32::UI::WindowsAndMessaging::{GWL_EXSTYLE, GetWindowLongW, GetWindowRect, WS_EX_CLIENTEDGE};
+    if GetWindowLongW(h, GWL_EXSTYLE) as u32 & WS_EX_CLIENTEDGE.0 == 0 {
+        return;
+    }
+    let mut wr = RECT::default();
+    if GetWindowRect(h, &mut wr).is_err() {
+        return;
+    }
+    let (w, ht) = (wr.right - wr.left, wr.bottom - wr.top);
+    if w < 4 || ht < 4 {
+        return;
+    }
+    fill(dc, RECT { left: 0, top: 0, right: w - 1, bottom: 1 }, SHADOW);
+    fill(dc, RECT { left: 0, top: 0, right: 1, bottom: ht - 1 }, SHADOW);
+    fill(dc, RECT { left: 1, top: 1, right: w - 2, bottom: 2 }, DKSHADOW);
+    fill(dc, RECT { left: 1, top: 1, right: 2, bottom: ht - 2 }, DKSHADOW);
+    fill(dc, RECT { left: 0, top: ht - 1, right: w, bottom: ht }, WHITE);
+    fill(dc, RECT { left: w - 1, top: 0, right: w, bottom: ht }, WHITE);
+    fill(dc, RECT { left: 1, top: ht - 2, right: w - 1, bottom: ht - 1 }, FACE);
+    fill(dc, RECT { left: w - 2, top: 1, right: w - 1, bottom: ht - 1 }, FACE);
+}
+
+// ------------------------------------------------- DrawEdge / frames ---
+//
+// comctl32 draws check boxes, radio buttons, group boxes, combo box buttons
+// and other 3D parts with user32's `DrawEdge` and `DrawFrameControl`, which
+// pick the system colours inside user32. Their import slots point here:
+// the original draws into a 32-bit buffer holding what is under the
+// rectangle, then each system colour it used is swapped for the Windows
+// 2000 one and the buffer is copied back.
+
+static ORIG_DRAW_EDGE: AtomicUsize = AtomicUsize::new(0);
+static ORIG_DRAW_FRAME: AtomicUsize = AtomicUsize::new(0);
+type EdgeFn = unsafe extern "system" fn(isize, *mut RECT, u32, u32) -> i32;
+
+unsafe extern "system" fn draw_edge(dc: isize, rc: *mut RECT, edge: u32, flags: u32) -> i32 {
+    let f: EdgeFn = std::mem::transmute(ORIG_DRAW_EDGE.load(Ordering::Relaxed));
+    recolor(dc, rc, |d, r| f(d, r, edge, flags))
+}
+
+unsafe extern "system" fn draw_frame_control(dc: isize, rc: *mut RECT, kind: u32, state: u32) -> i32 {
+    let f: EdgeFn = std::mem::transmute(ORIG_DRAW_FRAME.load(Ordering::Relaxed));
+    recolor(dc, rc, |d, r| f(d, r, kind, state))
+}
+
+/// Pairs of (system colour, classic colour) as 0x00RRGGBB DIB pixels.
+fn swaps() -> &'static [(u32, u32)] {
+    static SWAPS: std::sync::OnceLock<Vec<(u32, u32)>> = std::sync::OnceLock::new();
+    SWAPS.get_or_init(|| {
+        let dib = |c: u32| ((c & 0xFF) << 16) | (c & 0xFF00) | ((c >> 16) & 0xFF);
+        let orig = ORIG_COLOR.load(Ordering::Relaxed);
+        let mut out: Vec<(u32, u32)> = Vec::new();
+        if orig == 0 {
+            return out;
+        }
+        let f: ColorFn = unsafe { std::mem::transmute(orig) };
+        // Face first: it wins when two system colours are equal.
+        for index in [15, 16, 21, 22, 17, 0, 4] {
+            let (Some(c), sys) = (classic(index), unsafe { f(index) }) else { continue };
+            if sys != c && !out.iter().any(|(s, _)| *s == dib(sys)) {
+                out.push((dib(sys), dib(c)));
+            }
+        }
+        out
+    })
+}
+
+unsafe fn recolor(dc: isize, rc: *mut RECT, draw: impl Fn(isize, *mut RECT) -> i32) -> i32 {
+    use windows::Win32::Graphics::Gdi::*;
+    if rc.is_null() {
+        return draw(dc, rc);
+    }
+    let r = *rc;
+    let (w, h) = (r.right - r.left, r.bottom - r.top);
+    let swaps = swaps();
+    if w <= 0 || h <= 0 || w > 4096 || h > 4096 || swaps.is_empty() {
+        return draw(dc, rc);
+    }
+    let hdc = HDC(dc as *mut _);
+    let mem = CreateCompatibleDC(Some(hdc));
+    if mem.is_invalid() {
+        return draw(dc, rc);
+    }
+    let info = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h,
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: BI_RGB.0,
+            ..Default::default()
+        },
+        ..Default::default()
+    };
+    let mut bits: *mut std::ffi::c_void = std::ptr::null_mut();
+    let Ok(bmp) = CreateDIBSection(Some(hdc), &info, DIB_RGB_COLORS, &mut bits, None, 0) else {
+        let _ = DeleteDC(mem);
+        return draw(dc, rc);
+    };
+    let old = SelectObject(mem, bmp.into());
+    let result;
+    if BitBlt(mem, 0, 0, w, h, Some(hdc), r.left, r.top, SRCCOPY).is_ok() && !bits.is_null() {
+        // The same font and colours the caller selected.
+        let font = GetCurrentObject(hdc, OBJ_FONT);
+        let old_font = SelectObject(mem, font);
+        SetTextColor(mem, GetTextColor(hdc));
+        SetBkColor(mem, GetBkColor(hdc));
+        let mut local = RECT { left: 0, top: 0, right: w, bottom: h };
+        result = draw(mem.0 as isize, &mut local);
+        let _ = GdiFlush();
+        let px = std::slice::from_raw_parts_mut(bits as *mut u32, (w * h) as usize);
+        for p in px.iter_mut() {
+            let c = *p & 0x00FF_FFFF;
+            if let Some((_, to)) = swaps.iter().find(|(from, _)| *from == c) {
+                *p = (*p & 0xFF00_0000) | to;
+            }
+        }
+        let _ = BitBlt(hdc, r.left, r.top, w, h, Some(mem), 0, 0, SRCCOPY);
+        SelectObject(mem, old_font);
+        // BF_ADJUST: hand back the shrunken rectangle.
+        (*rc).left = r.left + local.left;
+        (*rc).top = r.top + local.top;
+        (*rc).right = r.left + local.right;
+        (*rc).bottom = r.top + local.bottom;
+    } else {
+        result = draw(dc, rc);
+    }
+    SelectObject(mem, old);
+    let _ = DeleteObject(bmp.into());
+    let _ = DeleteDC(mem);
+    result
 }
 
 #[cfg(test)]

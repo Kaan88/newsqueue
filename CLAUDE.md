@@ -56,7 +56,7 @@ first three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/src/setup.rs` | Modeless Setup: 15 pages from the `FIELDS` table bound to `Settings` JSON, server list + editor, scheduler grid |
 | `app/src/pick.rs` | File/folder pickers (`IFileOpenDialog`/`IFileSaveDialog`) |
 | `app/src/cli.rs` | `--download-test`, `--par2-test`, `--unrar-test`, `--rss-test`, `--rss-download-test`, `--update-test` |
-| `app/src/classic.rs` | Windows 2000 colours for this process (import-table redirect of `GetSysColor`/`GetSysColorBrush`/`FillRect`, menu face) and repainted frames, captions, caption buttons, menu bar and scroll bars (CBT hook, DWM non-client rendering off) |
+| `app/src/classic.rs` | Windows 2000 colours for this process (import-table redirect of `GetSysColor`/`GetSysColorBrush`/`FillRect`, menu face) and repainted frames, captions, caption buttons, menu bar, scroll bars, push/spin buttons and client edges (CBT hook, DWM non-client rendering off; `DrawEdge`/`DrawFrameControl` recoloured) |
 | `app/src/util.rs` | DPI scaling, fonts, window creation, icons/image lists, `PrintWindow` capture for screenshots |
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
@@ -407,7 +407,14 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   subclassed from the same hook and their scroll bars repainted
   (dithered track, raised thumb and arrows) after non-client paints and
   after `SetScrollInfo`/`SetScrollPos`/`ShowScrollBar`/`EnableScrollBar`,
-  which are redirected in the import tables. `classic::FORCE_ACTIVE` paints
+  which are redirected in the import tables. Push buttons and up-down
+  arrows are painted in full (`button_proc`, `spin_proc`: raised face,
+  black frame on the default button, pushed state, embossed when
+  disabled); windows with `WS_EX_CLIENTEDGE` get a 2 px sunken edge
+  (`edge_proc`). `DrawEdge` and `DrawFrameControl` (check boxes, radio
+  buttons, group boxes, combo buttons) are redirected too: the original
+  draws into a DIB and its system colours are swapped for the classic
+  ones (`recolor`). `classic::FORCE_ACTIVE` paints
   captions active in screenshot mode. Segoe UI, light only (no
   dark mode). Per-monitor DPI v2; sizes are written at 96 DPI and scaled with
   `util::s()`. The main window has a menu bar (File, Queue, View, Tools,
