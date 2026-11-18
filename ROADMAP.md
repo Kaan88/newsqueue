@@ -352,11 +352,13 @@ None are started. Categories stay cut (see `REMOVED.md`).
    ("verified ... not in the NZB") instead of reporting a repair; with repair
    off, a set whose only missing files are those still verifies.
 3. Exercise live second-server failover with a second account (blocked).
-4. Next not-blocked work: the planned features below in order (on-demand
-   PAR2, 7z/ZIP extraction, hopeless-job abort), then the Inno Setup
-   installer, then the server/web follow-ups (SSE, history/log/settings
-   endpoints, graceful shutdown, Docker).
-5. Optional: code signing, shortcut polish and a full per-setting checklist.
+4. Done 2026-11-18: every planned feature (1-12), the Inno Setup installer,
+   the server/web follow-ups and the per-setting checklist
+   (`SETTINGS_CHECKLIST.md`).
+5. Still to try: build and run the Docker image (no Docker here), a real
+   1.0.5 → Inno self-update round trip, and a release (version bump to
+   1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload).
+6. Optional: code signing and shortcut polish.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.
 The remaining gaps need external data or are optional polish.

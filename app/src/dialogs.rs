@@ -473,6 +473,16 @@ fn page_misc(ui: &mut Ui, s: &mut Settings) {
             ui.label("Clear history on exit");
             crate::skin::checkbox_label(ui, &mut s.clear_history_on_exit, "");
             ui.end_row();
+            ui.label("Connect on startup");
+            crate::skin::checkbox_label(ui, &mut s.startup_connect, "");
+            ui.end_row();
+            ui.label("Default execute command");
+            crate::skin::text_edit(ui, 260.0, TextEdit::singleline(&mut s.default_execute))
+                .on_hover_text("Runs after a collection is done when it has no command of its own. NQ_FOLDER, NQ_NAME and NQ_FILE are set; {folder} {name} {file} in the line refer to them.");
+            ui.end_row();
+            ui.label("Hide the execute window");
+            crate::skin::checkbox_label(ui, &mut s.hide_execute_window, "");
+            ui.end_row();
         });
 }
 
@@ -937,7 +947,6 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
             ui.horizontal_wrapped(|ui| {
                 crate::skin::checkbox_label(ui, &mut s.show_tabs[0], "Download queue");
                 crate::skin::checkbox_label(ui, &mut s.show_tabs[1], "PAR2");
-                crate::skin::checkbox_label(ui, &mut s.show_tabs[2], "Explorer");
                 crate::skin::checkbox_label(ui, &mut s.show_tabs[3], "Log");
                 crate::skin::checkbox_label(ui, &mut s.show_tabs[4], "RSS");
             });
@@ -949,16 +958,6 @@ fn page_ui(ui: &mut Ui, s: &mut Settings) {
             crate::skin::drag_value(ui,
                 egui::DragValue::new(&mut s.thread_list_height)
                     .range(70.0..=520.0)
-                    .suffix(" px"),
-            );
-            ui.end_row();
-            ui.label("Explorer folders panel");
-            crate::skin::checkbox_label(ui, &mut s.exp_folders_visible, "");
-            ui.end_row();
-            ui.label("Explorer folders width");
-            crate::skin::drag_value(ui,
-                egui::DragValue::new(&mut s.exp_folders_width)
-                    .range(140.0..=400.0)
                     .suffix(" px"),
             );
             ui.end_row();

@@ -271,7 +271,9 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 86 unit/integration tests currently pass (48 in core, 33 in desktop, 5 in server).
+- 109 unit/integration tests currently pass (67 in core, 33 in desktop, 9 in server).
+- `SETTINGS_CHECKLIST.md` lists every `Settings` field, its Setup page and
+  the code that reads it; regenerate/extend it when adding a setting.
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.
@@ -417,10 +419,17 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 Done: downloader, PAR2 core chain, unrar options and password prompt, RSS,
 real statistics/history, version check/self-update,
 tray, off-screen behaviour, shutdown, portable packaging and installer.
+Also done 2026-11-18: on-demand PAR2, 7z/ZIP, hopeless-job abort + STAT
+pre-check, direct unpack, duplicate check, retry from history, webhook/ntfy
+notifications, per-server quota/retention, pattern-based move, the server
+API follow-ups (SSE, settings/history/log, NZB by URL, login cookie, Ctrl+C
+save, Docker files), the Inno Setup 7 installer and the settings checklist.
 
 Not done / pending:
 
-- Optional code signing, shortcut polish and a per-setting checklist.
+- Optional code signing and shortcut polish.
+- Not tried here: building the Docker image (no Docker on this machine) and a
+  real self-update round trip from an installed 1.0.5 copy to an Inno setup.
 
 Blocked on user-supplied data:
 

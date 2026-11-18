@@ -1,5 +1,43 @@
 # Handoff — 2026-11-18
 
+## Later the same day: roadmap finished (not released)
+
+Commits after v1.0.5 on `main` (not pushed, no new version):
+
+- On-demand PAR2: `.volNN` files are held, fetched only for the blocks a
+  repair needs (`par2_on_demand`).
+- 7z/ZIP extraction beside UnRAR (`7z.exe` or Windows `tar.exe`).
+- Hopeless jobs stop once missing articles exceed the PAR2 budget
+  (`abort_hopeless`); optional STAT pre-check (`precheck_articles`).
+- Direct unpack (`direct_unpack`, off by default): UnRAR `-vp` on the first
+  finished volume; the worker answers the "Insert disk" prompt (on
+  **stderr**) when the next volume's articles are all written. Fixture:
+  `app/tests/fixtures/multi/` (3 × 50 KB RAR volumes made with Rar.exe).
+- Duplicate check, retry from history (history now has status + NZB path),
+  webhook/ntfy notifications (`notify_url`), per-server `quota_gb` and
+  `max_age` retention, pattern-based move (`sort_folder`/`sort_pattern`).
+- Server: SSE `/api/events` (written raw with `into_writer`, because
+  tiny_http's chunked responses buffer 8 KB), `/api/history`, `/api/log`,
+  `/api/settings` GET/POST (private keys never sent or changed),
+  `/api/history/N/retry`, `/api/nzb/url`, `/api/login` cookie, Ctrl+C /
+  SIGTERM saves everything (verified with CTRL_BREAK). `Dockerfile`,
+  `compose.yaml`, `.dockerignore` in `app/` — image never built here.
+- Inno Setup 7 installer (`app/installer/newsqueue.iss`); `installer-test.ps1`
+  passed (update over a simulated IExpress install started the old env-var
+  way, flag re-install, installed exe, uninstall). A running Inno setup gets
+  "access denied" on its own exe, so the env-var path clicks through the
+  wizard instead of relaunching itself.
+- `SETTINGS_CHECKLIST.md`: all 86 settings have a control and a reader.
+
+The user has a real IExpress install in `%LOCALAPPDATA%\Programs\NewsQueue`
+(running). `installer-test.ps1` and `download-while-tray-verify.ps1` refuse
+to run next to it; for the installer test its Start Menu/Desktop shortcuts
+were moved aside and restored.
+
+Tests: 109 (67 core, 33 desktop, 9 server).
+
+---
+
 State of NewsQueue at the end of this session, for whoever picks it up next.
 Read `CLAUDE.md` first; `ROADMAP.md` and `GUI_PLAN.md` hold the plans.
 

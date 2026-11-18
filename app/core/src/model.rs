@@ -472,6 +472,7 @@ pub struct Settings {
     pub article_cache_mb: u32,
     pub cache_cleanup_minutes: u32,
     pub download_priority: u32,
+    /// Unused since the Explorer tab was removed; kept so old files load.
     pub exp_folders_visible: bool,
     pub exp_folders_width: f32,
     pub startup_connect: bool,
