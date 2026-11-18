@@ -307,8 +307,11 @@ you intend to format; do not claim the check passed unless it was run.
 - `download-while-tray-verify.ps1` runs a local mock NNTP server and verifies a
   download completes while the window is hidden in the tray.
 - These three run in a temporary `NQ_CONFIG` folder and never touch `app/*.json`.
-- `installer-test.ps1` installs the setup into a temp folder, checks files,
-  registry, shortcuts and installed-exe launch, then uninstalls.
+- `installer-test.ps1` compiles a test variant of `newsqueue.iss` (name
+  `NewsQueue Install Test`, its own AppId), installs it into a temp folder
+  over a simulated IExpress install, checks files, registry, shortcuts,
+  NQ_WAIT_PID/NQ_RELAUNCH and installed-exe launch, then uninstalls. It never
+  touches a real NewsQueue install, its shortcuts or uninstall entry.
 - `screenshots.ps1` regenerates `shots/golden/` from the native window (queue,
   PAR2/Log/RSS tabs, every dialog, three Setup pages). `util::capture` takes
   the frame with `PrintWindow(PW_RENDERFULLCONTENT)` and the client area with
@@ -353,9 +356,11 @@ The Inno Setup 7 installer (`installer/newsqueue.iss`, since 2026-11-18;
   `NQ_SILENT`/`NQ_INSTALL_DIR`/`NQ_NO_DESKTOP`/`NQ_WAIT_PID`/`NQ_RELAUNCH`
   only, and the `[Code]` section clicks through the wizard for them (a
   running Inno setup cannot start its own exe: access denied)
-- `installer-test.ps1` touches the real Start Menu/Desktop `NewsQueue`
-  shortcuts and refuses to run while they exist; move an installed copy's
-  shortcuts aside first and put them back afterwards
+- `newsqueue.iss` takes optional `/DAppName`, `/DAppGuid` and
+  `/DOutputName`; the defaults build the real installer, `installer-test.ps1`
+  uses them for its test variant
+- the env-var run cannot skip the Ready page; `CurPageChanged` posts a
+  `BM_CLICK` to Install there (a direct click inside the event is ignored)
 
 `app/dist` is generated output and gitignored. Do not commit it unless the user
 asks for a release artifact.
@@ -461,8 +466,6 @@ Not done / pending:
   to an Inno setup. The Docker image is built and checked on a separate Debian
   Docker host with `app/docker-smoke.sh` (passed 2026-11-18 on the native-desktop
   commit).
-- `installer-test.ps1` has not been run against the native build (it needs the
-  installed copy's shortcuts and uninstall entry moved aside first).
 
 Blocked on user-supplied data:
 

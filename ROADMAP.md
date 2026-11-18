@@ -364,9 +364,9 @@ None are started. Categories stay cut (see `REMOVED.md`).
    (`SETTINGS_CHECKLIST.md`).
 5. Still to try: a real
    1.0.5 → Inno self-update round trip, and a release (version bump to
-   1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload). The native
-   desktop's installer builds, but `installer-test.ps1` was not run against it:
-   it needs the installed copy's shortcuts and uninstall entry out of the way.
+   1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload).
+   `installer-test.ps1` passes against the native desktop build (2026-11-18),
+   using a test-named installer variant beside a real install.
 6. Optional: code signing and shortcut polish.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.

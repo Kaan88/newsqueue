@@ -148,9 +148,9 @@ rename, execute, unrar password, RSS feeds, filter help), `pick.rs`
 (`IFileOpenDialog`/`IFileSaveDialog`). Verified: `download-while-tray-verify.ps1`
 downloads from the mock NNTP server while hidden in the tray,
 `tray-verify.ps1` and `shutdown-verify.ps1` pass, `screenshots.ps1`
-regenerates `shots/golden/` with `PrintWindow`. `installer-test.ps1` was not
-run (it needs the installed copy's shortcuts and uninstall entry out of the
-way); the installer builds. Web access: Setup → Miscellaneous #3 starts the
+regenerates `shots/golden/` with `PrintWindow`, and `installer-test.ps1`
+passes against the native build (a test-named installer variant, so it runs
+beside a real install). Web access: Setup → Miscellaneous #3 starts the
 `newsqueue-server` API and web UI inside the desktop app. The original
 proposal follows.
 

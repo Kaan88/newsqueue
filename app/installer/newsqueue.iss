@@ -16,24 +16,36 @@
 #ifndef OutputDir
   #define OutputDir "..\dist"
 #endif
+; installer-test.ps1 builds a variant with its own name and AppId, so the
+; test never touches a real NewsQueue install, its shortcuts or its
+; uninstall entry. The defaults build the real installer.
+#ifndef AppName
+  #define AppName "NewsQueue"
+#endif
+#ifndef AppGuid
+  #define AppGuid "7A3E2C51-9B4D-4F0E-8C21-6D5B9E1A4F37"
+#endif
+#ifndef OutputName
+  #define OutputName "NewsQueue-" + AppVersion + "-Setup"
+#endif
 
 [Setup]
-AppId={{7A3E2C51-9B4D-4F0E-8C21-6D5B9E1A4F37}
-AppName=NewsQueue
+AppId={{{#AppGuid}}
+AppName={#AppName}
 AppVersion={#AppVersion}
-AppVerName=NewsQueue {#AppVersion}
+AppVerName={#AppName} {#AppVersion}
 AppPublisher=NewsQueue
-DefaultDirName={autopf}\NewsQueue
-DefaultGroupName=NewsQueue
+DefaultDirName={autopf}\{#AppName}
+DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir={#OutputDir}
-OutputBaseFilename=NewsQueue-{#AppVersion}-Setup
+OutputBaseFilename={#OutputName}
 SetupIconFile=..\assets\newsqueue.ico
 UninstallDisplayIcon={app}\newsqueue.exe
-UninstallDisplayName=NewsQueue {#AppVersion}
+UninstallDisplayName={#AppName} {#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
@@ -49,9 +61,9 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Source: "{#DistDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\NewsQueue"; Filename: "{app}\newsqueue.exe"; WorkingDir: "{app}"
-Name: "{group}\Uninstall NewsQueue"; Filename: "{uninstallexe}"
-Name: "{userdesktop}\NewsQueue"; Filename: "{app}\newsqueue.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{group}\{#AppName}"; Filename: "{app}\newsqueue.exe"; WorkingDir: "{app}"
+Name: "{group}\Uninstall {#AppName}"; Filename: "{uninstallexe}"
+Name: "{userdesktop}\{#AppName}"; Filename: "{app}\newsqueue.exe"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
 Filename: "{app}\newsqueue.exe"; Description: "Start NewsQueue"; Flags: nowait postinstall skipifsilent; Check: not EnvSilent
@@ -107,6 +119,11 @@ end;
 
 procedure CurPageChanged(CurPageID: Integer);
 begin
+  // Setup never skips the Ready page when every page before it was skipped,
+  // so press Install there too. A click inside this event is ignored for
+  // that page; a posted one arrives once the page is shown.
+  if EnvSilentRun and (CurPageID = wpReady) then
+    PostMessage(WizardForm.NextButton.Handle, $00F5 {BM_CLICK}, 0, 0);
   if EnvSilentRun and (CurPageID = wpFinished) then
     WizardForm.NextButton.OnClick(WizardForm.NextButton);
 end;
@@ -118,8 +135,8 @@ begin
   // the files and shortcuts are written, so this setup's own survive.
   if CurStep = ssInstall then
   begin
-    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\NewsQueue');
+    RegDeleteKeyIncludingSubkeys(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#AppName}');
     DeleteFile(ExpandConstant('{app}\uninstall.ps1'));
-    DeleteFile(ExpandConstant('{userprograms}\NewsQueue\Uninstall NewsQueue.lnk'));
+    DeleteFile(ExpandConstant('{userprograms}\{#AppName}\Uninstall {#AppName}.lnk'));
   end;
 end;

@@ -1,15 +1,24 @@
 # End-to-end check of the Inno Setup installer: an update over an IExpress
 # install started the old way (environment variables only), a re-install
 # with Inno flags, the installed exe, and the uninstaller.
+#
+# The test builds its own variant of installer\newsqueue.iss from the
+# portable folder (package.ps1) with a different name and AppId, so its
+# shortcuts, uninstall entry and the IExpress clean-up never touch a real
+# NewsQueue install on this machine; everything else is the real script.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $version = '1.0.5'
-$setup = Join-Path $root "dist\NewsQueue-$version-Setup.exe"
+$name = 'NewsQueue Install Test'
+$guid = 'C0FFEE00-5E7A-4B1D-9A2C-7E57DEADBEEF'
+$folder = Join-Path $root "dist\NewsQueue-$version"
+$work = Join-Path $env:TEMP 'newsqueue-install-test-build'
+$setup = Join-Path $work 'NewsQueueInstallTest-Setup.exe'
 $testDir = Join-Path $env:TEMP 'newsqueue-install-test'
-$startMenuDir = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\NewsQueue'
-$oldKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\NewsQueue'
-$innoKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{7A3E2C51-9B4D-4F0E-8C21-6D5B9E1A4F37}_is1'
-$desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) 'NewsQueue.lnk'
+$startMenuDir = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$name"
+$oldKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\$name"
+$innoKey = "HKCU:\Software\Microsoft\Windows\CurrentVersion\Uninstall\{$guid}_is1"
+$desktopShortcut = Join-Path ([Environment]::GetFolderPath('Desktop')) "$name.lnk"
 $screenshot = Join-Path $env:TEMP 'newsqueue-installed-shot.png'
 
 function Check([bool]$ok, [string]$message) {
@@ -21,20 +30,27 @@ function Check([bool]$ok, [string]$message) {
 function Wait-Setup {
     for ($i = 0; $i -lt 240; $i++) {
         Start-Sleep -Milliseconds 250
-        $busy = Get-Process | Where-Object { $_.ProcessName -like 'NewsQueue-*-Setup*' -or $_.ProcessName -like '*.tmp' -or $_.ProcessName -like 'is-*' -or $_.ProcessName -like 'unins*' }
+        $busy = Get-Process | Where-Object { $_.ProcessName -like 'NewsQueue*Setup*' -or $_.ProcessName -like '*.tmp' -or $_.ProcessName -like 'is-*' -or $_.ProcessName -like 'unins*' }
         if (-not $busy -and $i -gt 4) { return }
     }
     throw 'Setup did not finish within a minute'
 }
 
-if (-not (Test-Path -LiteralPath $setup)) {
-    throw "Build the installer first: $setup is missing"
+if (-not (Test-Path -LiteralPath (Join-Path $folder 'newsqueue.exe'))) {
+    throw "Build the portable folder first (package.ps1): $folder is missing"
 }
+$iscc = @($env:NQ_ISCC, 'C:\Program Files\Inno Setup 7\ISCC.exe', 'C:\Program Files (x86)\Inno Setup 7\ISCC.exe') |
+    Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+if (-not $iscc) { throw 'ISCC.exe not found: install Inno Setup 7 or set NQ_ISCC.' }
+Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force $work | Out-Null
+& $iscc /Q "/DAppVersion=$version" "/DDistDir=$folder" "/DOutputDir=$work" "/DAppName=$name" "/DAppGuid=$guid" '/DOutputName=NewsQueueInstallTest-Setup' (Join-Path $root 'installer\newsqueue.iss')
+if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $setup)) { throw "ISCC failed with exit code $LASTEXITCODE" }
 if (Get-Process -Name newsqueue -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$testDir*" }) {
     throw "Close the NewsQueue running from $testDir before testing the installer."
 }
 if ((Test-Path -LiteralPath $oldKey) -or (Test-Path -LiteralPath $innoKey) -or (Test-Path -LiteralPath $startMenuDir) -or (Test-Path -LiteralPath $desktopShortcut)) {
-    throw 'A NewsQueue installation or shortcut already exists. Remove it before running this test.'
+    throw "A '$name' entry or shortcut is left from an earlier run. Remove it before running this test."
 }
 
 $saved = @{ NQ_INSTALL_DIR = $env:NQ_INSTALL_DIR; NQ_SILENT = $env:NQ_SILENT; NQ_NO_DESKTOP = $env:NQ_NO_DESKTOP }
@@ -46,18 +62,35 @@ try {
     New-Item -ItemType Directory -Force -Path $testDir, $startMenuDir | Out-Null
     Set-Content -LiteralPath (Join-Path $testDir 'uninstall.ps1') -Value '# old uninstaller'
     Set-Content -LiteralPath (Join-Path $testDir 'newsqueue-settings.json') -Value '{"marker":"keep-me"}'
-    Set-Content -LiteralPath (Join-Path $startMenuDir 'Uninstall NewsQueue.lnk') -Value 'old'
+    Set-Content -LiteralPath (Join-Path $startMenuDir "Uninstall $name.lnk") -Value 'old'
     New-Item -Path $oldKey -Force | Out-Null
-    New-ItemProperty -Path $oldKey -Name 'DisplayName' -Value 'NewsQueue 1.0.5' -PropertyType String -Force | Out-Null
+    New-ItemProperty -Path $oldKey -Name 'DisplayName' -Value "$name $version" -PropertyType String -Force | Out-Null
 
     # 2. Update it the way 1.0.2-1.0.5 copies start a setup: env vars only.
     $env:NQ_INSTALL_DIR = $testDir
     $env:NQ_SILENT = '1'
     $env:NQ_NO_DESKTOP = '1'
-    $p = Start-Process -FilePath $setup -Wait -PassThru
-    Write-Output "env-var setup handed over (exit=$($p.ExitCode))"
+    # Like update.rs in 1.0.2-1.0.5: wait for the old process, then relaunch.
+    $old = Start-Process -FilePath powershell -ArgumentList '-NoProfile', '-Command', 'Start-Sleep 4' -WindowStyle Hidden -PassThru
+    $env:NQ_WAIT_PID = "$($old.Id)"
+    $env:NQ_RELAUNCH = '1'
+    $started = Get-Date
+    # Not -Wait: in PowerShell 5.1 it also waits for the relaunched app.
+    $p = Start-Process -FilePath $setup -PassThru
+    $p.WaitForExit()
     Wait-Setup
+    Check ($old.HasExited) 'setup waited for the old process (NQ_WAIT_PID)'
+    Check (((Get-Date) - $started).TotalSeconds -ge 3) 'install finished after the old process exited'
+    $relaunched = $null
+    for ($i = 0; $i -lt 40 -and -not $relaunched; $i++) {
+        Start-Sleep -Milliseconds 250
+        $relaunched = Get-Process -Name newsqueue -ErrorAction SilentlyContinue | Where-Object { $_.Path -like "$testDir*" }
+    }
+    Check ($null -ne $relaunched) 'installed NewsQueue relaunched (NQ_RELAUNCH)'
+    $relaunched | Stop-Process -Force
+    Start-Sleep -Milliseconds 500
     $env:NQ_SILENT = $saved.NQ_SILENT; $env:NQ_INSTALL_DIR = $saved.NQ_INSTALL_DIR; $env:NQ_NO_DESKTOP = $saved.NQ_NO_DESKTOP
+    $env:NQ_WAIT_PID = ''; $env:NQ_RELAUNCH = ''
 
     $required = @('newsqueue.exe', 'newsqueue-256.png', 'README.md', 'ROADMAP.md', 'tools\par2.exe', 'tools\UnRAR.exe',
         'tools\LICENSE-par2.txt', 'tools\LICENSE-UnRAR.txt', 'unins000.exe')
@@ -68,11 +101,11 @@ try {
     Check (-not (Test-Path -LiteralPath (Join-Path $testDir 'uninstall.ps1'))) 'old uninstall.ps1 removed'
     Check ((Get-Content -LiteralPath (Join-Path $testDir 'newsqueue-settings.json') -Raw) -match 'keep-me') 'settings kept'
     $props = Get-ItemProperty -LiteralPath $innoKey
-    Check ($props.DisplayName -eq "NewsQueue $version") "uninstall entry DisplayName=$($props.DisplayName)"
+    Check ($props.DisplayName -eq "$name $version") "uninstall entry DisplayName=$($props.DisplayName)"
     Check ($props.InstallLocation.TrimEnd('\') -eq $testDir) "InstallLocation=$($props.InstallLocation)"
     Check ($props.UninstallString -like '*unins000.exe*') 'UninstallString points to unins000.exe'
-    Check (Test-Path -LiteralPath (Join-Path $startMenuDir 'NewsQueue.lnk')) 'Start Menu shortcut'
-    $uninstallLnk = Join-Path $startMenuDir 'Uninstall NewsQueue.lnk'
+    Check (Test-Path -LiteralPath (Join-Path $startMenuDir "$name.lnk")) 'Start Menu shortcut'
+    $uninstallLnk = Join-Path $startMenuDir "Uninstall $name.lnk"
     Check ((Test-Path -LiteralPath $uninstallLnk) -and ((Get-Item -LiteralPath $uninstallLnk).Length -gt 10)) 'Start Menu uninstall shortcut is the new one'
     Check (-not (Test-Path -LiteralPath $desktopShortcut)) 'no Desktop shortcut with NQ_NO_DESKTOP=1'
 
@@ -105,4 +138,5 @@ try {
     Remove-Item -LiteralPath $oldKey, $innoKey -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $startMenuDir -Recurse -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $desktopShortcut -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $work -Recurse -Force -ErrorAction SilentlyContinue
 }
