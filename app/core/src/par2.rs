@@ -18,6 +18,10 @@ pub struct ActivePar2 {
 pub struct Par2Options {
     pub repair: bool,
     pub purge: bool,
+    /// The file names the NZB listed. A PAR2 set often also covers files
+    /// that were never posted (an `.nfo`); those are reported as "not in
+    /// the NZB" rather than as damage. Empty: no such distinction.
+    pub nzb_files: Vec<String>,
 }
 
 impl Par2Options {
@@ -25,8 +29,47 @@ impl Par2Options {
         Self {
             repair: settings.par2_repairing,
             purge: settings.cleanup_after_repair,
+            nzb_files: Vec::new(),
         }
     }
+
+    pub fn with_nzb_files(mut self, files: Vec<String>) -> Self {
+        self.nzb_files = files;
+        self
+    }
+}
+
+/// A file par2 found missing or damaged.
+#[derive(Clone, Debug, PartialEq)]
+pub struct BadTarget {
+    pub name: String,
+    pub missing: bool,
+}
+
+/// Reads `Target: "name" - missing.` / `- damaged. ...` lines.
+pub fn bad_targets(output: &str) -> Vec<BadTarget> {
+    output
+        .split(['\r', '\n'])
+        .filter_map(|line| {
+            // Progress output ("Scanning: 3%") can share the line.
+            let start = line.find("Target: \"")?;
+            let rest = &line[start + "Target: \"".len()..];
+            let (name, state) = rest.split_once("\" - ")?;
+            let missing = state.starts_with("missing");
+            (missing || state.starts_with("damaged")).then(|| BadTarget { name: name.to_string(), missing })
+        })
+        .collect()
+}
+
+/// Names among `bad` that the NZB did not list (empty when `nzb_files` is).
+fn not_in_nzb(bad: &[BadTarget], nzb_files: &[String]) -> Vec<String> {
+    if nzb_files.is_empty() {
+        return Vec::new();
+    }
+    bad.iter()
+        .filter(|t| !nzb_files.iter().any(|f| f.eq_ignore_ascii_case(&t.name)))
+        .map(|t| t.name.clone())
+        .collect()
 }
 
 pub fn spawn(
@@ -122,6 +165,16 @@ pub fn verify_or_repair(
     if code == 0 {
         return Ok(format!("PAR2 verified: {par2_name}"));
     }
+    let bad = bad_targets(&output);
+    let outside = not_in_nzb(&bad, &options.nzb_files);
+    // Only files that were never posted are absent: the download is complete.
+    let only_outside = !bad.is_empty() && outside.len() == bad.len() && bad.iter().all(|t| t.missing);
+    if only_outside && !options.repair {
+        return Ok(format!(
+            "PAR2 verified: {par2_name}; not in the NZB and not downloaded: {}",
+            outside.join(", ")
+        ));
+    }
     if !options.repair {
         return Err(format!(
             "PAR2 damage found in {par2_name} and repair is disabled: {}",
@@ -141,7 +194,17 @@ pub fn verify_or_repair(
     }
     repair_args.push(&par2_name);
     let (repair_code, repair_output) = run_par2(&exe, source, &repair_args)?;
-    if repair_code == 0 {
+    if repair_code == 0 && only_outside {
+        Ok(format!(
+            "PAR2 verified: {par2_name}; rebuilt files not in the NZB: {}",
+            outside.join(", ")
+        ))
+    } else if repair_code == 0 && !outside.is_empty() {
+        Ok(format!(
+            "PAR2 repaired: {par2_name} (also rebuilt files not in the NZB: {})",
+            outside.join(", ")
+        ))
+    } else if repair_code == 0 {
         Ok(format!("PAR2 repaired: {par2_name}"))
     } else {
         Err(format!(
@@ -247,10 +310,62 @@ mod tests {
         let options = Par2Options {
             repair: true,
             purge: false,
+            nzb_files: Vec::new(),
         };
         let message = verify_or_repair(&root, &par2_file, &options).unwrap();
         assert!(message.contains("repaired"), "{message}");
         assert_eq!(fs::read(&payload).unwrap(), data);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn reads_bad_targets_from_par2_output() {
+        let out = "Loading \"set.par2\".\r\r\nScanning: 1%Target: \"x.nfo\" - missing.\r\r\nTarget: \"a.rar\" - damaged. Found 1749 of 1750 data blocks.\r\r\nTarget: \"b.rar\" - found.\r\r\nRepair is required.";
+        assert_eq!(
+            bad_targets(out),
+            vec![
+                BadTarget { name: "x.nfo".into(), missing: true },
+                BadTarget { name: "a.rar".into(), missing: false },
+            ]
+        );
+        let bad = bad_targets(out);
+        assert_eq!(not_in_nzb(&bad, &["A.RAR".into()]), vec!["x.nfo".to_string()]);
+        assert!(not_in_nzb(&bad, &[]).is_empty());
+    }
+
+    #[test]
+    fn a_file_missing_from_the_nzb_is_not_damage() {
+        if find_par2_exe().is_none() {
+            eprintln!("skipped: tool not found");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("newsqueue-par2-nfo-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        fs::create_dir_all(&root).unwrap();
+        let data: Vec<u8> = (0..40_000u32).map(|i| (i.wrapping_mul(37) % 251) as u8).collect();
+        fs::write(root.join("payload.rar"), &data).unwrap();
+        fs::write(root.join("release.nfo"), b"release notes that were never posted").unwrap();
+        let exe = find_par2_exe().unwrap();
+        let output = Command::new(&exe)
+            .args(["c", "-q", "-r10", "payload.par2", "payload.rar", "release.nfo"])
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stdout));
+        fs::remove_file(root.join("release.nfo")).unwrap();
+        let par2_file = root.join("payload.par2");
+        let nzb = vec!["payload.rar".to_string(), "payload.par2".to_string()];
+        // Repair off: still a clean result, the NFO is named.
+        let check = Par2Options { repair: false, purge: false, nzb_files: nzb.clone() };
+        let message = verify_or_repair(&root, &par2_file, &check).unwrap();
+        assert!(message.contains("not in the NZB") && message.contains("release.nfo"), "{message}");
+        assert!(!message.contains("repaired"), "{message}");
+        // Repair on: the NFO is rebuilt, reported the same way.
+        let repair = Par2Options { repair: true, purge: false, nzb_files: nzb };
+        let message = verify_or_repair(&root, &par2_file, &repair).unwrap();
+        assert!(message.contains("rebuilt files not in the NZB: release.nfo"), "{message}");
+        assert!(!message.contains("repaired"), "{message}");
+        assert!(root.join("release.nfo").is_file());
         let _ = fs::remove_dir_all(root);
     }
 
@@ -292,6 +407,7 @@ mod tests {
         let options = Par2Options {
             repair: true,
             purge: false,
+            nzb_files: Vec::new(),
         };
         let message = verify_or_repair(&root, &par2_file, &options).unwrap();
         assert!(message.contains("repaired"), "{message}");

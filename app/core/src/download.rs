@@ -1446,6 +1446,10 @@ fn reply_code(reply: &str) -> String {
 }
 
 fn server_timeout() -> u64 {
+    // Tests use a short timeout so a stalled mock server fails fast.
+    if cfg!(test) {
+        return 2;
+    }
     CONNECTION_TIMEOUT.max(5) as u64
 }
 
@@ -2174,6 +2178,12 @@ mod tests {
     /// Like `mock_server`, but closes the connection without answering the
     /// `drop_on`-th BODY command (1-based, counted across connections).
     fn flaky_server(articles: Vec<(String, Vec<u8>)>, drop_on: usize) -> u16 {
+        misbehaving_server(articles, drop_on, false)
+    }
+
+    /// `flaky_server`, or with `stall` the connection stays open and silent
+    /// on that BODY, so only the client's read timeout can end the wait.
+    fn misbehaving_server(articles: Vec<(String, Vec<u8>)>, drop_on: usize, stall: bool) -> u16 {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
@@ -2197,7 +2207,16 @@ mod tests {
                     } else if let Some(id) = line.strip_prefix("BODY <") {
                         bodies += 1;
                         if bodies == drop_on {
-                            let _ = stream.shutdown(std::net::Shutdown::Both);
+                            if stall {
+                                // Hold the socket open on another thread and
+                                // accept the client's next connection.
+                                std::thread::spawn(move || {
+                                    std::thread::sleep(Duration::from_secs(30));
+                                    drop(stream);
+                                });
+                            } else {
+                                let _ = stream.shutdown(std::net::Shutdown::Both);
+                            }
                             break;
                         }
                         let id = id.trim_end_matches('>');
@@ -2383,6 +2402,32 @@ mod tests {
         let snapshot = wait_for(&active);
         assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
         assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_stalled_read_times_out_and_is_retried_on_a_new_connection() {
+        let root = temp_root("stall");
+        // BODY #1 is the lookup of p1, #2 is the worker's p2: the server goes silent.
+        let port = misbehaving_server(
+            vec![
+                ("p1".into(), yenc_part(b"ABCDE", 10, 1)),
+                ("p2".into(), yenc_part(b"FGHIJ", 10, 6)),
+            ],
+            2,
+            true,
+        );
+        let mut job = two_part_job(&root);
+        job.retry_count = 1;
+        let started = std::time::Instant::now();
+        let active = spawn(job, vec![local_server(port, 1)], 0.0);
+        let mut snapshot = wait_for(&active);
+        while matches!(snapshot.stage, Stage::Connecting | Stage::Downloading) && started.elapsed() < Duration::from_secs(20) {
+            snapshot = wait_for(&active);
+        }
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
+        assert!(started.elapsed() >= Duration::from_secs(2), "the stall should cost one read timeout");
         let _ = fs::remove_dir_all(root);
     }
 

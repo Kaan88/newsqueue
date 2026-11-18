@@ -721,7 +721,7 @@ impl Engine {
             id,
             source,
             par2_file,
-            par2::Par2Options::from_settings(&self.settings),
+            par2::Par2Options::from_settings(&self.settings).with_nzb_files(expected),
         ));
         true
     }
