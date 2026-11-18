@@ -37,7 +37,7 @@ content-based naming for obfuscated posts.
 | Tray | Done | Off-screen minimize-to-tray with taskbar entry removed, speed tooltip, download/unrar balloons, Show/Exit |
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
-| Installer/release | Done for private use | Portable zip, IExpress per-user installer, shortcuts, Add/Remove Programs entry, uninstaller, `v1.0.1` |
+| Installer/release | Done for private use | Portable zip, Inno Setup 7 per-user installer (replaces IExpress installs), shortcuts, Add/Remove Programs entry, uninstaller |
 | Verification | Baseline done | 64 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a second server |
@@ -265,10 +265,13 @@ Cut on 2026-11-18; see `REMOVED.md`.
 9. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.
 
-## Installer: Inno Setup 7 (planned)
+## Installer: Inno Setup 7 (done 2026-11-18)
 
-Replace the IExpress setup with Inno Setup 7 (installed on the build machine
-at `C:\Program Files\Inno Setup 7`, compiler `ISCC.exe`). Not started.
+Done: `installer/newsqueue.iss`, `build-installer.ps1` and a rewritten
+`installer-test.ps1` (update over a simulated IExpress install started the
+old env-var way, re-install with Inno flags, installed exe, uninstall; it
+passed on 2026-11-18). Not done: a real NQ_RELAUNCH self-update round trip
+from an installed 1.0.5 copy, and signing. The plan was:
 
 - `app/installer/newsqueue.iss` compiled by `build-installer.ps1`; same output
   names (`NewsQueue-<version>-Setup.exe` + `.sha256`), same release assets.

@@ -22,7 +22,7 @@ cargo run -- --screenshot shots/now.png
 - `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close any running NewsQueue. It checks the tray icon, speed tooltip, balloon API result, off-screen minimize, taskbar removal, continued tick/autosave, click-to-restore, close-to-tray and tray Exit.
-- `.\build-installer.ps1` runs `package.ps1`, stages in `%TEMP%`, builds `dist\NewsQueue-1.0.5-Setup.exe` with IExpress and writes its SHA256.
+- `.\build-installer.ps1` runs `package.ps1`, compiles `installer\newsqueue.iss` with Inno Setup 7 into `dist\NewsQueue-1.0.5-Setup.exe` and writes its SHA256.
 - `.\installer-test.ps1` installs the built setup into a temp folder, checks files/registry/shortcuts, launches the installed exe and uninstalls. It refuses to run if any NewsQueue install, shortcut or process exists.
 - `.\shutdown-verify.ps1` arms the safe `Exit` shutdown path in a debug build, minimizes to the tray and checks the 15-second countdown still exits the app.
 - `.\download-while-tray-verify.ps1` runs a local mock NNTP server, minimizes the app, and verifies a download still completes while off-screen and the payload is correct. It backs up and restores the local settings/queue/history/stats files.
@@ -44,13 +44,13 @@ cargo run -- --screenshot shots/now.png
 - `theme.rs` — measured colors, fonts, icons and widget metrics.
 - `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, off-screen minimize/close-to-tray with the taskbar entry removed, speed tooltip, balloon hints and the shared exit flag. `main.rs` cancels window close unless the tray or shutdown requested exit. `--screenshot` never starts the tray.
 - `shutdown.rs` — queue-drained power actions (`shutdown.exe /s`, `/h`, `SetSuspendState`, or app exit) with inspectable plans and a mock mode used by tests.
-- `package.ps1` / `build-installer.ps1` — portable release zip and IExpress setup exe. `installer/install.ps1` copies the payload, creates shortcuts and the HKCU uninstall entry; `installer/uninstall.ps1` removes them and schedules deletion of the install folder.
+- `package.ps1` / `build-installer.ps1` — portable release zip and Inno Setup exe (`installer/newsqueue.iss`): per-user files, shortcuts, HKCU uninstall entry and `unins000.exe`; it replaces an older IExpress install.
 - `installer-test.ps1` — end-to-end install/uninstall check against the built setup; uses temp paths and a clean state.
 - `tray-verify.ps1` / `shutdown-verify.ps1` / `download-while-tray-verify.ps1` — scripted off-screen tray, shutdown-countdown and mock-NNTP download checks.
 
 ## Gotchas
 
-- The installer is per-user: it writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\NewsQueue`, Start Menu/Desktop shortcuts and `%LOCALAPPDATA%\Programs\NewsQueue` by default. `NQ_INSTALL_DIR`, `NQ_SILENT` and `NQ_NO_DESKTOP` override these for testing. IExpress cannot build from a path containing spaces, so `build-installer.ps1` stages under `%TEMP%`.
+- The installer is per-user: `HKCU\...\Uninstall\{7A3E2C51-9B4D-4F0E-8C21-6D5B9E1A4F37}_is1`, Start Menu/Desktop shortcuts, `%LOCALAPPDATA%\Programs\NewsQueue` by default. Inno flags (`/VERYSILENT /DIR=`) or the old `NQ_SILENT`/`NQ_INSTALL_DIR`/`NQ_NO_DESKTOP` variables select a silent install.
 - `app/dist` is generated release output (`package.ps1` / `build-installer.ps1`) and is ignored by git.
 - Normal runs persist to `app/newsqueue-settings.json`, `app/newsqueue-queue.json`, `app/newsqueue-history.json` and `app/newsqueue-stats.json` (autosave every 30 s / `autosave_minutes`, and on exit). Don't hand-edit them while the app is running. Saved queue entries without segment IDs are discarded on load; sample/demo data appears only in screenshot mode.
 - `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source. `*.nqpart` files are resume sidecars; keep them until a download finishes.

@@ -205,9 +205,13 @@ pub fn install_dir() -> Option<PathBuf> {
 }
 
 /// Starts the verified installer silently into `dir`. It waits for this
-/// process to exit, installs, then relaunches NewsQueue.
+/// process to exit, installs, then relaunches NewsQueue. The Inno Setup
+/// flags drive 1.0.6+ setups; the environment variables drive the older
+/// IExpress ones (and the Inno setup honours them too).
 pub fn launch_installer(setup: &Path, dir: &Path) -> Result<(), String> {
     std::process::Command::new(setup)
+        .args(["/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/MERGETASKS=!desktopicon"])
+        .arg(format!("/DIR={}", dir.display()))
         .env("NQ_SILENT", "1")
         .env("NQ_NO_DESKTOP", "1")
         .env("NQ_INSTALL_DIR", dir)

@@ -65,9 +65,9 @@ three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/tools/` | Vendored `UnRAR.exe`, `par2.exe`, licenses; do not delete |
 | `app/tests/fixtures/` | `tiny.rar`, `single.rar`, `encrypted.rar` fixtures |
 | `app/shots/` | Current screenshot and golden tab/dialog screenshots |
-| `app/installer/` | IExpress payload scripts: `install.ps1`, `uninstall.ps1`, `install.cmd` |
+| `app/installer/` | `newsqueue.iss`, the Inno Setup 7 script |
 | `app/package.ps1` | Builds the portable release folder/zip |
-| `app/build-installer.ps1` | Builds `NewsQueue-<version>-Setup.exe` with IExpress |
+| `app/build-installer.ps1` | Builds `NewsQueue-<version>-Setup.exe` with Inno Setup 7 (`ISCC.exe`, or `NQ_ISCC`) |
 | `app/installer-test.ps1` | End-to-end install/uninstall test |
 | `app/tray-verify.ps1` | Scripted tray/off-screen/taskbar/tooltip/balloon check |
 | `app/shutdown-verify.ps1` | Scripted off-screen shutdown-countdown check |
@@ -313,16 +313,24 @@ Installer:
 .\installer-test.ps1
 ```
 
-The IExpress installer is per-user:
+The Inno Setup 7 installer (`installer/newsqueue.iss`, since 2026-11-18;
+1.0.0-1.0.5 used IExpress) is per-user (`PrivilegesRequired=lowest`):
 
 - installs to `%LOCALAPPDATA%\Programs\NewsQueue`
-- creates Start Menu and Desktop shortcuts
-- writes `HKCU\Software\Microsoft\Windows\CurrentVersion\Uninstall\NewsQueue`
-- includes an uninstaller
-- keeps existing settings on reinstall
-- `NQ_INSTALL_DIR`, `NQ_SILENT`, `NQ_NO_DESKTOP` are test overrides
-- IExpress cannot stage from a path with spaces; `build-installer.ps1` uses
-  `%TEMP%`
+- Start Menu shortcuts, optional Desktop shortcut (task `desktopicon`)
+- writes `HKCU\...\Uninstall\{7A3E2C51-9B4D-4F0E-8C21-6D5B9E1A4F37}_is1`
+  and removes the old IExpress `...\Uninstall\NewsQueue` entry,
+  `uninstall.ps1` and its Start Menu uninstall shortcut
+- `unins000.exe` removes only installed files: settings, queue, history,
+  logs and downloads beside the exe stay
+- self-update (1.0.6+) runs it with `/VERYSILENT /SUPPRESSMSGBOXES /NORESTART
+  /MERGETASKS=!desktopicon /DIR=<install>`; 1.0.2-1.0.5 copies start it with
+  `NQ_SILENT`/`NQ_INSTALL_DIR`/`NQ_NO_DESKTOP`/`NQ_WAIT_PID`/`NQ_RELAUNCH`
+  only, and the `[Code]` section clicks through the wizard for them (a
+  running Inno setup cannot start its own exe: access denied)
+- `installer-test.ps1` touches the real Start Menu/Desktop `NewsQueue`
+  shortcuts and refuses to run while they exist; move an installed copy's
+  shortcuts aside first and put them back afterwards
 
 `app/dist` is generated output and gitignored. Do not commit it unless the user
 asks for a release artifact.
