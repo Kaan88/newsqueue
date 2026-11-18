@@ -236,7 +236,7 @@ pub struct RssItem {
     pub url: String,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Server {
     pub name: String,

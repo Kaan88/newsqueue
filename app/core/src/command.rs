@@ -15,6 +15,8 @@ pub enum MoveDir {
     Up,
     Down,
     Bottom,
+    /// To this row (clamped), e.g. after a drag.
+    To(usize),
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,6 +49,13 @@ pub enum Command {
     RetryHistory(usize),
     /// Replace some settings (a JSON object; private keys are refused).
     MergeSettings(serde_json::Value),
+    /// Replace the server list with these JSON objects. Each one is laid
+    /// over the current server at its `index` (if given), so fields a front
+    /// end does not know survive; an empty or missing password keeps the
+    /// current one (front ends never see passwords).
+    SetServers(Vec<serde_json::Value>),
+    /// Replace the RSS feed URLs.
+    SetRssUrls(Vec<String>),
 }
 
 /// What [`Engine::apply`] did, for front ends that track a row.
@@ -106,6 +115,46 @@ impl Engine {
                     }
                 };
             }
+            SetServers(patches) => {
+                let mut servers = Vec::new();
+                for patch in patches {
+                    let Some(obj) = patch.as_object() else {
+                        self.log("Error", "Servers not changed: each server must be a JSON object");
+                        return Applied::Failed;
+                    };
+                    let old = obj.get("index").and_then(|v| v.as_u64()).and_then(|i| self.settings.servers.get(i as usize)).cloned();
+                    let mut value = serde_json::to_value(old.clone().unwrap_or_default()).unwrap_or_default();
+                    if let Some(map) = value.as_object_mut() {
+                        for (k, v) in obj {
+                            if k == "index" || (k == "password" && v.as_str().is_none_or(str::is_empty)) {
+                                continue;
+                            }
+                            map.insert(k.clone(), v.clone());
+                        }
+                    }
+                    match serde_json::from_value::<Server>(value) {
+                        Ok(s) => servers.push(s),
+                        Err(e) => {
+                            self.log("Error", &format!("Servers not changed: {e}"));
+                            return Applied::Failed;
+                        }
+                    }
+                }
+                self.settings.servers = servers;
+                if !self.demo {
+                    self.settings.save();
+                }
+                self.log("Main", &format!("Servers changed: {} configured", self.settings.servers.len()));
+                return Applied::Done;
+            }
+            SetRssUrls(urls) => {
+                self.settings.rss_urls = urls.into_iter().map(|u| u.trim().to_string()).filter(|u| !u.is_empty()).collect();
+                if !self.demo {
+                    self.settings.save();
+                }
+                self.log("RSS", &format!("Feeds changed: {} configured", self.settings.rss_urls.len()));
+                return Applied::Done;
+            }
             AddNzbFile(path, paused) => {
                 return match parse_nzb(std::path::Path::new(&path)) {
                     Ok(nzb) => Applied::Added(self.add_nzb_from_parsed(nzb, path, paused)),
@@ -135,6 +184,7 @@ impl Engine {
                     MoveDir::Up => i.saturating_sub(1),
                     MoveDir::Down => (i + 1).min(last),
                     MoveDir::Bottom => last,
+                    MoveDir::To(n) => n.min(last),
                 };
                 if i != j {
                     let item = self.queue.remove(i);

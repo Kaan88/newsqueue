@@ -51,6 +51,11 @@ struct Args {
     config: Option<String>,
     api_key: Option<String>,
     web: Option<String>,
+    /// Sample queue and history, nothing saved: for looking at the UI.
+    demo: bool,
+    /// Ask the running server at `--bind`/`NQ_BIND` for /api/health and
+    /// exit 0 or 1 (the Docker HEALTHCHECK; no curl in the image).
+    health_check: bool,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -63,8 +68,10 @@ fn parse_args() -> Result<Args, String> {
             "--config" => args.config = Some(value("--config")?),
             "--api-key" => args.api_key = Some(value("--api-key")?),
             "--web" => args.web = Some(value("--web")?),
+            "--demo" => args.demo = true,
+            "--health-check" => args.health_check = true,
             "-h" | "--help" => {
-                println!("newsqueue-server [--bind {DEFAULT_BIND}] [--config DIR] [--api-key KEY] [--web DIR]");
+                println!("newsqueue-server [--bind {DEFAULT_BIND}] [--config DIR] [--api-key KEY] [--web DIR] [--demo] [--health-check]");
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument: {other}")),
@@ -100,12 +107,18 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if args.health_check {
+        let host = if addr.ip().is_unspecified() { "127.0.0.1".to_string() } else { addr.ip().to_string() };
+        let url = format!("http://{host}:{}/api/health", addr.port());
+        let ok = ureq::get(&url).timeout(Duration::from_secs(5)).call().is_ok_and(|r| r.status() == 200);
+        std::process::exit(if ok { 0 } else { 1 });
+    }
     if api_key.is_none() && !addr.ip().is_loopback() {
         eprintln!("Refusing to listen on {addr} without an API key (--api-key or NQ_API_KEY).");
         std::process::exit(2);
     }
 
-    let mut host = EngineHost::new(Engine::new(Settings::load(), false));
+    let mut host = EngineHost::new(Engine::new(if args.demo { Settings::default() } else { Settings::load() }, args.demo));
     host.log("Main", &format!("NewsQueue server {VERSION} on {addr}"));
     host.start(TICK_INTERVAL);
     host.checkin();
@@ -481,6 +494,32 @@ impl Api {
                 }
                 send(Command::MergeSettings(patch))
             }
+            ("GET", ["api", "servers"]) => json(
+                200,
+                self.handle.read(|s| {
+                    serde_json::Value::Array(
+                        s.servers
+                            .iter()
+                            .map(|r| {
+                                let mut v = serde_json::to_value(r).unwrap_or_default();
+                                v["username"] = r.username.clone().into();
+                                v
+                            })
+                            .collect(),
+                    )
+                }),
+            ),
+            ("POST", ["api", "servers"]) => match serde_json::from_slice::<Vec<serde_json::Value>>(body) {
+                Ok(list) if list.iter().all(|v| v.is_object()) => send(Command::SetServers(list)),
+                _ => error(400, "send a JSON array of server objects"),
+            },
+            ("GET", ["api", "rss"]) => json(200, self.handle.read(|s| serde_json::json!(s.rss_urls))),
+            ("POST", ["api", "rss"]) => match serde_json::from_slice::<Vec<String>>(body) {
+                Ok(urls) => send(Command::SetRssUrls(urls)),
+                Err(_) => error(400, "send a JSON array of feed URLs"),
+            },
+            ("POST", ["api", "rss", "refresh"]) => send(Command::RefreshRss),
+            ("POST", ["api", "expand"]) => send(Command::SetAllExpanded(query_value(query, "on").as_deref() != Some("0"))),
             ("POST", ["api", "history", index, "retry"]) => {
                 let Ok(index) = index.parse::<usize>() else {
                     return error(400, "bad history index");
@@ -506,6 +545,19 @@ impl Api {
                     "top" => Command::Move(id, MoveDir::Top),
                     "bottom" => Command::Move(id, MoveDir::Bottom),
                     "unpack" => Command::Unpack(id),
+                    "expand" => Command::SetExpanded(id, true),
+                    "collapse" => Command::SetExpanded(id, false),
+                    "move" => match query_value(query, "to").and_then(|t| t.parse::<usize>().ok()) {
+                        Some(to) => Command::Move(id, MoveDir::To(to)),
+                        None => return error(400, "move needs ?to=<row>"),
+                    },
+                    "rename" => {
+                        let name = String::from_utf8_lossy(body).trim().to_string();
+                        if name.is_empty() {
+                            return error(400, "send the new name as the request body");
+                        }
+                        Command::Rename(id, name)
+                    }
                     "password" => {
                         let password = String::from_utf8_lossy(body).trim().to_string();
                         if password.is_empty() {
@@ -671,6 +723,194 @@ mod tests {
         assert!(host.queue.iter().all(|c| c.id != ids[0]));
         let snap = api.handle.snapshot();
         assert_eq!(snap.queue[0].id, last);
+    }
+
+    #[test]
+    fn servers_and_feeds_keep_passwords_private() {
+        let (mut host, api) = demo();
+        host.settings.servers = vec![newsqueue_core::model::Server {
+            name: "main".into(),
+            address: "news.example".into(),
+            username: "u1".into(),
+            password: "s3cret".into(),
+            nic: "eth9".into(),
+            ..Default::default()
+        }];
+        host.settings.rss_urls = vec!["https://feed.example/rss?key=abc".into()];
+        host.tick_local();
+        let state = api.route("GET", "/api/state", Some("k3y"), b"");
+        let text = String::from_utf8_lossy(&state.body).to_string();
+        assert!(!text.contains("s3cret") && !text.contains("u1") && !text.contains("key=abc"));
+        let servers = api.route("GET", "/api/servers", Some("k3y"), b"");
+        let v: serde_json::Value = serde_json::from_slice(&servers.body).unwrap();
+        assert_eq!(v[0]["username"], "u1");
+        assert_eq!(v[0]["password_set"], true);
+        assert!(!String::from_utf8_lossy(&servers.body).contains("s3cret"));
+        // Rename without a password: the password and unknown fields stay.
+        let body = br#"[{"index":0,"name":"renamed","password":""},{"name":"second","address":"b.example"}]"#;
+        assert_eq!(api.route("POST", "/api/servers", Some("k3y"), body).status, 202);
+        assert_eq!(api.route("POST", "/api/servers", Some("k3y"), b"{}").status, 400);
+        let rss = api.route("GET", "/api/rss", Some("k3y"), b"");
+        assert!(String::from_utf8_lossy(&rss.body).contains("key=abc"));
+        assert_eq!(api.route("POST", "/api/rss", Some("k3y"), br#"["https://x.example/a", " "]"#).status, 202);
+        host.tick_local();
+        assert_eq!(host.settings.servers.len(), 2);
+        assert_eq!(host.settings.servers[0].name, "renamed");
+        assert_eq!(host.settings.servers[0].password, "s3cret");
+        assert_eq!(host.settings.servers[0].nic, "eth9");
+        assert_eq!(host.settings.servers[1].address, "b.example");
+        assert_eq!(host.settings.rss_urls, vec!["https://x.example/a".to_string()]);
+    }
+
+    #[test]
+    fn rows_move_to_a_position_and_expand() {
+        let (mut host, api) = demo();
+        let first = host.queue[0].id;
+        assert_eq!(api.route("POST", &format!("/api/queue/{first}/move?to=2"), Some("k3y"), b"").status, 202);
+        assert_eq!(api.route("POST", &format!("/api/queue/{first}/move"), Some("k3y"), b"").status, 400);
+        assert_eq!(api.route("POST", &format!("/api/queue/{first}/expand"), Some("k3y"), b"").status, 202);
+        assert_eq!(api.route("POST", &format!("/api/queue/{first}/rename"), Some("k3y"), b"New name").status, 202);
+        host.tick_local();
+        assert_eq!(host.queue[2].id, first);
+        assert!(host.queue[2].expanded);
+        assert_eq!(host.queue[2].subject, "New name");
+        let snap = api.handle.snapshot();
+        assert!(!snap.queue[2].file_rows.is_empty());
+    }
+
+    /// A one-article NNTP server: greets, accepts any login, answers BODY.
+    fn mock_nntp(id: &'static str, body: Vec<u8>) -> u16 {
+        use std::io::{BufRead, BufReader, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for stream in listener.incoming().flatten() {
+                let body = body.clone();
+                std::thread::spawn(move || {
+                    let mut out = stream.try_clone().unwrap();
+                    let mut lines = BufReader::new(stream);
+                    let _ = out.write_all(b"200 mock ready
+");
+                    let mut line = String::new();
+                    while lines.read_line(&mut line).unwrap_or(0) > 0 {
+                        let cmd = line.trim().to_string();
+                        line.clear();
+                        let reply: Vec<u8> = if cmd.starts_with("AUTHINFO") {
+                            b"281 ok
+".to_vec()
+                        } else if cmd == "QUIT" {
+                            break;
+                        } else if cmd == format!("BODY <{id}>") || cmd == format!("STAT <{id}>") {
+                            if cmd.starts_with("STAT") {
+                                b"223 0 ok
+".to_vec()
+                            } else {
+                                [b"222 0 body
+".as_slice(), &body, b"
+.
+"].concat()
+                            }
+                        } else if cmd.starts_with("BODY") || cmd.starts_with("STAT") {
+                            b"430 no such article
+".to_vec()
+                        } else {
+                            b"200 ok
+".to_vec()
+                        };
+                        if out.write_all(&reply).is_err() {
+                            break;
+                        }
+                    }
+                });
+            }
+        });
+        port
+    }
+
+    fn yenc(data: &[u8], name: &str) -> Vec<u8> {
+        let mut out = format!("=ybegin line=128 size={} name={name}
+", data.len()).into_bytes();
+        for b in data {
+            let e = b.wrapping_add(42);
+            if matches!(e, 0 | 10 | 13 | 61) {
+                out.extend([b'=', e.wrapping_add(64)]);
+            } else {
+                out.push(e);
+            }
+        }
+        out.extend(format!("
+=yend size={}
+", data.len()).into_bytes());
+        out
+    }
+
+    /// GUI_PLAN Phase 1 testing: add an NZB through the API, download it
+    /// from a mock server, find it in `/api/history`.
+    #[test]
+    fn an_uploaded_nzb_downloads_into_the_history() {
+        let root = std::env::temp_dir().join(format!("nq-api-e2e-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let data: Vec<u8> = (0..=255u8).cycle().take(5000).collect();
+        let port = mock_nntp("pay1@mock", yenc(&data, "payload.bin"));
+        let mut settings = Settings::default();
+        settings.servers = vec![newsqueue_core::model::Server {
+            name: "mock".into(),
+            address: "127.0.0.1".into(),
+            port,
+            connections: 2,
+            ssl: false,
+            auth: false,
+            enabled: true,
+            ..Default::default()
+        }];
+        settings.download_dir = root.to_string_lossy().to_string();
+        settings.temp_dir = root.join("temp").to_string_lossy().to_string();
+        settings.low_free_space_mb = 0;
+        settings.par2_checking = false;
+        settings.auto_unrar = false;
+        settings.duplicate_check = 0;
+        // Demo mode: nothing is saved over the real settings files.
+        let mut engine = Engine::new(settings, true);
+        engine.queue.clear();
+        engine.history.clear();
+        let mut host = EngineHost::new(engine);
+        let api = Api { handle: host.handle(), api_key: Some("k3y".into()), web_dir: None };
+        let nzb = format!(
+            r#"<?xml version="1.0" encoding="utf-8"?>
+<nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+<file poster="tester" date="1763400000" subject="Api.Test.Release [1/1] - &quot;payload.bin&quot; yEnc (1/1)">
+<groups><group>alt.binaries.test</group></groups>
+<segments><segment bytes="{}" number="1">pay1@mock</segment></segments>
+</file>
+</nzb>"#,
+            data.len()
+        );
+        let added = api.route("POST", "/api/nzb?name=Api.Test.Release.nzb", Some("k3y"), nzb.as_bytes());
+        assert_eq!(added.status, 202, "{}", String::from_utf8_lossy(&added.body));
+        let saved = serde_json::from_slice::<serde_json::Value>(&added.body).unwrap()["file"].as_str().unwrap().to_string();
+        assert_eq!(api.route("POST", "/api/connect", Some("k3y"), b"").status, 202);
+        let started = std::time::Instant::now();
+        let mut history = serde_json::Value::Null;
+        while started.elapsed() < Duration::from_secs(20) {
+            host.tick_local();
+            history = serde_json::from_slice(&api.route("GET", "/api/history", Some("k3y"), b"").body).unwrap();
+            if history.as_array().is_some_and(|h| !h.is_empty()) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let _ = std::fs::remove_file(app_base().join("nzb").join("uploads").join(&saved));
+        let entry = &history[0];
+        assert_eq!(entry["status"], "Completed", "{history}");
+        let found = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .flat_map(|d| if d.path().is_dir() { std::fs::read_dir(d.path()).unwrap().flatten().collect() } else { vec![d] })
+            .find(|f| f.file_name() == "payload.bin")
+            .expect("payload.bin downloaded");
+        assert_eq!(std::fs::read(found.path()).unwrap(), data);
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]

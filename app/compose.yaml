@@ -1,15 +1,23 @@
+# NewsQueue in Docker. Put NQ_API_KEY=... (and optionally PUID, PGID, TZ)
+# in a .env file beside this one, then: docker compose up -d
+# Open http://<host>:8480/ and sign in with the API key.
 services:
   newsqueue:
     build: .
     image: newsqueue
     restart: unless-stopped
     ports:
+      # Loopback only; publish it wider (or behind a TLS proxy) on purpose.
       - "127.0.0.1:8480:8480"
     environment:
-      # Put the key in a .env file beside this one: NQ_API_KEY=...
       NQ_API_KEY: ${NQ_API_KEY:?set NQ_API_KEY in .env}
+      PUID: ${PUID:-1000}
+      PGID: ${PGID:-1000}
+      TZ: ${TZ:-Etc/UTC}
     volumes:
       - ./docker/config:/config
       - ./docker/downloads:/downloads
-    # Ctrl+C / docker stop sends SIGTERM; the server saves its state and exits.
+      - ./docker/incomplete:/incomplete
+      - ./docker/watch:/watch
+    # docker stop sends SIGTERM; the server saves its state and exits.
     stop_grace_period: 15s

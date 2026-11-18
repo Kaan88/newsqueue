@@ -28,6 +28,8 @@ pub enum Event {
 }
 
 pub struct Engine {
+    /// Free space on the download drive, refreshed every tick.
+    pub free_gb: f64,
     pub settings: Settings,
     pub queue: Vec<Collection>,
     pub par2: Vec<Par2Set>,
@@ -175,6 +177,7 @@ impl Engine {
             last_save: now,
             last_queue_save: now,
             low_space_warned: false,
+            free_gb: 0.0,
             rss_timer: false,
             rss_rx: None,
             rss_last_refresh: now,
@@ -1387,7 +1390,8 @@ impl Engine {
         }
         self.scheduler_last_hold = self.scheduler_hold;
 
-        let free_mb = free_gb(&self.settings.download_dir) * 1024.0;
+        self.free_gb = free_gb(&self.settings.download_dir);
+        let free_mb = self.free_gb * 1024.0;
         if self.connected && free_mb < self.settings.low_free_space_mb as f64 {
             if !self.low_space_warned {
                 self.low_space_warned = true;

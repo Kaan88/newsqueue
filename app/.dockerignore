@@ -1,5 +1,6 @@
 target
-dist
+/dist
+web/dist
 download
 log
 nzb
@@ -8,5 +9,5 @@ unrar
 docker
 newsqueue-*.json
 *.nqpart
-altbinz_original
 shots
+win32/shots

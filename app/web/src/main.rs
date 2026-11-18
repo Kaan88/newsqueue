@@ -16,6 +16,8 @@ mod model {
     pub const TOOLBAR_BUTTON_HEIGHT: f32 = 53.0;
 }
 mod app;
+mod net;
+mod settings;
 
 #[cfg(target_arch = "wasm32")]
 fn main() {

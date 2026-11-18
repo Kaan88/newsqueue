@@ -522,7 +522,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
         }
         Icon::Top | Icon::Bottom => {
             let up = matches!(icon, Icon::Top);
-            let dir = if up { -1.0 } else { 1.0 };
+            let dir = if up { 1.0 } else { -1.0 };
             painter.line_segment(
                 [
                     Pos2::new(c.x, c.y - dir * s * 0.28),
@@ -546,7 +546,7 @@ pub fn paint_icon(painter: &egui::Painter, rect: Rect, icon: Icon, color: Color3
             );
         }
         Icon::Up | Icon::Down => {
-            let dir = if matches!(icon, Icon::Up) { -1.0 } else { 1.0 };
+            let dir = if matches!(icon, Icon::Up) { 1.0 } else { -1.0 };
             painter.line_segment(
                 [
                     Pos2::new(c.x, c.y - dir * s * 0.26),
