@@ -81,7 +81,9 @@ Win32 imports.
 (header, query or login cookie), SSE, private settings never sent or
 changed, Ctrl+C/SIGTERM saves. `app/web`: the egui web UI (queue tree with
 drag reorder, history, log, settings, Add NZB, phone layout) in the
-Instrument skin. `Dockerfile` + `compose.yaml` with a smoke test. The API is
+Instrument skin. `Dockerfile` + `compose.yaml`; `docker-smoke.sh` (build, health, egui page,
+API key, mock-NNTP download through the API, save on stop) passes on a Debian
+Docker host. The API is
 also a library, so the desktop app can serve it (Web access).
 
 Server (`newsqueue-server`):

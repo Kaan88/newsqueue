@@ -457,8 +457,10 @@ GUI_PLAN is done (2026-11-18): the egui web UI, the native Win32 desktop
 Not done / pending:
 
 - Optional code signing and shortcut polish.
-- Not tried here: building the Docker image (no Docker on this machine) and a
-  real self-update round trip from an installed 1.0.5 copy to an Inno setup.
+- Not tried here: a real self-update round trip from an installed 1.0.5 copy
+  to an Inno setup. The Docker image is built and checked on a separate Debian
+  Docker host with `app/docker-smoke.sh` (passed 2026-11-18 on the native-desktop
+  commit).
 - `installer-test.ps1` has not been run against the native build (it needs the
   installed copy's shortcuts and uninstall entry moved aside first).
 

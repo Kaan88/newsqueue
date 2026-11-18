@@ -345,7 +345,7 @@ None are started. Categories stay cut (see `REMOVED.md`).
 11. **Done (2026-11-18): web API with authentication** — key header, query or
     login cookie; SSE `/api/events`; history/log/settings endpoints (private
     settings never sent or changed); `/api/nzb/url`; Ctrl+C/SIGTERM saves;
-    `Dockerfile` + `compose.yaml` (image build not tried here: no Docker).
+    `Dockerfile` + `compose.yaml`; `docker-smoke.sh` passes on a Debian Docker host.
     Was: (GUI_PLAN Phase 1), which also enables
     phone control and scripting.
 12. **Done (2026-11-18): pattern-based move** (`sort_folder`/`sort_pattern`,
@@ -362,7 +362,7 @@ None are started. Categories stay cut (see `REMOVED.md`).
 4. Done 2026-11-18: every planned feature (1-12), the Inno Setup installer,
    the server/web follow-ups and the per-setting checklist
    (`SETTINGS_CHECKLIST.md`).
-5. Still to try: build and run the Docker image (no Docker here), a real
+5. Still to try: a real
    1.0.5 → Inno self-update round trip, and a release (version bump to
    1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload). The native
    desktop's installer builds, but `installer-test.ps1` was not run against it:
