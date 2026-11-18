@@ -278,7 +278,8 @@ pub unsafe fn ctl_color(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     let c = lp.0;
     if m == WM_CTLCOLORSTATIC {
         if GRAY.with(|g| g.borrow().contains(&c)) {
-            SetTextColor(dc, COLORREF(GetSysColor(COLOR_GRAYTEXT)));
+            // Darker than COLOR_GRAYTEXT (disabled text): readable notes.
+            SetTextColor(dc, rgb(0x50, 0x50, 0x50));
             SetBkMode(dc, TRANSPARENT);
             return LRESULT(GetSysColorBrush(COLOR_BTNFACE).0 as isize);
         }
@@ -381,6 +382,14 @@ pub fn spin(p: HWND, id: i32, val: i64, lo_: i32, hi_: i32, x: i32, y: i32, wd: 
 pub fn button(p: HWND, id: i32, t: &str, x: i32, y: i32, wd: i32) -> HWND {
     let st = if id == IDOK_ { BS_DEFPUSHBUTTON } else { BS_PUSHBUTTON };
     reg(p, id, mk("BUTTON", t, sty!(CHILD, WS_TABSTOP, st), 0, x, y, wd, 26, p, id))
+}
+/// Marks a button that is not OK as the default one (black frame; Enter
+/// still sends IDOK, which the dialog handles as this button).
+pub fn set_default(b: HWND) -> HWND {
+    unsafe {
+        SendMessageW(b, BM_SETSTYLE, Some(WPARAM(BS_DEFPUSHBUTTON as usize)), Some(LPARAM(1)));
+    }
+    b
 }
 pub fn check(p: HWND, id: i32, t: &str, x: i32, y: i32, wd: i32, on: bool) -> HWND {
     let c = reg(p, id, mk("BUTTON", t, sty!(CHILD, WS_TABSTOP, BS_AUTOCHECKBOX), 0, x, y, wd, 20, p, id));

@@ -156,7 +156,7 @@ fn build_version(owner: HWND) -> HWND {
     form::button(d, ID_RELEASES, "Release page", 16, 148, 100);
     form::button(d, ID_CHECK, "Check again", 166, 148, 90);
     form::button(d, ID_UPDATE_NOW, "Update now", 262, 148, 90);
-    form::button(d, IDCANCEL_, "Close", 358, 148, 66);
+    form::button(d, IDOK_, "Close", 358, 148, 66);
     sync_version(d);
     d
 }
@@ -633,7 +633,7 @@ fn build_pause_for(owner: HWND) -> HWND {
     form::label(d, "Custom", 14, 108, 60);
     form::spin(d, 10, 10, 1, 1440, 76, 108, 70);
     form::label(d, "min", 152, 108, 40);
-    form::button(d, 11, "Pause", 238, 107, 78);
+    form::set_default(form::button(d, 11, "Pause", 238, 107, 78));
     form::label_id(d, 12, "", 14, 144, 300, 18);
     form::hline(d, 14, 168, 302);
     form::button(d, 13, "Resume now", 14, 178, 100);

@@ -431,7 +431,9 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   Columns follow `column_visible`/`column_widths` (Columns dialog).
 - Dialogs use the `form.rs` helpers on the face colour (`COLOR_BTNFACE`).
   Dialogs have no `WS_CLIPCHILDREN`: group boxes rely on the parent painting
-  behind them. Gray notes (`form::note`) explain settings; keep Setup labels
+  behind them. Dark gray notes (`form::note`, 505050, not the disabled
+  gray) explain settings; `form::set_default` frames a default button
+  that is not OK. Keep Setup labels
   short enough for the 214 px label column.
 - Keep icons drawn, not copied from the original artwork.
 - Screenshot mode (`--screenshot`) shows sample data

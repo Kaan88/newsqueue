@@ -251,6 +251,28 @@ phone). Fixed:
   that frame at once.
 - The queue summary ("3 jobs, ...") is shortened, or left out, instead of
   being drawn over the filter on a very narrow page.
+- Notes (explanatory text) are 505050 on the face in both front ends
+  (dark: B0B0B4) instead of the disabled-text gray 808080, which was hard
+  to read (about 2.6:1).
+
+The dialog fix rests on egui's `Memory::top_modal_layer`, which holds the
+previous frame's modal. In the browser pane (hidden, so Chrome throttles
+frames up to 1 s) a click 300 ms after closing opened Options in one of
+two trials; the throttling, not the dialog, decides that test.
+
+### Desktop review (2026-11-18)
+
+Every dialog, Setup page and tab in `shots/golden/` reviewed side by side:
+gradient captions, raised buttons with the default one framed, sunken
+edits and lists, classic check boxes, spin buttons and scroll bars are
+consistent. Fixed: the Version dialog's Close and the Pause for dialog's
+Pause are now the default (framed) buttons like OK elsewhere; notes are
+readable (above); paused progress captions are black.
+
+### Status
+
+All items of this plan (Phase 0, Phase 1 server, web UI and Docker,
+Phase 2 desktop, Web access) are done. Not checked: a physical phone.
 
 ## Order and effort
 

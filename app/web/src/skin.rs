@@ -878,7 +878,7 @@ pub fn label(ui: &mut Ui, text: &str) -> Response {
 
 /// Grey explanatory text that wraps.
 pub fn note(ui: &mut Ui, text: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(text).font(theme::font(theme::SMALL)).color(GRAY_TEXT())).wrap());
+    ui.add(egui::Label::new(egui::RichText::new(text).font(theme::font(theme::SMALL)).color(theme::NOTE_TEXT())).wrap());
 }
 
 // ----------------------------------------------------------- status bar ---
