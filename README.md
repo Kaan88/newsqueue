@@ -2,8 +2,9 @@
 
 <img src="app/assets/newsqueue-128.png" width="96" alt="NewsQueue icon">
 
-A from-scratch Rust + egui desktop Usenet downloader modelled on the behaviour
-of AltBinz 0.48.4. The UI, queue, settings and measurements live in `app/`.
+A from-scratch Rust desktop Usenet downloader with a native Windows UI,
+modelled on the behaviour of AltBinz 0.48.4, plus a headless server with an
+egui web UI. The UI, queue, settings and measurements live in `app/`.
 
 NewsQueue uses its own versioning: the current release is **1.0.5**.
 
@@ -22,8 +23,8 @@ NewsQueue uses its own versioning: the current release is **1.0.5**.
 - RSS feed fetching with filter-based autodownload
 - Per-collection or default execute commands after successful download/PAR2/unrar
 - Version check against GitHub releases with optional verified self-update
-- Native Windows notification-area icon with show/restore, Exit, off-screen
-  minimize-to-tray and close-to-tray (taskbar entry removed while hidden),
+- Native Windows notification-area icon with show/restore, Exit,
+  minimize-to-tray and close-to-tray (hidden, no taskbar entry),
   speed tooltip and completion balloons (verified by `app/tray-verify.ps1`)
 - Queue-drained Windows shutdown, hibernate, sleep or app exit with a 15-second
   abortable countdown and a mockable backend
@@ -90,7 +91,7 @@ Verify install and uninstall end to end (requires no existing NewsQueue install)
 The release build uses the Windows GUI subsystem and does not open a console
 window. Use the debug build for command-line diagnostics.
 
-Verify the off-screen tray and shutdown countdown:
+Verify the tray and shutdown countdown:
 
 ```powershell
 .\tray-verify.ps1

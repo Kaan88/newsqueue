@@ -64,8 +64,13 @@ pub fn bold() -> HFONT {
 
 /// Segoe UI via the system message font at the current DPI.
 pub fn init_fonts() {
+    let dpi = std::env::var("NQ_DPI").ok().and_then(|v| v.parse().ok()).unwrap_or(unsafe { GetDpiForSystem() });
+    set_dpi(dpi);
+}
+
+/// Switches to `dpi` (WM_DPICHANGED) and rebuilds the fonts for it.
+pub fn set_dpi(dpi: u32) {
     unsafe {
-        let dpi = std::env::var("NQ_DPI").ok().and_then(|v| v.parse().ok()).unwrap_or(GetDpiForSystem());
         DPI.store(dpi, Relaxed);
         let mut ncm = NONCLIENTMETRICSW::default();
         ncm.cbSize = std::mem::size_of::<NONCLIENTMETRICSW>() as u32;
@@ -489,8 +494,13 @@ pub fn imagelist(size: i32, names: &[&str]) -> isize {
 
 pub fn capture(hwnd: HWND, path: &str) {
     unsafe {
-        let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW);
+        let _ = RedrawWindow(Some(hwnd), None, None, RDW_INVALIDATE | RDW_ERASE | RDW_ALLCHILDREN | RDW_UPDATENOW);
         pump(300);
+        // PrintWindow(PW_RENDERFULLCONTENT) copies what DWM has composed;
+        // wait for the frame that holds the last paint.
+        let _ = DwmFlush();
+        let _ = DwmFlush();
+        pump(100);
         let mut wr = RECT::default();
         GetWindowRect(hwnd, &mut wr).unwrap();
         let (w, h) = (wr.right - wr.left, wr.bottom - wr.top);
@@ -503,7 +513,23 @@ pub fn capture(hwnd: HWND, path: &str) {
         if std::env::var("NQ_SCREEN").is_ok() {
             let _ = BitBlt(mem, 0, 0, w, h, Some(hdc), wr.left, wr.top, SRCCOPY);
         } else {
+            // The frame from DWM (PW_RENDERFULLCONTENT), the client area
+            // through WM_PRINT (PW_CLIENTONLY): DWM's copy of the client can
+            // miss controls painted just before the capture.
             let _ = PrintWindow(hwnd, mem, PRINT_WINDOW_FLAGS(2));
+            let mut cr = RECT::default();
+            let _ = GetClientRect(hwnd, &mut cr);
+            let mut origin = POINT::default();
+            let _ = ClientToScreen(hwnd, &mut origin);
+            let cdc = CreateCompatibleDC(Some(hdc));
+            let cbmp = CreateCompatibleBitmap(hdc, cr.right, cr.bottom);
+            let cold = SelectObject(cdc, cbmp.into());
+            if PrintWindow(hwnd, cdc, PRINT_WINDOW_FLAGS(1)).as_bool() {
+                let _ = BitBlt(mem, origin.x - wr.left, origin.y - wr.top, cr.right, cr.bottom, Some(cdc), 0, 0, SRCCOPY);
+            }
+            SelectObject(cdc, cold);
+            let _ = DeleteObject(cbmp.into());
+            let _ = DeleteDC(cdc);
         }
         let mut bi = BITMAPINFO::default();
         bi.bmiHeader.biSize = std::mem::size_of::<BITMAPINFOHEADER>() as u32;

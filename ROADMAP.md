@@ -10,13 +10,18 @@ Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
 first release built on the core `Engine`. 1.0.5 adds the Instrument skin
 (light/dark/system, egui 0.37) and runs the engine on its own thread.
 
-**Phase 1 started 2026-11-18:** `app/server` (`newsqueue-server`) serves `/api/health`, `/api/state`, pause/resume/connect/cleanup/speed-limit, `/api/nzb` upload and per-collection queue actions behind an API key; next: SSE events, history/log/settings endpoints, login, the web UI and Docker. GUI_PLAN Phase 0 steps 3–5 done 2026-11-18 (`Command` + `Engine::apply`, `EngineHost` timer thread, `EngineHandle` with `Snapshot`); the egui UI still reads the engine directly (the redesign has landed; switching is optional for the desktop).
+**GUI_PLAN done (2026-11-18, unreleased):** Phase 0 (engine split,
+`Command`/`Snapshot`/engine thread), Phase 1 (`newsqueue-server` JSON API with
+key/cookie auth and SSE, the egui web UI compiled to WebAssembly in `app/web`,
+Docker files) and Phase 2: the desktop app is now **native Win32** (`windows`
+crate, comctl32 v6, per-monitor DPI, light only, no egui). Main window,
+toolbar, tabs, owner-data queue tree with custom-drawn progress, PAR2/Log/RSS
+tabs, the 15-page Setup bound by a table, server editor and every other
+dialog; the tray hides with `SW_HIDE`. The desktop can also serve the web UI
+itself (Setup → Miscellaneous #3 → Web access). The Instrument skin lives on in
+the web UI only.
 
-Engine split
-started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
-`Engine` (with `Event`s) is in core and the desktop app runs on it;
-`Command`/`Snapshot`/engine thread from GUI_PLAN Phase 0 are not done yet. Core
-builds and passes all 40 tests on Debian 13 (x86_64) with distro `par2` and
+Core builds and passes its tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
 Current app version: **1.0.5** (2026-11-18, Instrument skin + engine thread; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
@@ -34,11 +39,13 @@ content-based naming for obfuscated posts.
 | RSS | Done | Live feed returned 100 items; filters downloaded a real NZB |
 | Search | Removed | Global/Newznab search was cut on 2026-11-18 |
 | Explorer | Removed | See `REMOVED.md` |
-| Tray | Done | Off-screen minimize-to-tray with taskbar entry removed, speed tooltip, download/unrar balloons, Show/Exit |
+| Tray | Done | Minimize/close to tray (`SW_HIDE`), speed tooltip, download/unrar balloons, Show/Exit |
 | Shutdown | Done | Shutdown/hibernate/sleep/exit after a 15-second abortable countdown; mockable backend |
 | Statistics/history | Done | Real persisted history and daily/monthly transfer stats |
 | Installer/release | Done for private use | Portable zip, Inno Setup 7 per-user installer (replaces IExpress installs), shortcuts, Add/Remove Programs entry, uninstaller |
-| Verification | Baseline done | 64 tests, mock NNTP, golden screenshots, installer/packaging checks, off-screen tray/download/shutdown scripts |
+| Desktop UI | Done (native Win32) | GUI_PLAN Phase 2: every window and dialog native; goldens from `PrintWindow` |
+| Web UI | Done | egui WebAssembly front end served by `newsqueue-server` or by the desktop app (Web access) |
+| Verification | Baseline done | 111 tests, mock NNTP, golden screenshots, packaging, tray/download/shutdown scripts against the native window |
 | Code signing | Optional | No certificate configured |
 | Live service validation | Blocked | Needs a second server |
 
@@ -125,7 +132,7 @@ Obfuscated releases arrive as `Rar!` payloads with random names such as
 - **Phase 6 — mostly done.** Log retention, persistent real history and transfer
   statistics, multi-server use, thread priority, 
   execute hooks and HTTP/SOCKS5 proxy support are implemented.
-  Native tray show/restore/Exit, off-screen minimize-to-tray with taskbar removal,
+  Native tray show/restore/Exit, minimize-to-tray (`SW_HIDE`),
   close-to-tray, speed tooltip and download/unrar balloon hints work. Windows
   shutdown, hibernate, sleep and app-exit actions run after the queue drains with
   a 15-second abortable countdown and a mockable backend. A few shortcut/polish
@@ -357,7 +364,9 @@ None are started. Categories stay cut (see `REMOVED.md`).
    (`SETTINGS_CHECKLIST.md`).
 5. Still to try: build and run the Docker image (no Docker here), a real
    1.0.5 → Inno self-update round trip, and a release (version bump to
-   1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload).
+   1.0.6, `build-installer.ps1`, `installer-test.ps1`, upload). The native
+   desktop's installer builds, but `installer-test.ps1` was not run against it:
+   it needs the installed copy's shortcuts and uninstall entry out of the way.
 6. Optional: code signing and shortcut polish.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.

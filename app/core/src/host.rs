@@ -90,6 +90,14 @@ impl EngineHost {
         }
     }
 
+    /// Like [`tick_local`](Self::tick_local) without the engine tick: the
+    /// sample data of screenshot mode stays as it is.
+    pub fn pump_local(&mut self) {
+        if let Some(engine) = self.local.as_mut() {
+            self.pump.run(engine, false);
+        }
+    }
+
     /// Starts the timer thread. The engine stays checked out until the next
     /// [`checkin`](Self::checkin).
     pub fn start(&mut self, interval: Duration) {

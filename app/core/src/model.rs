@@ -368,7 +368,10 @@ impl ProxyConfig {
 }
 
 /// Settings never shown or changed over the API.
-pub const PRIVATE_SETTINGS: &[&str] = &["servers", "proxy_username", "proxy_password", "rss_urls", "notify_url"];
+/// Never shown to or changed by a remote front end (the web access settings
+/// included: a browser must not open or widen its own access).
+pub const PRIVATE_SETTINGS: &[&str] =
+    &["servers", "proxy_username", "proxy_password", "rss_urls", "notify_url", "web_access", "web_access_bind", "web_access_key"];
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -420,6 +423,12 @@ pub struct Settings {
     /// Webhook for finished/failed jobs. An ntfy URL gets a plain-text POST
     /// with a Title header; anything else gets JSON {title, text}.
     pub notify_url: String,
+    /// Desktop only: serve the JSON API and the egui web UI from inside the app.
+    pub web_access: bool,
+    /// Address and port for web access, e.g. `0.0.0.0:8480`.
+    pub web_access_bind: String,
+    /// API key / login password for web access (required off loopback).
+    pub web_access_key: String,
     /// After a clean unpack, move the output to `sort_folder/<sort_pattern>`
     /// (empty folder = off). Tokens: {name} {title} {year} {date} {group}.
     pub sort_folder: String,
@@ -522,6 +531,9 @@ impl Default for Settings {
             direct_unpack: false,
             duplicate_check: 1,
             notify_url: String::new(),
+            web_access: false,
+            web_access_bind: "0.0.0.0:8480".into(),
+            web_access_key: String::new(),
             sort_folder: String::new(),
             sort_pattern: "{title} ({year})".into(),
             auto_unrar: false,
@@ -557,7 +569,7 @@ impl Default for Settings {
             column_widths: QUEUE_COLUMN_WIDTHS,
             servers: vec![Server::default()],
             notes: String::new(),
-            scheduler: std::array::from_fn(|_| "10".repeat(24)),
+            scheduler: std::array::from_fn(|_| "1".repeat(SCHEDULE_SLOTS)),
             scheduler_enabled: false,
             shutdown_method: "Exit".into(),
             auto_import_folder: String::new(),
@@ -1421,6 +1433,22 @@ pub fn timestamp_from_str(s: &str) -> Option<DateTime<Utc>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn web_access_settings_stay_private() {
+        let mut s = Settings::default();
+        s.web_access = true;
+        s.web_access_key = "hunter2".into();
+        let public = s.public_json().to_string();
+        assert!(!public.contains("web_access") && !public.contains("hunter2"));
+        // A browser cannot open, move or widen its own access.
+        for key in ["web_access", "web_access_bind", "web_access_key"] {
+            assert!(s.merged(&serde_json::json!({ key: serde_json::Value::Null })).is_err(), "{key}");
+        }
+        // Old settings files load with web access off.
+        let old: Settings = serde_json::from_str("{}").unwrap();
+        assert!(!old.web_access);
+    }
 
     #[test]
     fn formatting_matches_mechanics() {

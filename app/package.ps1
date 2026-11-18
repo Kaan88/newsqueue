@@ -13,6 +13,9 @@ try {
     Copy-Item "assets\newsqueue-256.png" $dist
     Copy-Item "..\README.md" $dist
     Copy-Item "..\ROADMAP.md" $dist
+    # The egui web UI for the "Web access" setting, if it has been built
+    # (web\build-web.ps1).
+    if (Test-Path "web\dist\index.html") { Copy-Item "web\dist" (Join-Path $dist "web") -Recurse }
     Compress-Archive -Path $dist -DestinationPath (Join-Path $root "dist\NewsQueue-$version.zip") -Force
     Write-Output "Wrote $dist"
     Write-Output "Wrote $root\dist\NewsQueue-$version.zip"

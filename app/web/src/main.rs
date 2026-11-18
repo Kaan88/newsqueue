@@ -3,12 +3,10 @@
 //! Compiled to WebAssembly and served by `newsqueue-server` at `/`. It holds
 //! no engine: it polls `GET /api/state` (the secret-free `Snapshot`) and
 //! sends actions to the JSON API. The look is the desktop's Instrument skin;
-//! `skin.rs` and `theme.rs` are the desktop's own files, included by path.
+//! `skin.rs` and `theme.rs` (the Instrument skin) came from the egui desktop.
 #![allow(dead_code)]
 
-#[path = "../../src/skin.rs"]
 mod skin;
-#[path = "../../src/theme.rs"]
 mod theme;
 /// The two constants `theme.rs` takes from the core model.
 mod model {

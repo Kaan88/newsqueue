@@ -7,8 +7,6 @@
 use crate::model::{format_speed, APP_NAME, VERSION};
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, AtomicIsize, AtomicU64, AtomicU8, Ordering};
-#[cfg(target_os = "windows")]
-use std::sync::Mutex;
 
 #[cfg(target_os = "windows")]
 static EXIT_REQUESTED: AtomicBool = AtomicBool::new(false);
@@ -24,8 +22,6 @@ static TRAY_SPEED_BPS_BITS: AtomicU64 = AtomicU64::new(0);
 static TRAY_SPEED_MODE: AtomicU8 = AtomicU8::new(1);
 #[cfg(target_os = "windows")]
 static TRAY_HWND: AtomicIsize = AtomicIsize::new(0);
-#[cfg(target_os = "windows")]
-static SAVED_PLACEMENT: Mutex<Option<WINDOWPLACEMENT>> = Mutex::new(None);
 
 /// What the app should do when the main window asks to close.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -133,15 +129,6 @@ pub fn ready() -> bool {
     false
 }
 
-#[cfg(target_os = "windows")]
-pub fn is_visible(handle: isize) -> bool {
-    unsafe { IsWindowVisible(handle) != 0 }
-}
-
-#[cfg(not(target_os = "windows"))]
-pub fn is_visible(_handle: isize) -> bool {
-    false
-}
 
 #[cfg(target_os = "windows")]
 pub fn exit_requested() -> bool {
@@ -167,94 +154,21 @@ pub fn main_window_handle() -> Option<isize> {
 #[cfg(target_os = "windows")]
 pub fn show_main_window() {
     if let Some(handle) = main_window_handle() {
-        let saved = SAVED_PLACEMENT
-            .lock()
-            .ok()
-            .and_then(|mut guard| guard.take());
         unsafe {
-            taskbar_add_tab(handle);
-            if let Some(saved) = saved {
-                let maximized = saved.showCmd == SW_SHOWMAXIMIZED as u32;
-                let mut restore = saved;
-                restore.showCmd = if maximized {
-                    SW_SHOWMAXIMIZED as u32
-                } else {
-                    SW_SHOWNORMAL as u32
-                };
-                SetWindowPlacement(handle, &restore);
-                ShowWindow(handle, if maximized { SW_SHOWMAXIMIZED } else { SW_RESTORE });
-            } else {
-                ShowWindow(handle, SW_RESTORE);
-            }
+            ShowWindow(handle, if IsIconic(handle) != 0 { SW_RESTORE } else { SW_SHOW });
             SetForegroundWindow(handle);
         }
     }
 }
 
+/// Hides the main window to the tray. The engine has its own thread, so
+/// downloads, speed and the shutdown countdown keep running while hidden.
 #[cfg(target_os = "windows")]
 pub fn hide_main_window(handle: isize) {
     unsafe {
-        // Already moved off-screen; do not overwrite the real placement.
-        if SAVED_PLACEMENT
-            .lock()
-            .map(|guard| guard.is_some())
-            .unwrap_or(false)
-        {
-            taskbar_delete_tab(handle);
-            return;
-        }
-
-        let mut placement: WINDOWPLACEMENT = std::mem::zeroed();
-        placement.length = std::mem::size_of::<WINDOWPLACEMENT>() as u32;
-        if GetWindowPlacement(handle, &mut placement) != 0 {
-            if placement.showCmd == SW_SHOWMINIMIZED as u32 {
-                placement.showCmd = SW_SHOWNORMAL as u32;
-            }
-            let width = (placement.rcNormalPosition.right - placement.rcNormalPosition.left).max(200);
-            let height =
-                (placement.rcNormalPosition.bottom - placement.rcNormalPosition.top).max(200);
-            if let Ok(mut guard) = SAVED_PLACEMENT.lock() {
-                *guard = Some(placement);
-            }
-            let was_minimized = IsIconic(handle) != 0;
-            if was_minimized {
-                ShowWindow(handle, SW_RESTORE);
-            }
-            let moved = SetWindowPos(
-                handle,
-                0,
-                -32_000,
-                -32_000,
-                width,
-                height,
-                SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            );
-            debug_log(&format!(
-                "hide moved={moved} minimized={was_minimized} width={width} height={height}"
-            ));
-        } else {
-            let mut rect: RECT = std::mem::zeroed();
-            GetWindowRect(handle, &mut rect);
-            let width = (rect.right - rect.left).max(200);
-            let height = (rect.bottom - rect.top).max(200);
-            let moved = SetWindowPos(
-                handle,
-                0,
-                -32_000,
-                -32_000,
-                width,
-                height,
-                SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW,
-            );
-            debug_log(&format!("hide fallback moved={moved}"));
-        }
-        taskbar_delete_tab(handle);
+        ShowWindow(handle, SW_HIDE);
     }
-}
-
-#[cfg(target_os = "windows")]
-pub fn is_minimized(handle: isize) -> bool {
-    unsafe { IsIconic(handle) != 0 }
+    debug_log("hide SW_HIDE");
 }
 
 #[cfg(target_os = "windows")]
@@ -283,11 +197,6 @@ pub fn show_main_window() {}
 #[cfg(not(target_os = "windows"))]
 pub fn hide_main_window(_handle: isize) {}
 
-#[cfg(not(target_os = "windows"))]
-pub fn is_minimized(_handle: isize) -> bool {
-    false
-}
-
 #[cfg(target_os = "windows")]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum TrayCommand {
@@ -307,7 +216,7 @@ fn command_for_id(id: u32) -> TrayCommand {
 
 #[cfg(target_os = "windows")]
 unsafe fn run_tray() {
-    // The eframe window is created after this thread starts, so wait for it.
+    // The main window may be created after this thread starts, so wait for it.
     let mut main = 0;
     for _ in 0..100 {
         if let Some(handle) = main_window_handle() {
@@ -426,11 +335,8 @@ fn request_exit() {
     EXIT_REQUESTED.store(true, Ordering::Relaxed);
     if let Some(main) = main_window_handle() {
         unsafe {
-            // A hidden window does not paint, so eframe would never run the
-            // close frame. Show it without stealing focus first; the app then
-            // sees WM_CLOSE, skips CancelClose and shuts down normally (which
-            // saves settings and queue state).
-            ShowWindow(main, SW_SHOWNOACTIVATE);
+            // The window sees WM_CLOSE with the exit flag set and closes
+            // for real (saving settings and the queue), even while hidden.
             PostMessageW(main, WM_CLOSE, 0, 0);
         }
     }
@@ -467,77 +373,6 @@ unsafe fn show_tray_menu(hwnd: isize) {
             let _ = PostMessageW(hwnd, WM_TRAY_EXIT, 0, 0);
         }
         TrayCommand::None => {}
-    }
-}
-
-#[cfg(target_os = "windows")]
-type ComRelease = unsafe extern "system" fn(*mut std::ffi::c_void) -> u32;
-#[cfg(target_os = "windows")]
-type ComHrInit = unsafe extern "system" fn(*mut std::ffi::c_void) -> i32;
-#[cfg(target_os = "windows")]
-type ComTab = unsafe extern "system" fn(*mut std::ffi::c_void, isize) -> i32;
-
-#[cfg(target_os = "windows")]
-const CLSID_TASKBAR_LIST: GUID = GUID {
-    data1: 0x56FD_F344,
-    data2: 0xFD6D,
-    data3: 0x11D0,
-    data4: [0x95, 0x8A, 0x00, 0x60, 0x97, 0xC9, 0xA0, 0x90],
-};
-#[cfg(target_os = "windows")]
-const IID_ITASKBAR_LIST3: GUID = GUID {
-    data1: 0xEA1A_FB91,
-    data2: 0x9E28,
-    data3: 0x4B86,
-    data4: [0x90, 0xE9, 0x9E, 0x9F, 0x8A, 0x5E, 0xEF, 0xAF],
-};
-
-#[cfg(target_os = "windows")]
-unsafe fn taskbar_add_tab(hwnd: isize) {
-    taskbar_tab(hwnd, true);
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn taskbar_delete_tab(hwnd: isize) {
-    taskbar_tab(hwnd, false);
-}
-
-#[cfg(target_os = "windows")]
-unsafe fn taskbar_tab(hwnd: isize, add: bool) {
-    let init_result = CoInitializeEx(std::ptr::null_mut(), COINIT_APARTMENTTHREADED);
-    let initialized = init_result >= 0;
-    let mut object: *mut std::ffi::c_void = std::ptr::null_mut();
-    let created = CoCreateInstance(
-        &CLSID_TASKBAR_LIST,
-        std::ptr::null_mut(),
-        CLSCTX_INPROC_SERVER,
-        &IID_ITASKBAR_LIST3,
-        &mut object,
-    );
-    debug_log(&format!(
-        "taskbar init={init_result:#x} create={created:#x} add={add} object={object:p}"
-    ));
-    if created >= 0 && !object.is_null() {
-        let vtable = *(object as *mut *const usize);
-        let release: ComRelease = std::mem::transmute(*vtable.add(2));
-        let hr_init: ComHrInit = std::mem::transmute(*vtable.add(3));
-        let add_tab: ComTab = std::mem::transmute(*vtable.add(4));
-        let delete_tab: ComTab = std::mem::transmute(*vtable.add(5));
-        let hr = hr_init(object);
-        if hr >= 0 {
-            let result = if add {
-                add_tab(object, hwnd)
-            } else {
-                delete_tab(object, hwnd)
-            };
-            debug_log(&format!("taskbar hr={hr:#x} tab={result:#x}"));
-        } else {
-            debug_log(&format!("taskbar hr_init={hr:#x}"));
-        }
-        release(object);
-    }
-    if initialized {
-        CoUninitialize();
     }
 }
 
@@ -634,25 +469,11 @@ const NIF_INFO: u32 = 0x0000_0010;
 #[cfg(target_os = "windows")]
 const NIIF_INFO: u32 = 0x0000_0001;
 #[cfg(target_os = "windows")]
-const SW_SHOWNORMAL: i32 = 1;
-#[cfg(target_os = "windows")]
-const SW_SHOWMINIMIZED: i32 = 2;
-#[cfg(target_os = "windows")]
-const SW_SHOWMAXIMIZED: i32 = 3;
-#[cfg(target_os = "windows")]
-const SW_SHOWNOACTIVATE: i32 = 4;
-#[cfg(target_os = "windows")]
 const SW_RESTORE: i32 = 9;
 #[cfg(target_os = "windows")]
-const SWP_NOZORDER: u32 = 0x0004;
+const SW_HIDE: i32 = 0;
 #[cfg(target_os = "windows")]
-const SWP_NOACTIVATE: u32 = 0x0010;
-#[cfg(target_os = "windows")]
-const SWP_SHOWWINDOW: u32 = 0x0040;
-#[cfg(target_os = "windows")]
-const COINIT_APARTMENTTHREADED: u32 = 0x2;
-#[cfg(target_os = "windows")]
-const CLSCTX_INPROC_SERVER: u32 = 0x1;
+const SW_SHOW: i32 = 5;
 #[cfg(target_os = "windows")]
 const MF_STRING: u32 = 0x0000_0000;
 #[cfg(target_os = "windows")]
@@ -723,29 +544,6 @@ struct POINT {
 }
 
 #[cfg(target_os = "windows")]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct RECT {
-    left: i32,
-    top: i32,
-    right: i32,
-    bottom: i32,
-}
-
-#[cfg(target_os = "windows")]
-#[allow(non_snake_case)]
-#[repr(C)]
-#[derive(Clone, Copy, Default)]
-struct WINDOWPLACEMENT {
-    length: u32,
-    flags: u32,
-    showCmd: u32,
-    ptMinPosition: POINT,
-    ptMaxPosition: POINT,
-    rcNormalPosition: RECT,
-}
-
-#[cfg(target_os = "windows")]
 #[allow(non_snake_case)]
 #[repr(C)]
 struct MSG {
@@ -783,7 +581,6 @@ unsafe extern "system" {
     fn FindWindowW(class_name: *const u16, window_name: *const u16) -> isize;
     fn GetWindowThreadProcessId(hwnd: isize, pid: *mut u32) -> u32;
     fn ShowWindow(hwnd: isize, command: i32) -> i32;
-    fn IsWindowVisible(hwnd: isize) -> i32;
     fn SetForegroundWindow(hwnd: isize) -> i32;
     fn IsIconic(hwnd: isize) -> i32;
     fn PostMessageW(hwnd: isize, message: u32, wparam: usize, lparam: isize) -> i32;
@@ -810,32 +607,6 @@ unsafe extern "system" {
     fn GetCursorPos(point: *mut POINT) -> i32;
     fn LoadIconW(instance: isize, name: *const u16) -> isize;
     fn GetModuleHandleW(name: *const u16) -> isize;
-    fn GetWindowPlacement(hwnd: isize, placement: *mut WINDOWPLACEMENT) -> i32;
-    fn SetWindowPlacement(hwnd: isize, placement: *const WINDOWPLACEMENT) -> i32;
-    fn GetWindowRect(hwnd: isize, rect: *mut RECT) -> i32;
-    fn SetWindowPos(
-        hwnd: isize,
-        insert_after: isize,
-        x: i32,
-        y: i32,
-        cx: i32,
-        cy: i32,
-        flags: u32,
-    ) -> i32;
-}
-
-#[cfg(target_os = "windows")]
-#[link(name = "ole32")]
-unsafe extern "system" {
-    fn CoInitializeEx(reserved: *mut std::ffi::c_void, coinit: u32) -> i32;
-    fn CoUninitialize();
-    fn CoCreateInstance(
-        clsid: *const GUID,
-        outer: *mut std::ffi::c_void,
-        context: u32,
-        iid: *const GUID,
-        object: *mut *mut std::ffi::c_void,
-    ) -> i32;
 }
 
 #[cfg(target_os = "windows")]

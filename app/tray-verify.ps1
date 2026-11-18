@@ -1,14 +1,25 @@
 # End-to-end check for the native notification-area icon.
-# Run from app/ after `cargo build`. Close any running NewsQueue first.
+# Run from app/ after `cargo build`. Uses a temporary config folder
+# (NQ_CONFIG), so the settings and queue in app\ are not touched. Minimize
+# and close hide the window (SW_HIDE), which also drops its taskbar button.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
 $exe = Join-Path $root 'target\debug\newsqueue.exe'
-$queue = Join-Path $root 'newsqueue-queue.json'
-$settings = Join-Path $root 'newsqueue-settings.json'
 if (-not (Test-Path $exe)) { throw "Build first: $exe is missing" }
-if (Get-Process newsqueue -ErrorAction SilentlyContinue) {
-    throw 'Close the running NewsQueue instance before running this check.'
+if (Get-Process newsqueue -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $exe }) {
+    throw 'Close the running debug NewsQueue before running this check.'
 }
+$config = Join-Path $env:TEMP ('newsqueue-tray-verify-' + [Guid]::NewGuid().ToString('N'))
+New-Item -ItemType Directory -Force $config | Out-Null
+$queue = Join-Path $config 'newsqueue-queue.json'
+$settings = Join-Path $config 'newsqueue-settings.json'
+$cfg = [ordered]@{
+    minimize_to_tray = $true; minimize_to_tray_on_close = $true; tray_balloon = $true; speed_in_tray = $true
+    autosave_minutes = 1; check_version_minutes = 0; startup_connect = $false
+    download_dir = (Join-Path $config 'download'); nzb_dir = (Join-Path $config 'nzb')
+    temp_dir = (Join-Path $config 'temp'); unrar_dir = (Join-Path $config 'unrar')
+}
+[System.IO.File]::WriteAllText($settings, ($cfg | ConvertTo-Json), (New-Object System.Text.UTF8Encoding($false)))
 
 Add-Type @"
 using System;
@@ -57,10 +68,17 @@ function Get-TaskbarButton {
     return $null
 }
 
-function Test-Offscreen([IntPtr]$handle) {
-    $rect = New-Object TrayIconRect
-    [void][TrayTest]::GetWindowRect($handle, [ref]$rect)
-    return ($rect.Left -le -10000 -and $rect.Top -le -10000)
+function Test-Hidden([IntPtr]$handle) {
+    return -not [TrayTest]::IsWindowVisible($handle)
+}
+
+function Find-Own([string]$cls, [string]$title) {
+    $h = if ($cls) { [TrayTest]::FindWindow($cls, $title) } else { [TrayTest]::FindWindowByTitle([IntPtr]::Zero, $title) }
+    if ($h -eq [IntPtr]::Zero) { return [IntPtr]::Zero }
+    $owner = 0
+    [void][TrayTest]::GetWindowThreadProcessId($h, [ref]$owner)
+    if ($owner -ne $proc.Id) { return [IntPtr]::Zero }
+    return $h
 }
 
 $before = if (Test-Path $queue) { (Get-Item $queue).LastWriteTimeUtc } else { [DateTime]::MinValue }
@@ -73,6 +91,7 @@ $psi.FileName = $exe
 $psi.WorkingDirectory = $root
 $psi.UseShellExecute = $false
 $psi.RedirectStandardError = $true
+$psi.EnvironmentVariables['NQ_CONFIG'] = $config
 $psi.EnvironmentVariables['NQ_TRAY_TIP_FILE'] = $tipFile
 $psi.EnvironmentVariables['NQ_TRAY_BALLOON_FILE'] = $balloonFile
 $psi.EnvironmentVariables['NQ_TRAY_FORCE_BALLOON'] = '1'
@@ -85,14 +104,14 @@ try {
     $main = [IntPtr]::Zero
     for ($i = 0; $i -lt 100; $i++) {
         Start-Sleep -Milliseconds 200
-        $main = [TrayTest]::FindWindowByTitle([IntPtr]::Zero, 'NewsQueue 1.0.5')
+        $main = Find-Own $null 'NewsQueue 1.0.5'
         if ($main -ne [IntPtr]::Zero) { break }
     }
     if ($main -eq [IntPtr]::Zero) { throw 'main window not found' }
     $tray = [IntPtr]::Zero
     for ($i = 0; $i -lt 100; $i++) {
         Start-Sleep -Milliseconds 200
-        $tray = [TrayTest]::FindWindow('NewsQueueTrayWindow', 'NewsQueue Tray')
+        $tray = Find-Own 'NewsQueueTrayWindow' 'NewsQueue Tray'
         if ($tray -ne [IntPtr]::Zero) { break }
     }
     if ($tray -eq [IntPtr]::Zero) { throw 'tray window not found (Shell_NotifyIcon failed)' }
@@ -137,45 +156,45 @@ try {
     [void][TrayTest]::GetWindowThreadProcessId($main, [ref]$owner)
     Write-Output "started pid=$($proc.Id) owner=$owner mainVisible=$([TrayTest]::IsWindowVisible($main)) trayWindow=$tray"
 
-    # 1. Minimizing through the titlebar must move the window off-screen,
-    # remove its taskbar entry, and keep App::tick running.
+    # 1. Minimizing hides the window (SW_HIDE), which removes its taskbar
+    # button; the engine keeps running on its own thread.
     $taskbarBefore = Get-TaskbarButton
     Write-Output "taskbar-before='$taskbarBefore'"
     [void][TrayTest]::ShowWindow($main, 6)
     $minimized = $false
     for ($i = 0; $i -lt 50; $i++) {
         Start-Sleep -Milliseconds 200
-        if (Test-Offscreen $main) { $minimized = $true; break }
+        if (Test-Hidden $main) { $minimized = $true; break }
     }
     $taskbarAfter = Get-TaskbarButton
-    Write-Output "after-minimize visible=$([TrayTest]::IsWindowVisible($main)) offscreen=$minimized taskbar='$taskbarAfter'"
-    if (-not $minimized) { throw 'minimize did not move the window off-screen' }
+    Write-Output "after-minimize hidden=$minimized taskbar='$taskbarAfter'"
+    if (-not $minimized) { throw 'minimize did not hide the window to the tray' }
     if ($taskbarBefore -and $taskbarAfter) {
         throw "taskbar entry still present after minimize: $taskbarAfter"
     }
 
-    # App::tick must keep running while off-screen. The 30-second settings
-    # autosave is a simple, observable heartbeat.
-    $saveBefore = if (Test-Path $settings) { (Get-Item $settings).LastWriteTimeUtc } else { [DateTime]::MinValue }
+    # The engine must keep ticking while hidden. The queue autosave (every
+    # minute here) is a simple, observable heartbeat.
+    $saveBefore = if (Test-Path $queue) { (Get-Item $queue).LastWriteTimeUtc } else { [DateTime]::MinValue }
     $tickRunning = $false
-    for ($i = 0; $i -lt 80; $i++) {
+    for ($i = 0; $i -lt 160; $i++) {
         Start-Sleep -Milliseconds 500
-        if (Test-Path $settings) {
-            $saveAfter = (Get-Item $settings).LastWriteTimeUtc
+        if (Test-Path $queue) {
+            $saveAfter = (Get-Item $queue).LastWriteTimeUtc
             if ($saveAfter -gt $saveBefore) { $tickRunning = $true; break }
         }
     }
-    Write-Output "offscreen-tick autosaveUpdated=$tickRunning"
-    if (-not $tickRunning) { throw 'App::tick did not run while the window was off-screen' }
+    Write-Output "hidden-tick autosaveUpdated=$tickRunning"
+    if (-not $tickRunning) { throw 'the engine did not tick while the window was hidden' }
 
     # 2. A left click on the icon restores it (WM_TRAY = WM_APP+1, WM_LBUTTONUP).
     [void][TrayTest]::PostMessage($tray, 0x8001, [IntPtr]::Zero, [IntPtr]0x0202)
     $restored = $false
     for ($i = 0; $i -lt 50; $i++) {
         Start-Sleep -Milliseconds 200
-        if ([TrayTest]::IsWindowVisible($main) -and -not [TrayTest]::IsIconic($main) -and -not (Test-Offscreen $main)) { $restored = $true; break }
+        if ([TrayTest]::IsWindowVisible($main) -and -not [TrayTest]::IsIconic($main)) { $restored = $true; break }
     }
-    Write-Output "after-restore visible=$([TrayTest]::IsWindowVisible($main)) iconic=$([TrayTest]::IsIconic($main)) offscreen=$(Test-Offscreen $main) restored=$restored taskbar='$(Get-TaskbarButton)'"
+    Write-Output "after-restore visible=$([TrayTest]::IsWindowVisible($main)) iconic=$([TrayTest]::IsIconic($main)) restored=$restored taskbar='$(Get-TaskbarButton)'"
     if (-not $restored) { throw 'tray click did not restore the window' }
 
     # 3. Closing hides to the tray instead of exiting.
@@ -183,10 +202,10 @@ try {
     $closedToTray = $false
     for ($i = 0; $i -lt 50; $i++) {
         Start-Sleep -Milliseconds 200
-        if ((Test-Offscreen $main) -and -not $proc.HasExited) { $closedToTray = $true; break }
+        if ((Test-Hidden $main) -and -not $proc.HasExited) { $closedToTray = $true; break }
     }
-    Write-Output "after-close offscreen=$(Test-Offscreen $main) alive=$(-not $proc.HasExited) closeToTray=$closedToTray"
-    if (-not $closedToTray) { throw 'close did not move the window off-screen' }
+    Write-Output "after-close hidden=$(Test-Hidden $main) alive=$(-not $proc.HasExited) closeToTray=$closedToTray"
+    if (-not $closedToTray) { throw 'close did not hide the window to the tray' }
 
     # 4. The tray Exit command exits cleanly (WM_TRAY_EXIT = WM_APP+2).
     [void][TrayTest]::PostMessage($tray, 0x8002, [IntPtr]::Zero, [IntPtr]::Zero)
@@ -203,4 +222,5 @@ try {
     if (-not $proc.HasExited) { $proc.Kill(); $proc.WaitForExit(5000) | Out-Null }
     Remove-Item -LiteralPath $tipFile -Force -ErrorAction SilentlyContinue
     Remove-Item -LiteralPath $balloonFile -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $config -Recurse -Force -ErrorAction SilentlyContinue
 }

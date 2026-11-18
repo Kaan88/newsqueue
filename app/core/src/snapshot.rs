@@ -28,6 +28,11 @@ pub struct QueueRow {
     pub has_password: bool,
     pub expanded: bool,
     pub age_days: f64,
+    pub poster: String,
+    pub execute: String,
+    pub delete_archives: bool,
+    pub posted_on: String,
+    pub unrar_folder: String,
     /// The collection's files, in queue order.
     pub file_rows: Vec<FileRow>,
 }
@@ -36,6 +41,7 @@ pub struct QueueRow {
 pub struct FileRow {
     pub name: String,
     pub bytes: u64,
+    pub parts: u32,
     pub progress: f32,
     /// A PAR2 volume held back until a repair needs it.
     pub held: bool,
@@ -171,12 +177,18 @@ impl Snapshot {
                     has_password: !c.password.is_empty(),
                     expanded: c.expanded,
                     age_days: c.age_days,
+                    poster: c.poster.clone(),
+                    execute: c.execute.clone(),
+                    delete_archives: c.delete_archives,
+                    posted_on: c.posted_on.clone(),
+                    unrar_folder: c.unrar_folder.clone(),
                     file_rows: c
                         .files
                         .iter()
                         .map(|f| FileRow {
                             name: f.name.clone(),
                             bytes: f.bytes,
+                            parts: f.parts,
                             progress: if f.bytes == 0 { 0.0 } else { (f.downloaded / f.bytes as f64).clamp(0.0, 1.0) as f32 },
                             held: f.held,
                             done: f.done,

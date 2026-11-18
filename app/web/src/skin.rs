@@ -113,15 +113,15 @@ pub(crate) fn fonts(defs: &mut egui::FontDefinitions) {
     for (name, bytes) in [
         (
             "IBM Plex Sans",
-            &include_bytes!("../assets/fonts/IBMPlexSans-Regular.ttf")[..],
+            &include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf")[..],
         ),
         (
             "IBM Plex Sans SemiBold",
-            &include_bytes!("../assets/fonts/IBMPlexSans-SemiBold.ttf")[..],
+            &include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf")[..],
         ),
         (
             "IBM Plex Mono",
-            &include_bytes!("../assets/fonts/IBMPlexMono-Regular.ttf")[..],
+            &include_bytes!("../../assets/fonts/IBMPlexMono-Regular.ttf")[..],
         ),
     ] {
         defs.font_data.insert(

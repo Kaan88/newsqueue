@@ -7,21 +7,23 @@ before changing code. `AGENTS.md` contains the short day-to-day command list;
 
 ## 1. What this software is
 
-NewsQueue is a Windows-only, from-scratch Rust/egui clone of AltBinz 0.48.4. It
-is a private-use desktop Usenet downloader, not a source-code or artwork copy of
-the original. **AltBinz parity is no longer a requirement (2026-11-18):** prefer a
-sensible app with useful settings over measured AltBinz behaviour; the
-measurements remain as reference. The UI uses the "Instrument" skin ported
-from Caustica (`app/src/skin.rs`, bundled IBM Plex fonts), in a light and a dark
-variant (setting `ui_theme`: system/light/dark), follows the monitor DPI outside `--screenshot` mode, and
-labels are not text-selectable. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
+NewsQueue is a Windows-only, from-scratch Rust clone of AltBinz 0.48.4 with a
+native Win32 desktop UI. It is a private-use desktop Usenet downloader, not a
+source-code or artwork copy of the original. **AltBinz parity is no longer a
+requirement (2026-11-18):** prefer a sensible app with useful settings over
+measured AltBinz behaviour; the measurements remain as reference. The desktop
+uses the stock Windows look (comctl32 v6, light only, per-monitor DPI v2;
+`--screenshot` renders at 96 DPI). The web UI (`app/web`) is egui compiled to
+WebAssembly with the "Instrument" skin ported from Caustica (`web/src/skin.rs`,
+bundled IBM Plex fonts); **the web UI must stay egui, never hand-written
+HTML.** The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
 - Current app version: **1.0.5**
 - Current build date: **2026-11-18**
 - Parity target: **AltBinz 0.48.4**
 - Platform: Windows x64
-- UI: eframe/egui 0.37 (glow), Instrument skin, light/dark/system theme
+- UI: native Win32 (`windows` 0.61), light only; web UI egui 0.37 (WASM)
 - Network: std threads, blocking sockets, no async runtime
 - Out of scope: global/Newznab search (removed 2026-11-18; the toolbar has no
   Search button and Ctrl+F does nothing)
@@ -34,33 +36,39 @@ build-output file names and carry no label.
 ## 2. Repository layout
 
 Everything that is part of the application lives in `app/`. It is a Cargo
-workspace: `app/` is the desktop package (`newsqueue`, egui + Win32) and
-`app/core` is `newsqueue-core` (engine, no UI/Win32; modules `model`,
-`container`, `download`, `unrar`, `par2`, `rss`), and `app/server` is
-`newsqueue-server` (headless JSON API). Plain `cargo test` in `app/` runs all
-three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
+workspace: `app/` is the desktop package (`newsqueue`, native Win32), `app/core`
+is `newsqueue-core` (engine, no UI/Win32; modules `model`, `container`,
+`download`, `unrar`, `par2`, `rss`), `app/server` is `newsqueue-server` (JSON
+API: a library used by the desktop's Web access plus the headless binary) and
+`app/web` is `newsqueue-web` (egui web UI, `wasm32-unknown-unknown`, built by
+`web/build-web.ps1` into `web/dist`). Plain `cargo test` in `app/` runs the
+first three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 `--config` to a dev server, or it shares the desktop's `app/` files.
 
 | Path | Purpose |
 |---|---|
-| `app/src/main.rs` | `App` state, CLI entry, `App::tick()`, eframe `update`, timers, scheduler, worker start/finish, logging, autosave |
+| `app/src/main.rs` | Native main window: `Ui` state (thread-local), window procs, toolbars, tabs, queue/log/PAR2/RSS ListViews, status bar, custom draw, `refresh()` from the `Snapshot`, engine events, shutdown countdown, Web access, `--screenshot` demo |
+| `app/src/queue.rs` | Pure queue-tree logic: rows (collections + expanded files), cell texts, progress bar kinds, changed-row detection (tested) |
+| `app/src/form.rs` | Dialog framework (`create`, `run_modal`, `show_modeless`, `Ev` handler closures) and control helpers (label/edit/spin/check/combo/listview...) |
+| `app/src/setup.rs` | Modeless Setup: 15 pages from the `FIELDS` table bound to `Settings` JSON, server list + editor, scheduler grid |
+| `app/src/pick.rs` | File/folder pickers (`IFileOpenDialog`/`IFileSaveDialog`) |
+| `app/src/cli.rs` | `--download-test`, `--par2-test`, `--unrar-test`, `--rss-test`, `--rss-download-test`, `--update-test` |
+| `app/src/util.rs` | DPI scaling, fonts, window creation, icons/image lists, `PrintWindow` capture for screenshots |
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
 | `app/core/src/snapshot.rs` | `Snapshot` (secret-free queue/speed/log view) and `EngineHandle` (send `Command`, read snapshot) for other front ends |
 | `app/server/` | `newsqueue-server`: headless engine + JSON API (`tiny_http`), GUI_PLAN Phase 1 slice; `--config`/`NQ_CONFIG`, `--api-key`/`NQ_API_KEY` |
 | `app/core/src/host.rs` | `EngineHost`: engine timer thread; the UI `checkout()`s it per frame and `checkin()`s after |
 | `app/core/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
-| `app/src/ui.rs` | Main window, tabs, queue table, status bar, PAR2/RSS/Log tabs, queue actions |
-| `app/src/dialogs.rs` | 15 setup pages, server editor, stats/columns, password prompt, shutdown, version/update and other modal windows |
+| `app/src/dialogs.rs` | Stats (charts + history), columns, pause-for, speed limit, shutdown, version/update, about, notes, rename, execute, unrar password, RSS feeds; `demo()` for screenshots |
 | `app/core/src/download.rs` | Real NNTP/yEnc downloader: TLS/plain, HTTP CONNECT/SOCKS5, workers, cache, resume, retries |
 | `app/core/src/container.rs` | Container detection from payload bytes (RAR5 volume numbers, RAR4, ZIP, 7Z, PAR2) used to name obfuscated downloads |
 | `app/core/src/par2.rs` | PAR2 verify/repair worker using `app/tools/par2.exe` |
 | `app/core/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
 | `app/core/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
 | `app/src/update.rs` | GitHub release check, verified self-update via the silent installer |
-| `app/src/theme.rs` | App palette (light/dark pairs), theme switching, icon drawing, toolbar/tab/progress widgets |
-| `app/src/skin.rs` | Instrument skin from Caustica: texture-atlas widgets (buttons, fields, checkboxes, menus, windows), IBM Plex fonts, light/dark palette |
-| `app/src/tray.rs` | Win32 tray icon, off-screen hide/show, taskbar add/remove, tooltip, balloons |
+| `app/web/src/skin.rs`, `theme.rs` | Instrument skin and palette of the egui web UI (light/dark) |
+| `app/src/tray.rs` | Win32 tray icon, `SW_HIDE`/show of the main window, tooltip, balloons |
 | `app/src/shutdown.rs` | Queue-drained shutdown/hibernate/sleep/exit plan plus mock backend |
 | `app/tools/` | Vendored `UnRAR.exe`, `par2.exe`, licenses; do not delete |
 | `app/tests/fixtures/` | `tiny.rar`, `single.rar`, `encrypted.rar` fixtures |
@@ -69,9 +77,9 @@ three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/package.ps1` | Builds the portable release folder/zip |
 | `app/build-installer.ps1` | Builds `NewsQueue-<version>-Setup.exe` with Inno Setup 7 (`ISCC.exe`, or `NQ_ISCC`) |
 | `app/installer-test.ps1` | End-to-end install/uninstall test |
-| `app/tray-verify.ps1` | Scripted tray/off-screen/taskbar/tooltip/balloon check |
-| `app/shutdown-verify.ps1` | Scripted off-screen shutdown-countdown check |
-| `app/download-while-tray-verify.ps1` | Mock-NNTP download while off-screen |
+| `app/tray-verify.ps1` | Scripted tray/hide/taskbar/tooltip/balloon check (temp `NQ_CONFIG`) |
+| `app/shutdown-verify.ps1` | Scripted shutdown-countdown check while hidden in the tray |
+| `app/download-while-tray-verify.ps1` | Mock-NNTP download while hidden in the tray |
 | `app/screenshots.ps1` | Regenerates golden screenshots |
 
 Read-only evidence directories: `altbinz_original/`, `capture/`,
@@ -107,26 +115,25 @@ directory. This is why the installed app keeps its settings beside the exe.
 
 ### Application loop
 
-The engine lives in `newsqueue-core` (`engine.rs`). The desktop `App` holds
-`engine: Engine` and implements `Deref`/`DerefMut` to it, so UI code can keep
-using `app.queue`, `app.log(...)` etc. `App::tick` calls `Engine::tick`, then
-turns engine `Event`s (toast, message box, tray balloon, unrar password,
-RSS feeds needed) into UI state, then runs the desktop-only parts: tray,
-updater and shutdown countdown. Engine code must not touch UI state: queue an
-`Event` instead. When two borrows of `app` conflict through `Deref`, borrow
-`app.engine.<field>` directly.
+The engine lives in `newsqueue-core` (`engine.rs`) and runs on its own thread
+(`EngineHost::start`), so it keeps ticking whatever the window does. The
+desktop UI reads the secret-free `Snapshot` through its `EngineHandle` and
+sends `Command`s (`send_cmd`); `with_engine(|e| ...)` checks the engine out
+for the few cases that need it (Setup needs the full settings with secrets,
+logging). Engine code must not touch UI state: queue an `Event` instead;
+`main.rs` drains them in `tick()` (toast, message box, tray balloon, unrar
+password, RSS feeds needed).
 
-`App::new` loads settings, queue, history and stats, creates the eframe state and
-starts optional startup behaviour. `App::update` runs every frame:
-
-1. `handle_tray`
-2. `tick`
-3. handle screenshot/close state
-4. draw UI and dialogs
-
-`App::tick` handles all timers, scheduler, queue start, worker polling, speed,
-statistics, autosaves, RSS timer, auto-import, shutdown countdown and execute
-hooks. If `tick` does not run, downloads, tray speed and shutdown freeze.
+`main()` runs CLI diagnostics (`cli.rs`), creates the window and runs a plain
+`GetMessageW` loop (`pre_translate` for shortcuts, `form::is_dialog_message`
+for modeless dialogs). A 250 ms `WM_TIMER` calls `refresh()`, which redraws only
+the rows whose content changed (`queue::signature`/`changed_ranges`), updates
+the toolbar, status bar and tray, and runs the shutdown countdown and update
+check. UI state lives in a thread-local `RefCell<Ui>` reached through short
+`ui(|u| ...)` borrows: never send a message to a control inside a borrow (its
+window proc may re-enter `ui`). Screenshot mode starts no engine thread; it
+pumps the sample engine with `EngineHost::pump_local` (no tick, so the sample
+stays as it is).
 
 ### Downloader
 
@@ -172,36 +179,45 @@ puts the app into the password-prompt state (`show_unrar_password`,
 on the collection and retries extraction. Cancelling marks the collection `Error`.
 Do not turn this into a blocking modal call from the worker thread.
 
-### Tray and off-screen behaviour
+### Tray
 
-eframe stops calling `tick` when the window is hidden or minimized. NewsQueue
-therefore keeps the window **visible off-screen** and removes its taskbar entry
-with `ITaskbarList3::DeleteTab`; restoring calls `AddTab` and restores the saved
-`WINDOWPLACEMENT`. Do not replace this with `ShowWindow(SW_HIDE)` or normal
-minimize, or downloads/speed/shutdown will freeze.
-
-The tray thread owns the icon and message loop. It uses:
+The engine runs on its own thread, so the window can be hidden normally:
+minimize-to-tray and close-to-tray call `ShowWindow(SW_HIDE)` (which also drops
+the taskbar button) and the tray restores with `SW_SHOW`/`SW_RESTORE`. The tray
+thread owns the icon and message loop and finds the main window by its exact
+title (`NewsQueue 1.0.5`). It uses:
 - `Shell_NotifyIconW` for the icon, tooltip and balloons.
 - `WM_TIMER` for the speed tooltip.
-- COM `ITaskbarList3` for taskbar add/remove.
-- A shared exit flag for tray Exit.
+- A shared exit flag for tray Exit (the main window then closes normally).
 
 `NQ_TRAY_TIP_FILE`, `NQ_TRAY_BALLOON_FILE`, `NQ_TRAY_FORCE_SPEED`,
 `NQ_TRAY_TEST_SPEED_BPS`, `NQ_TRAY_FORCE_BALLOON` and `NQ_TRAY_DEBUG` are
 diagnostic/test hooks used by `tray-verify.ps1`. They have no effect when unset.
 
+### Web access
+
+Setup -> Miscellaneous #3 (`web_access`, `web_access_bind`, `web_access_key`,
+all private settings) starts `newsqueue_server::spawn` inside the desktop app
+on the same `EngineHandle`, serving the JSON API and the egui web UI (`web`
+beside the exe, packaged from `web/dist` when it has been built). A
+non-loopback address needs a password. Turning it off takes effect after a
+restart.
+
 ### Shutdown
 
 `shutdown.rs` exposes `PowerAction::{Shutdown,Hibernate,Sleep,ExitApplication}`,
-inspectable `Plan` values and `ShutdownMode::{Real,Mock}`. Tests use `Mock` so no
-real power command runs. The UI countdown is 15 seconds and can be aborted.
+inspectable `Plan` values, `ShutdownMode::{Real,Mock}` and the testable
+`Countdown` (starts when everything is done, cancels, fires once). Tests use
+`Mock` so no real power command runs. The UI countdown is 15 seconds and can be aborted.
 `NQ_TEST_ARM_SHUTDOWN=exit` is a debug-only test hook used by
 `shutdown-verify.ps1`.
 
 ## 5. Settings structure
 
-The Setup window has 15 pages in the original order (NZB Play and User
-interface #2 were removed, see `REMOVED.md`):
+The Setup window (`setup.rs`) has 15 pages in the original order (NZB Play and
+User interface #2 were removed, see `REMOVED.md`). Plain fields are rows of
+the `FIELDS` table (page, settings key, label, kind); Servers and Scheduler are
+hand-made pages:
 
 Download, Download #2, NZB, NZB #2, Servers, Log, Connection, Proxy, Scheduler,
 Par2, Unpack, Miscellaneous, Miscellaneous #2, Miscellaneous #3,
@@ -271,7 +287,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 109 unit/integration tests currently pass (67 in core, 33 in desktop, 9 in server).
+- 111 unit/integration tests currently pass (78 in core, 21 in desktop, 12 in server).
 - `SETTINGS_CHECKLIST.md` lists every `Settings` field, its Setup page and
   the code that reads it; regenerate/extend it when adding a setting.
 - `download.rs` has a mock NNTP server used for success, missing-article,
@@ -280,17 +296,24 @@ you intend to format; do not claim the check passed unless it was run.
 - `unrar.rs` has fixtures for plain, single-file and encrypted RAR archives.
 - `par2.rs` generates damaged files and a damaged RAR, repairs with `par2.exe`
   and extracts with `UnRAR.exe`.
-- `main.rs` integration tests cover settings, execute hooks, auto-import, shutdown mock behaviour and the unrar password prompt/retry.
+- Desktop tests cover the queue tree (`queue.rs`), the Setup binding table
+  (every key exists, none twice), the shutdown countdown, tray and update
+  logic. Engine behaviour (settings, execute hooks, auto-import, unrar
+  password retry) is tested in `core`.
 - `tray-verify.ps1` checks the tray icon rect, tooltip speed, balloon API result,
-  off-screen minimize, taskbar removal, continued tick/autosave, restore,
-  close-to-tray and tray exit.
-- `shutdown-verify.ps1` checks the 15-second countdown exits while off-screen.
+  minimize to tray (hidden, no taskbar button), continued engine tick (queue
+  autosave), restore, close-to-tray and tray exit.
+- `shutdown-verify.ps1` checks the 15-second countdown exits while hidden.
 - `download-while-tray-verify.ps1` runs a local mock NNTP server and verifies a
-  download completes while the window is off-screen.
+  download completes while the window is hidden in the tray.
+- These three run in a temporary `NQ_CONFIG` folder and never touch `app/*.json`.
 - `installer-test.ps1` installs the setup into a temp folder, checks files,
   registry, shortcuts and installed-exe launch, then uninstalls.
-- `screenshots.ps1` regenerates `shots/golden/` (queue, tabs, every major dialog,
-  shutdown and unrar password prompt).
+- `screenshots.ps1` regenerates `shots/golden/` from the native window (queue,
+  PAR2/Log/RSS tabs, every dialog, three Setup pages). `util::capture` takes
+  the frame with `PrintWindow(PW_RENDERFULLCONTENT)` and the client area with
+  `PW_CLIENTONLY` (DWM's copy can miss controls painted just before); custom
+  painted windows answer `WM_PRINTCLIENT`.
 
 ## 8. Versioning, packaging and releases
 
@@ -348,32 +371,36 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 
 ## 9. Visual/UI conventions
 
-- Measured identity: Microsoft Sans Serif-like UI at roughly 11 px (8.25 pt),
-  main toolbar 55 px high, toolbar buttons 55×53, tab strip ~26 px, status bar
-  21 px, queue secondary toolbar 30 px.
-- Main window default client is 1285×881; original design is 1490×668.
-- Queue columns default from `QUEUE_COLUMN_WIDTHS`; the saved AltBinz config may
-  use a wider subject column.
-- Queue rows use dense 19 px rows, no alternating stripes, gray completed
-  progress bars, 10–11 px text.
-- Setup pages use the original order and a roughly 700×580 window.
-- Queue rows include a transparent `row_click_overlay`; preserve it
-  when editing cells or labels.
-- Keep icons/theme drawn, not copied from the original artwork.
-- Widgets come from `skin.rs` (`skin::button`, `checkbox_label`, `text_edit`,
-  `drag_value`, `ComboBox`, `window`, `context_menu`, …), never egui's stock
-  ones. Colours are functions (`theme::TEXT()`, `skin::PANEL()`) that return the
-  light or dark value; never add a fixed `Color32` for UI chrome. A new look in
-  `skin::spec` needs both variants.
-- eframe 0.37 calls only `App::logic` while the window is minimized/hidden:
-  tray handling, `tick` and exit handling live there, drawing in `App::ui`.
-- Screenshots render dark unless `NQ_DEMO_THEME=light`; `screenshots.ps1`
-  writes `queue-light.png` and `dialog-setup-light.png` too.
+- Stock Windows look: comctl32 v6 controls (manifest `app/newsqueue.manifest`,
+  embedded by `build.rs` with `app.rc`), Segoe UI, light only (no dark mode:
+  the common controls have no complete dark theme). Per-monitor DPI v2; sizes
+  are written at 96 DPI and scaled with `util::s()`.
+- Main toolbar: 32 px icons with text, buttons at least 55x53 and autosized for
+  longer labels; queue toolbar 16 px icon-only with tooltips; status bar with
+  nine panes (limit, speed, sparkline, remaining, ETA, total, free, state,
+  toast).
+- Queue: owner-data ListView; collections with an expand glyph and indented
+  file rows; themed progress bar custom-drawn in the Status column (gray when
+  finished, orange paused, red error); the downloading collection in bold.
+  Columns follow `column_visible`/`column_widths` (Columns dialog).
+- Dialogs use the `form.rs` helpers on the face colour (`COLOR_BTNFACE`).
+  Dialogs have no `WS_CLIPCHILDREN`: group boxes rely on the parent painting
+  behind them. Gray notes (`form::note`) explain settings; keep Setup labels
+  short enough for the 214 px label column.
+- Keep icons drawn, not copied from the original artwork.
+- Screenshot mode (`--screenshot`) shows sample data with `C:\NewsQueue`
+  paths, a sample server at `news.example.net`, demo connections and speed
+  history. `NQ_DEMO_TAB` (par2/log/rss), `NQ_DEMO_DIALOG` (see
+  `dialogs::demo`) and `NQ_DEMO_SETUP_PAGE` (0-14) pick what is captured.
+- The web UI (egui) keeps the Instrument skin: widgets from `web/src/skin.rs`,
+  colours as functions with a light and a dark value.
 
 ## 10. Known gotchas
 
-- Do not hide or minimize the main window normally: eframe stops ticking. Use the
-  off-screen + taskbar-removal path in `tray.rs`.
+- The engine ticks on its own thread; the main window may be hidden or
+  minimized freely (screenshot mode is the exception: no engine thread).
+- `ui(|u| ...)` borrows a `RefCell`: never call `SendMessageW`, open a dialog or
+  call anything that can re-enter a window proc while inside it.
 - Do not add an async runtime. The network and worker code is deliberately
   blocking std threads with channels and mutexes.
 - Do not truncate partial downloads without checking `.nqpart` metadata.
@@ -418,18 +445,22 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 
 Done: downloader, PAR2 core chain, unrar options and password prompt, RSS,
 real statistics/history, version check/self-update,
-tray, off-screen behaviour, shutdown, portable packaging and installer.
+tray, shutdown, portable packaging and installer.
 Also done 2026-11-18: on-demand PAR2, 7z/ZIP, hopeless-job abort + STAT
 pre-check, direct unpack, duplicate check, retry from history, webhook/ntfy
 notifications, per-server quota/retention, pattern-based move, the server
 API follow-ups (SSE, settings/history/log, NZB by URL, login cookie, Ctrl+C
 save, Docker files), the Inno Setup 7 installer and the settings checklist.
+GUI_PLAN is done (2026-11-18): the egui web UI, the native Win32 desktop
+(Phase 2) and Web access from the desktop.
 
 Not done / pending:
 
 - Optional code signing and shortcut polish.
 - Not tried here: building the Docker image (no Docker on this machine) and a
   real self-update round trip from an installed 1.0.5 copy to an Inno setup.
+- `installer-test.ps1` has not been run against the native build (it needs the
+  installed copy's shortcuts and uninstall entry moved aside first).
 
 Blocked on user-supplied data:
 
@@ -448,19 +479,19 @@ block. The downloader output was byte-exact.
 
 ## 12. Where to start for common changes
 
-- New setting: `model.rs` field + default, `dialogs.rs` checkbox/field, actual
-  behaviour in `tick`/worker, test.
-- New queue action: `UiAction`, `ui.rs` menu/button,
-  `main.rs` handler, test.
+- New setting: `model.rs` field + default, a `FIELDS` row in `setup.rs`,
+  actual behaviour in the engine/worker, `SETTINGS_CHECKLIST.md`, test.
+- New queue action: a `Command` in core if the engine changes, the menu or
+  toolbar entry and handler in `main.rs`, test.
 - New network feature: `download.rs`, keep the snapshot/channel pattern.
 - New post-processing: `unrar.rs`/`par2.rs`, keep `UnrarError` classification,
   add a fixture/test.
-- New tray behaviour: `tray.rs`, remember off-screen visible + taskbar removal.
+- New tray behaviour: `tray.rs` (hide with `SW_HIDE`, show with `SW_SHOW`).
 - New shutdown action: `shutdown.rs` plus App countdown/state tests.
-- New setup page: `SETUP_PAGES` and the page match in `dialogs.rs`; preserve the
-  original order.
-- Screenshot/UI change: update `theme.rs`/`ui.rs`, run `screenshots.ps1`, inspect
-  `shots/golden/` for regressions.
+- New setup page: `PAGES` and `FIELDS` in `setup.rs`; preserve the original
+  order.
+- Screenshot/UI change: update `main.rs`/`dialogs.rs`/`setup.rs`, run
+  `screenshots.ps1`, inspect `shots/golden/` for regressions.
 
 Before finishing any task: run the relevant focused test(s), then `cargo test`,
 then `cargo run -- --screenshot shots/now.png`. For tray/installer/post-processing

@@ -1,7 +1,8 @@
 # GUI plan: Windows desktop and Docker web
 
-Status: proposal (2026-11-18). Nothing here is implemented yet. This replaces
-the earlier Win32-only plan.
+Status: **done (2026-11-18)**. All three phases are implemented; the
+sections below keep the plan with a status line each. This replaced the
+earlier Win32-only plan.
 
 ## Goal
 
@@ -27,9 +28,14 @@ control. So the work is: separate the engine, then put a web UI in front of it.
 app/
   core/      newsqueue-core: Engine, download, container, par2, unrar,
              NZB parser, RSS, settings/queue/history/stats. No UI, no Win32.
-  desktop/   newsqueue (Windows): GUI, tray, shutdown, installer, self-update.
-  server/    newsqueue-server: HTTP server + embedded web UI. Docker image.
+  src/       newsqueue (Windows, the root package): native Win32 GUI, tray,
+             shutdown, installer, self-update.
+  server/    newsqueue-server: the JSON API (library + binary). Docker image.
+  web/       newsqueue-web: the egui web UI (WebAssembly).
 ```
+
+(As built, the desktop stayed the root package instead of moving to
+`desktop/`, so the installer, scripts and `newsqueue.exe` name are unchanged.)
 
 A Cargo workspace. `core` builds on Windows and Linux; everything
 Windows-specific (`tray.rs`, `shutdown.rs`, `update.rs`, the installer,
@@ -40,9 +46,8 @@ Windows-specific (`tray.rs`, `shutdown.rs`, `update.rs`, the installer,
 **Status 2026-11-18:** done: the `core` crate; `Engine` with the engine state,
 methods and `tick`; `Event`s instead of UI flag writes; `Command`s via `Engine::apply` (step 3); `EngineHost` ticks the engine on its own thread between frames (step 4); `EngineHandle` sends `Command`s and reads a secret-free `Snapshot` from any thread (step 5); tool lookup on PATH
 (`par2`/`unrar` on Linux); core builds and passes its tests on Debian 13.
-The desktop `App` wraps the engine via `Deref`. Still open: the egui UI
-reads the engine directly rather than the `Snapshot` (after the theme
-redesign), and steps 6–7.
+Steps 6–7 done (tool paths are settings; the engine tests moved to `core`).
+The native desktop reads the `Snapshot` and sends `Command`s.
 
 Today `App` in `main.rs` holds settings, queue, workers, timers, logs, stats
 and dozens of `show_*` dialog flags, and `App::tick` drives everything between
@@ -72,13 +77,12 @@ Win32 imports.
 
 ## Phase 1: Docker web front end
 
-**Status 2026-11-18:** first server slice in `app/server`: `GET /api/health`
-(open), `GET /api/state` (the `Snapshot`), `POST /api/{pause,resume,connect,
-disconnect,cleanup,speed-limit?tag=}`, `POST /api/nzb?name=&paused=` (raw NZB
-body, validated before queueing) and `POST /api/queue/{id}/{pause|resume|
-delete|up|down|top|bottom|unpack|password}`. Auth is an API key (`X-Api-Key`
-or `?apikey=`); non-loopback binds refuse to start without one. Not done:
-SSE, history/log/settings, `/api/nzb/url`, login/cookie, web UI, Docker.
+**Status 2026-11-18: done.** `app/server`: every endpoint below, API key
+(header, query or login cookie), SSE, private settings never sent or
+changed, Ctrl+C/SIGTERM saves. `app/web`: the egui web UI (queue tree with
+drag reorder, history, log, settings, Add NZB, phone layout) in the
+Instrument skin. `Dockerfile` + `compose.yaml` with a smoke test. The API is
+also a library, so the desktop app can serve it (Web access).
 
 Server (`newsqueue-server`):
 
@@ -131,16 +135,22 @@ Testing:
 
 ## Phase 2: Windows desktop front end (native Win32)
 
-**Resumed (2026-11-18), first slice done.** `app/win32` = `newsqueue-win32`
-(workspace member, not a default member; `cargo build -p newsqueue-win32`).
-It drives the engine through `EngineHost`/`EngineHandle` only: toolbar
-(connect, pause, add NZB, clean up, move, unpack, delete), Queue/Log tabs as
-virtual ListViews, custom-drawn progress in the Status column, status bar,
-queue context menu, Delete key, Add NZB (`GetOpenFileNameW`), drag-and-drop,
-`.nzb` paths on the command line, archive-password prompt, save on exit.
-`--config DIR` and `--capture out.png` (`win32/shots/main.png`). No tray, no
-setup dialogs, no collection/file tree yet. The window minimizes normally:
-the engine thread keeps ticking. The original proposal follows.
+**Status 2026-11-18: done.** The desktop app (`app/src`) is native Win32
+through the `windows` crate; eframe/egui/egui_extras/rfd are gone from it.
+`main.rs` (window, toolbars, tabs, queue tree, status bar, tray glue),
+`queue.rs` (pure, tested tree/cell/redraw logic), `form.rs` (dialog
+framework and control helpers), `setup.rs` (the 15 Setup pages from the
+`FIELDS` table, server editor, scheduler grid), `dialogs.rs` (stats, columns,
+pause-for, speed limit, shutdown countdown, version/update, about, notes,
+rename, execute, unrar password, RSS feeds, filter help), `pick.rs`
+(`IFileOpenDialog`/`IFileSaveDialog`). Verified: `download-while-tray-verify.ps1`
+downloads from the mock NNTP server while hidden in the tray,
+`tray-verify.ps1` and `shutdown-verify.ps1` pass, `screenshots.ps1`
+regenerates `shots/golden/` with `PrintWindow`. `installer-test.ps1` was not
+run (it needs the installed copy's shortcuts and uninstall entry out of the
+way); the installer builds. Web access: Setup → Miscellaneous #3 starts the
+`newsqueue-server` API and web UI inside the desktop app. The original
+proposal follows.
 
 The desktop app is rewritten on native Win32. This is required, not an
 experiment: egui is removed from the desktop build at the end of this phase.
