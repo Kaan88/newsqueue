@@ -32,6 +32,7 @@ struct Args {
     bind: Option<String>,
     config: Option<String>,
     api_key: Option<String>,
+    web: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -43,8 +44,9 @@ fn parse_args() -> Result<Args, String> {
             "--bind" => args.bind = Some(value("--bind")?),
             "--config" => args.config = Some(value("--config")?),
             "--api-key" => args.api_key = Some(value("--api-key")?),
+            "--web" => args.web = Some(value("--web")?),
             "-h" | "--help" => {
-                println!("newsqueue-server [--bind {DEFAULT_BIND}] [--config DIR] [--api-key KEY]");
+                println!("newsqueue-server [--bind {DEFAULT_BIND}] [--config DIR] [--api-key KEY] [--web DIR]");
                 std::process::exit(0);
             }
             other => return Err(format!("unknown argument: {other}")),
@@ -100,7 +102,12 @@ fn main() {
     };
     println!("NewsQueue server {VERSION} listening on http://{addr} (config {})", app_base().display());
 
-    let api = Api { handle, api_key };
+    let web_dir = web_dir(args.web);
+    match &web_dir {
+        Some(d) => println!("egui web UI from {}", d.display()),
+        None => println!("no egui web build found (web/build-web.ps1); serving the HTML page at /"),
+    }
+    let api = Api { handle, api_key, web_dir };
     std::thread::Builder::new()
         .name("http".into())
         .spawn(move || {
@@ -131,11 +138,42 @@ fn main() {
 pub struct Api {
     pub handle: EngineHandle,
     pub api_key: Option<String>,
+    /// The egui web build (`index.html` + `pkg/`), if there is one.
+    pub web_dir: Option<PathBuf>,
+}
+
+/// `--web DIR`, else `web` beside the executable, else the dev build in `app/web/dist`.
+fn web_dir(arg: Option<String>) -> Option<PathBuf> {
+    let candidates = [
+        arg.map(PathBuf::from),
+        std::env::current_exe().ok().and_then(|e| e.parent().map(|p| p.join("web"))),
+        Some(PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("..").join("web").join("dist")),
+    ];
+    candidates.into_iter().flatten().find(|d| d.join("index.html").is_file())
+}
+
+/// A file of the web build. Only plain names under the folder; no `..`.
+fn static_file(dir: &std::path::Path, path: &str) -> Option<(Vec<u8>, &'static str)> {
+    let rel = path.trim_start_matches('/');
+    let rel = if rel.is_empty() { "index.html" } else { rel };
+    if rel.split('/').any(|p| p.is_empty() || p == ".." || p.contains(['\\', ':']) || p.contains(':')) {
+        return None;
+    }
+    let ty = match rel.rsplit('.').next()? {
+        "html" => "text/html; charset=utf-8",
+        "js" => "text/javascript; charset=utf-8",
+        "wasm" => "application/wasm",
+        "css" => "text/css",
+        "png" => "image/png",
+        "ico" => "image/x-icon",
+        _ => return None,
+    };
+    std::fs::read(dir.join(rel)).ok().map(|b| (b, ty))
 }
 
 pub struct Reply {
     pub status: u16,
-    pub body: String,
+    pub body: Vec<u8>,
     pub content_type: &'static str,
 }
 
@@ -143,7 +181,7 @@ pub struct Reply {
 pub const INDEX_HTML: &str = include_str!("index.html");
 
 fn json(status: u16, value: serde_json::Value) -> Reply {
-    Reply { status, body: value.to_string(), content_type: "application/json" }
+    Reply { status, body: value.to_string().into_bytes(), content_type: "application/json" }
 }
 
 fn error(status: u16, message: &str) -> Reply {
@@ -216,7 +254,7 @@ impl Api {
         };
         let content_type =
             tiny_http::Header::from_bytes("Content-Type", reply.content_type).expect("header");
-        let response = tiny_http::Response::from_string(reply.body)
+        let response = tiny_http::Response::from_data(reply.body)
             .with_status_code(reply.status)
             .with_header(content_type);
         let _ = request.respond(response);
@@ -227,8 +265,16 @@ impl Api {
     pub fn route(&self, method: &str, url: &str, header_key: Option<&str>, body: &[u8]) -> Reply {
         let (path, query) = url.split_once('?').unwrap_or((url, ""));
         // The page holds no data; it asks for the API key and sends it itself.
-        if method == "GET" && (path == "/" || path == "/index.html") {
-            return Reply { status: 200, body: INDEX_HTML.into(), content_type: "text/html; charset=utf-8" };
+        if method == "GET" && !path.starts_with("/api/") {
+            if path == "/lite" {
+                return Reply { status: 200, body: INDEX_HTML.as_bytes().to_vec(), content_type: "text/html; charset=utf-8" };
+            }
+            if let Some((body, content_type)) = self.web_dir.as_deref().and_then(|d| static_file(d, path)) {
+                return Reply { status: 200, body, content_type };
+            }
+            if path == "/" || path == "/index.html" {
+                return Reply { status: 200, body: INDEX_HTML.as_bytes().to_vec(), content_type: "text/html; charset=utf-8" };
+            }
         }
         if path == "/api/health" {
             return json(200, serde_json::json!({ "ok": true, "version": VERSION }));
@@ -359,7 +405,7 @@ mod tests {
 
     fn demo() -> (EngineHost, Api) {
         let host = EngineHost::new(Engine::new(Settings::default(), true));
-        let api = Api { handle: host.handle(), api_key: Some("k3y".into()) };
+        let api = Api { handle: host.handle(), api_key: Some("k3y".into()), web_dir: None };
         (host, api)
     }
 
@@ -370,6 +416,7 @@ mod tests {
         let page = api.route("GET", "/", None, b"");
         assert_eq!(page.status, 200);
         assert!(page.content_type.starts_with("text/html"));
+        assert_eq!(api.route("GET", "/lite", None, b"").status, 200);
         assert_eq!(api.route("GET", "/api/state", None, b"").status, 401);
         assert_eq!(api.route("GET", "/api/state", Some("nope"), b"").status, 401);
         assert_eq!(api.route("GET", "/api/state", Some("k3y"), b"").status, 200);
@@ -377,12 +424,26 @@ mod tests {
     }
 
     #[test]
+    fn static_files_stay_inside_the_web_folder() {
+        let dir = std::env::temp_dir().join(format!("nq-web-{}", std::process::id()));
+        std::fs::create_dir_all(dir.join("pkg")).unwrap();
+        std::fs::write(dir.join("index.html"), "<html>egui</html>").unwrap();
+        std::fs::write(dir.join("pkg").join("a.wasm"), [0, 97, 115, 109]).unwrap();
+        assert_eq!(static_file(&dir, "/").unwrap().1, "text/html; charset=utf-8");
+        assert_eq!(static_file(&dir, "/pkg/a.wasm").unwrap().1, "application/wasm");
+        assert!(static_file(&dir, "/../secret.html").is_none());
+        assert!(static_file(&dir, "/pkg//a.wasm").is_none());
+        assert!(static_file(&dir, "/newsqueue-settings.json").is_none());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
     fn state_has_the_queue_and_no_secrets() {
         let (_host, api) = demo();
         let r = api.route("GET", "/api/state", Some("k3y"), b"");
-        let v: serde_json::Value = serde_json::from_str(&r.body).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
         assert!(v["queue"].as_array().unwrap().len() >= 3);
-        assert!(!r.body.contains("\"password\""));
+        assert!(!String::from_utf8_lossy(&r.body).contains("\"password\""));
     }
 
     #[test]
