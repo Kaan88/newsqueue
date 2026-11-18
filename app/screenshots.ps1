@@ -12,7 +12,7 @@ function Shot([string]$name) {
 try {
     # cargo reports progress on stderr, which PowerShell 5.1 would treat as an error.
     $ErrorActionPreference = "Continue"
-    cargo build 2>&1 | Out-Null
+    cargo build -p newsqueue 2>&1 | Out-Null
     $ErrorActionPreference = "Stop"
     if ($LASTEXITCODE -ne 0) { throw 'build failed' }
     New-Item -ItemType Directory -Force "shots\golden" | Out-Null

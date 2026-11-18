@@ -304,6 +304,18 @@ impl Api {
             ("POST", ["api", "connect"]) => send(Command::Connect),
             ("POST", ["api", "disconnect"]) => send(Command::Disconnect),
             ("POST", ["api", "cleanup"]) => send(Command::Cleanup),
+            ("POST", ["api", "pause-all"]) => send(Command::PauseAll(true)),
+            ("POST", ["api", "resume-all"]) => send(Command::PauseAll(false)),
+            ("POST", ["api", "pause-for"]) => match query_value(query, "minutes").and_then(|m| m.parse::<u32>().ok()) {
+                Some(m) if m > 0 => send(Command::PauseFor(m)),
+                _ => error(400, "pause-for needs ?minutes=<1..>"),
+            },
+            ("POST", ["api", "rss", "timer"]) => send(Command::SetRssTimer(query_value(query, "on").as_deref() != Some("0"))),
+            ("POST", ["api", "par2", index, "start"]) => match index.parse::<usize>() {
+                Ok(i) if self.handle.read(|s| i < s.par2.len()) => send(Command::StartPar2Set(i)),
+                Ok(_) => error(404, "no such PAR2 set"),
+                Err(_) => error(400, "bad PAR2 index"),
+            },
             ("POST", ["api", "speed-limit"]) => match query_value(query, "tag").as_deref() {
                 None | Some("") | Some("none") => send(Command::SetSpeedLimit(None)),
                 Some(tag) => match tag.parse::<u8>() {
@@ -812,6 +824,11 @@ mod tests {
         assert_eq!(api.route("POST", "/api/history/5/retry", Some("k3y"), b"").status, 404);
         assert_eq!(api.route("POST", "/api/history/x/retry", Some("k3y"), b"").status, 400);
         assert_eq!(api.route("GET", "/api/log", Some("k3y"), b"").status, 200);
+        for path in ["/api/pause-all", "/api/resume-all", "/api/pause-for?minutes=5", "/api/rss/timer?on=1", "/api/par2/0/start"] {
+            assert_eq!(api.route("POST", path, Some("k3y"), b"").status, 202, "{path}");
+        }
+        assert_eq!(api.route("POST", "/api/pause-for", Some("k3y"), b"").status, 400);
+        assert_eq!(api.route("POST", "/api/par2/99/start", Some("k3y"), b"").status, 404);
     }
 
     #[test]

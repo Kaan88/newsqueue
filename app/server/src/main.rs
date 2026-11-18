@@ -111,9 +111,10 @@ fn main() {
         std::process::exit(2);
     }
 
-    let mut host = EngineHost::new(Engine::new(if args.demo { Settings::default() } else { Settings::load() }, args.demo));
+    // --demo shows the screenshot sample as it is: commands run, no ticks.
+    let mut host = EngineHost::new(if args.demo { newsqueue_core::engine::showcase_engine() } else { Engine::new(Settings::load(), false) });
     host.log("Main", &format!("NewsQueue server {VERSION} on {addr}"));
-    host.start(TICK_INTERVAL);
+    host.start_with(TICK_INTERVAL, !args.demo);
     host.checkin();
     let handle = host.handle();
 

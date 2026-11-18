@@ -12,11 +12,14 @@ native Win32 desktop UI. It is a private-use desktop Usenet downloader, not a
 source-code or artwork copy of the original. **AltBinz parity is no longer a
 requirement (2026-11-18):** prefer a sensible app with useful settings over
 measured AltBinz behaviour; the measurements remain as reference. The desktop
-uses the stock Windows look (comctl32 v6, light only, per-monitor DPI v2;
-`--screenshot` renders at 96 DPI). The web UI (`app/web`) is egui compiled to
-WebAssembly with the "Instrument" skin ported from Caustica (`web/src/skin.rs`,
-bundled IBM Plex fonts); **the web UI must stay egui, never hand-written
-HTML.** The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
+has a classic, Windows 2000-style look: comctl32 v6 controls with visual
+styles turned off for the client area (`SetThemeAppProperties`, only the
+title bar stays themed), a menu bar, light only, per-monitor DPI v2;
+`--screenshot` renders at 96 DPI. The web UI (`app/web`) is egui compiled to
+WebAssembly and drawn as a classic Windows 2000 window too (`web/src/skin.rs`
+widgets, `web/src/theme.rs` palette and drawn icons, bundled DejaVu Sans
+fonts, light and dark colours); **the web UI must stay egui, never
+hand-written HTML.** The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
 - Current app version: **1.0.5**
@@ -67,7 +70,7 @@ first three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/core/src/unrar.rs` | UnRAR extraction worker, options, archive-name/group/NZB subfolders, password detection |
 | `app/core/src/rss.rs` | RSS/Atom fetch, filters, NZB autodownload |
 | `app/src/update.rs` | GitHub release check, verified self-update via the silent installer |
-| `app/web/src/skin.rs`, `theme.rs` | Instrument skin and palette of the egui web UI (light/dark) |
+| `app/web/src/skin.rs`, `theme.rs` | Classic (Windows 2000) widgets, palette and drawn icons of the egui web UI (light/dark) |
 | `app/src/tray.rs` | Win32 tray icon, `SW_HIDE`/show of the main window, tooltip, balloons |
 | `app/src/shutdown.rs` | Queue-drained shutdown/hibernate/sleep/exit plan plus mock backend |
 | `app/tools/` | Vendored `UnRAR.exe`, `par2.exe`, licenses; do not delete |
@@ -376,29 +379,44 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 
 ## 9. Visual/UI conventions
 
-- Stock Windows look: comctl32 v6 controls (manifest `app/newsqueue.manifest`,
-  embedded by `build.rs` with `app.rc`), Segoe UI, light only (no dark mode:
-  the common controls have no complete dark theme). Per-monitor DPI v2; sizes
-  are written at 96 DPI and scaled with `util::s()`.
+- Classic look: comctl32 v6 controls (manifest `app/newsqueue.manifest`,
+  embedded by `build.rs` with `app.rc`) with client-area visual styles off
+  (`SetThemeAppProperties(STAP_ALLOW_NONCLIENT)` in `main()`), so controls
+  draw 3D bevels from the system colours; theme APIs (`OpenThemeData`)
+  return null, so custom draw must not rely on them. Segoe UI, light only (no
+  dark mode). Per-monitor DPI v2; sizes are written at 96 DPI and scaled with
+  `util::s()`. The main window has a menu bar (File, Queue, View, Tools,
+  Help; `menu_bar`/`update_menu` in `main.rs`) besides the toolbars; Ctrl+O
+  imports an NZB, Ctrl+S opens Setup.
 - Main toolbar: 32 px icons with text, buttons at least 55x53 and autosized for
   longer labels; queue toolbar 16 px icon-only with tooltips; status bar with
   nine panes (limit, speed, sparkline, remaining, ETA, total, free, state,
   toast).
 - Queue: owner-data ListView; collections with an expand glyph and indented
-  file rows; themed progress bar custom-drawn in the Status column (gray when
-  finished, orange paused, red error); the downloading collection in bold.
+  file rows; a classic sunken progress bar custom-drawn in the Status column
+  (`classic_progress`: highlight colour, orange paused, red error; finished
+  rows show gray text); the downloading collection in bold.
   Columns follow `column_visible`/`column_widths` (Columns dialog).
 - Dialogs use the `form.rs` helpers on the face colour (`COLOR_BTNFACE`).
   Dialogs have no `WS_CLIPCHILDREN`: group boxes rely on the parent painting
   behind them. Gray notes (`form::note`) explain settings; keep Setup labels
   short enough for the 214 px label column.
 - Keep icons drawn, not copied from the original artwork.
-- Screenshot mode (`--screenshot`) shows sample data with `C:\NewsQueue`
+- Screenshot mode (`--screenshot`) shows sample data
+  (`newsqueue_core::engine::showcase_engine`, also used by
+  `newsqueue-server --demo`, which then does not tick) with `C:\NewsQueue`
   paths, a sample server at `news.example.net`, demo connections and speed
   history. `NQ_DEMO_TAB` (par2/log/rss), `NQ_DEMO_DIALOG` (see
   `dialogs::demo`) and `NQ_DEMO_SETUP_PAGE` (0-14) pick what is captured.
-- The web UI (egui) keeps the Instrument skin: widgets from `web/src/skin.rs`,
-  colours as functions with a light and a dark value.
+- The web UI (egui) is a classic desktop window: menu bar, toolbar with a
+  gripper, tabs (Download queue, History, PAR2, Log, RSS), sunken list views
+  with resizable headers (`skin::Columns`, widths kept in localStorage),
+  status bar panes and modal dialogs with a gradient caption
+  (`skin::dialog`; buttons right to left, Cancel added before OK). Options is
+  a modal property sheet (`settings.rs`). Use the `skin.rs` widgets, never
+  stock egui ones; colours are functions with a light and a dark value
+  (View > Dark colors). Below 720 points wide it switches to a phone layout.
+  Try it with `.claude/launch.json` `web-demo` (`newsqueue-server --demo`).
 
 ## 10. Known gotchas
 

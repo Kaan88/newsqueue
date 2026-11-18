@@ -101,6 +101,12 @@ impl EngineHost {
     /// Starts the timer thread. The engine stays checked out until the next
     /// [`checkin`](Self::checkin).
     pub fn start(&mut self, interval: Duration) {
+        self.start_with(interval, true);
+    }
+
+    /// Like [`start`](Self::start); with `tick` false the thread only runs
+    /// commands, so a showcase engine keeps its sample state.
+    pub fn start_with(&mut self, interval: Duration, tick: bool) {
         if self.thread.is_some() {
             return;
         }
@@ -114,7 +120,7 @@ impl EngineHost {
                     while !stop.load(Ordering::Relaxed) {
                         if let Ok(mut slot) = shared.lock() {
                             if let Some(engine) = slot.as_mut() {
-                                pump.run(engine, true);
+                                pump.run(engine, tick);
                             }
                         }
                         std::thread::sleep(interval);

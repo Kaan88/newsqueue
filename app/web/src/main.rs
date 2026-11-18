@@ -2,17 +2,12 @@
 //!
 //! Compiled to WebAssembly and served by `newsqueue-server` at `/`. It holds
 //! no engine: it polls `GET /api/state` (the secret-free `Snapshot`) and
-//! sends actions to the JSON API. The look is the desktop's Instrument skin;
-//! `skin.rs` and `theme.rs` (the Instrument skin) came from the egui desktop.
+//! sends actions to the JSON API. The look is a classic Windows 2000 desktop
+//! window (`skin.rs` draws the widgets, `theme.rs` the palette and icons).
 #![allow(dead_code)]
 
 mod skin;
 mod theme;
-/// The two constants `theme.rs` takes from the core model.
-mod model {
-    pub const TOOLBAR_BUTTON_WIDTH: f32 = 55.0;
-    pub const TOOLBAR_BUTTON_HEIGHT: f32 = 53.0;
-}
 mod app;
 mod net;
 mod settings;

@@ -65,6 +65,11 @@ const ID_ABOUT: i32 = 111;
 const ID_NOTES: i32 = 112;
 const ID_STATS: i32 = 113;
 const ID_TRAY: i32 = 114;
+const ID_EXIT: i32 = 115;
+const ID_SPEED: i32 = 116;
+/// View menu: one per tab, ID_VIEW_TAB + index.
+const ID_VIEW_TAB: i32 = 400;
+const ID_VIEW_CONNS: i32 = 410;
 // Queue toolbar and context menu.
 const ID_RESUME: i32 = 200;
 const ID_HOLD: i32 = 201;
@@ -241,6 +246,9 @@ fn main() {
             dwICC: ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_UPDOWN_CLASS | ICC_TAB_CLASSES | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES,
         };
         let _ = InitCommonControlsEx(&icc);
+        // The classic look: 3D bevelled controls drawn from the system
+        // colours (comctl32 v6 features stay); only the title bar is themed.
+        SetThemeAppProperties(SET_THEME_APP_PROPERTIES_FLAGS(1) /* STAP_ALLOW_NONCLIENT */);
     }
     if demo && std::env::var("NQ_DPI").is_err() {
         // Goldens are rendered at 100 % whatever the monitor.
@@ -347,57 +355,7 @@ pub fn start_web_access(on: bool, bind: &str, key: &str) {
 
 /// Sample queue, log, PAR2 and RSS data for screenshots, with neutral paths.
 fn demo_engine() -> Engine {
-    let mut settings = Settings::default();
-    settings.servers[0].name = "Primary provider".into();
-    settings.servers[0].address = "news.example.net".into();
-    settings.servers[0].username = "demo-user".into();
-    settings.servers[0].password = "secret".into();
-    settings.servers[0].connections = 20;
-    settings.servers[0].enabled = true;
-    settings.max_speed_kbps = 12_500.0;
-    settings.max_speed_mbps = 100.0;
-    let mut engine = Engine::new(settings, true);
-    let base = app_base().to_string_lossy().to_string();
-    let fix = |p: &mut String| {
-        if p.starts_with(&base) {
-            *p = format!(r"C:\NewsQueue{}", &p[base.len()..]);
-        }
-    };
-    for p in [&mut engine.settings.download_dir, &mut engine.settings.nzb_dir, &mut engine.settings.temp_dir, &mut engine.settings.unrar_dir] {
-        fix(p);
-    }
-    for c in &mut engine.queue {
-        fix(&mut c.folder);
-        fix(&mut c.unrar_folder);
-    }
-    // One collection downloading, one paused part-way, as in real use.
-    for (c, status, frac) in engine.queue.iter_mut().skip(1).zip([(ItemStatus::Downloading, 0.63), (ItemStatus::Paused, 0.38)]).map(|(c, (s, f))| (c, s, f)) {
-        c.status = status;
-        c.downloaded = c.total_bytes as f64 * frac;
-        let n = c.files.len() as f64;
-        for (i, f) in c.files.iter_mut().enumerate() {
-            let share = (frac * n - i as f64).clamp(0.0, 1.0);
-            f.downloaded = f.bytes as f64 * share;
-            f.done = share >= 1.0;
-        }
-    }
-    let subject = engine.queue.iter().find(|c| c.status == ItemStatus::Downloading).map(|c| c.subject.clone()).unwrap_or_default();
-    engine.threads = [
-        ("Download", format!("{subject}.part03.rar  [412/1024]"), "Downloading", "news.example.net"),
-        ("Download", format!("{subject}.part03.rar  [413/1024]"), "Downloading", "news.example.net"),
-        ("Download", format!("{subject}.part04.rar  [88/1024]"), "Downloading", "news.example.net"),
-        ("Download", format!("{subject}.part04.rar  [89/1024]"), "Downloading", "backup.example.org"),
-        ("Idle", String::new(), "Connected", "backup.example.org"),
-    ]
-    .into_iter()
-    .enumerate()
-    .map(|(i, (a, d, st, srv))| model::ThreadRow { number: i as u32 + 1, action: a.into(), description: d, status: st.into(), server: srv.into() })
-    .collect();
-    engine.speed_history = (0..120).map(|i| (4.6 + 0.35 * ((i as f32) * 0.31).sin() + 0.15 * ((i as f32) * 0.9).cos()) * 1024.0 * 1024.0).collect();
-    engine.speed_bps = 4.82 * 1024.0 * 1024.0;
-    engine.connected = true;
-    engine.free_gb = 412.33;
-    engine
+    newsqueue_core::engine::showcase_engine()
 }
 
 fn take_screenshot(main: HWND, path: &str) -> i32 {
@@ -474,7 +432,8 @@ fn toolbar(parent: HWND, size: i32, items: &[Option<Tb>], text: bool) -> HWND {
     let tb = mkpx(
         "ToolbarWindow32",
         "",
-        sty!(CHILD, WS_CLIPSIBLINGS, TBSTYLE_FLAT, TBSTYLE_TOOLTIPS, CCS_NODIVIDER, CCS_NOPARENTALIGN, CCS_NORESIZE),
+        // The main toolbar keeps the etched divider under the menu bar.
+        sty!(CHILD, WS_CLIPSIBLINGS, TBSTYLE_FLAT, TBSTYLE_TOOLTIPS, CCS_NOPARENTALIGN, CCS_NORESIZE) | if text { 0 } else { sty!(CCS_NODIVIDER) },
         0,
         0,
         0,
@@ -537,6 +496,7 @@ fn create_main() -> HWND {
         let y = wa.top + ((wa.bottom - wa.top) - oh).max(0) / 2;
         let main = mkpx("NewsQueueMain", &format!("{APP_NAME} {VERSION}"), style, WS_EX_ACCEPTFILES.0, x, y, ow, oh, None, 0);
         DragAcceptFiles(main, true);
+        let _ = SetMenu(main, Some(menu_bar()));
         let tb = toolbar(
             main,
             32,
@@ -700,6 +660,99 @@ fn create_main() -> HWND {
         select_tab(0);
         layout(main);
         main
+    }
+}
+
+/// The menu bar: every toolbar and queue action, with its shortcut.
+fn menu_bar() -> HMENU {
+    type Item = (i32, &'static str);
+    const SEP: Item = (0, "");
+    let menus: [(&str, &[Item]); 5] = [
+        ("&File", &[(ID_NZB, "&Import NZB files...\tCtrl+O"), (ID_DOWNLOAD, "Open &download folder"), SEP, (ID_TRAY, "Minimize to &tray"), (ID_EXIT, "E&xit")]),
+        (
+            "&Queue",
+            &[
+                (ID_CONNECT, "&Connected"),
+                (ID_PAUSE, "&Pause downloading\tF1"),
+                (ID_PAUSEFOR, "Pause &for..."),
+                (ID_SPEED, "Speed &limit..."),
+                SEP,
+                (ID_RESUME, "&Resume selected\tCtrl+D"),
+                (ID_HOLD, "P&ause selected\tCtrl+P"),
+                (ID_RESUME_ALL, "Resume a&ll"),
+                (ID_PAUSE_ALL, "Pause all"),
+                SEP,
+                (ID_TOP, "Move to &top"),
+                (ID_UP, "Move &up\tCtrl+Up"),
+                (ID_DOWN, "Move do&wn\tCtrl+Down"),
+                (ID_BOTTOM, "Move to &bottom"),
+                SEP,
+                (ID_RENAME, "Re&name..."),
+                (ID_PASSWORD, "Archive pass&word..."),
+                (ID_EXPORT, "&Export NZB...\tCtrl+E"),
+                (ID_UNPACK, "Unpac&k now"),
+                SEP,
+                (ID_DELETE, "&Delete\tDel"),
+                (ID_CLEANUP, "&Clean up finished"),
+            ],
+        ),
+        (
+            "&View",
+            &[
+                (ID_VIEW_TAB, "Download &queue"),
+                (ID_VIEW_TAB + 1, "&PAR2"),
+                (ID_VIEW_TAB + 2, "&Log"),
+                (ID_VIEW_TAB + 3, "&RSS"),
+                SEP,
+                (ID_VIEW_CONNS, "&Connections panel\tF9"),
+                (ID_EXPAND_ALL, "&Expand all"),
+                (ID_COLLAPSE_ALL, "C&ollapse all"),
+                (ID_COLUMNS, "Colu&mns..."),
+                SEP,
+                (ID_STATS, "&Statistics..."),
+                (ID_NOTES, "&Notes..."),
+            ],
+        ),
+        ("&Tools", &[(ID_SETUP, "&Setup...\tCtrl+S"), (ID_RSS_FEEDS, "&RSS feeds..."), SEP, (ID_SCHEDULER, "Use the s&cheduler"), (ID_SHUTDOWN, "Shut &down when done...")]),
+        ("&Help", &[(ID_HOME, "&Home page"), (ID_VERSION, "Check for &updates..."), SEP, (ID_ABOUT, "&About NewsQueue")]),
+    ];
+    unsafe {
+        let bar = CreateMenu().unwrap_or_default();
+        for (title, items) in menus {
+            let popup = CreatePopupMenu().unwrap_or_default();
+            for (id, text) in items {
+                if *id == 0 {
+                    let _ = AppendMenuW(popup, MF_SEPARATOR, 0, PCWSTR::null());
+                } else {
+                    let z = wz(text);
+                    let _ = AppendMenuW(popup, MF_STRING, *id as usize, PCWSTR(z.as_ptr()));
+                }
+            }
+            let z = wz(title);
+            let _ = AppendMenuW(bar, MF_POPUP, popup.0 as usize, PCWSTR(z.as_ptr()));
+        }
+        bar
+    }
+}
+
+/// Ticks and greys the menu items as the queue and settings stand now.
+fn update_menu(menu: HMENU) {
+    let (connected, paused, has_sel, tab) = ui(|u| (u.snap.connected, u.snap.paused, u.sel.is_some(), current_tab()));
+    let checks = [
+        (ID_CONNECT, connected),
+        (ID_PAUSE, paused),
+        (ID_SCHEDULER, setting_bool("scheduler_enabled")),
+        (ID_SHUTDOWN, ui(|u| u.countdown.armed)),
+        (ID_VIEW_CONNS, setting_bool("thread_list_visible")),
+    ];
+    unsafe {
+        for (id, on) in checks {
+            CheckMenuItem(menu, id as u32, (MF_BYCOMMAND | if on { MF_CHECKED } else { MF_UNCHECKED }).0);
+        }
+        let _ = CheckMenuRadioItem(menu, ID_VIEW_TAB as u32, ID_VIEW_TAB as u32 + 3, ID_VIEW_TAB as u32 + tab as u32, MF_BYCOMMAND.0);
+        for id in [ID_RESUME, ID_HOLD, ID_TOP, ID_UP, ID_DOWN, ID_BOTTOM, ID_RENAME, ID_PASSWORD, ID_EXPORT, ID_UNPACK, ID_DELETE] {
+            let _ = EnableMenuItem(menu, id as u32, MF_BYCOMMAND | if has_sel { MF_ENABLED } else { MF_GRAYED });
+        }
     }
 }
 
@@ -1117,6 +1170,8 @@ fn pre_translate(msg: &MSG) -> bool {
         (VK_UP, true) => ID_UP,
         (VK_DOWN, true) => ID_DOWN,
         (VK_E, true) => ID_EXPORT,
+        (VK_O, true) => ID_NZB,
+        (VK_S, true) => ID_SETUP,
         (VK_DELETE, false) if msg.hwnd == ui(|u| u.queue) => ID_DELETE,
         _ => return false,
     };
@@ -1163,6 +1218,10 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
             if lp.0 == 0 || code == BN_CLICKED {
                 command(id);
             }
+            LRESULT(0)
+        }
+        WM_INITMENUPOPUP => {
+            update_menu(HMENU(wp.0 as *mut c_void));
             LRESULT(0)
         }
         WM_NOTIFY => notify(h, lp),
@@ -1497,44 +1556,28 @@ unsafe fn queue_draw(lp: LPARAM, queue: HWND) -> LRESULT {
     let mut rc = RECT { left: LVIR_BOUNDS as i32, top: sub as i32, right: 0, bottom: 0 };
     send(queue, LVM_GETSUBITEMRECT, row, &mut rc as *mut _ as isize);
     let sel = send(queue, LVM_GETITEMSTATE, row, LVIS_SELECTED.0 as isize) != 0;
-    FillRect(dc, &rc, GetSysColorBrush(COLOR_WINDOW));
-    if sel {
-        let th = OpenThemeData(Some(queue), w!("Explorer::ListView"));
-        if th.0 != 0 {
-            let _ = DrawThemeBackground(th, dc, 1, if GetFocus() == queue { 3 } else { 5 }, &rc, None);
-            let _ = CloseThemeData(th);
-        }
-    }
+    // The row's selection colour behind the bar, as the list draws it.
+    let focused = GetFocus() == queue;
+    let ground = if sel && focused { COLOR_HIGHLIGHT } else if sel { COLOR_BTNFACE } else { COLOR_WINDOW };
+    FillRect(dc, &rc, GetSysColorBrush(ground));
     let inset = if matches!(r, Row::File(..)) { 4 } else { 2 };
     let bar = RECT { left: rc.left + s(3), top: rc.top + s(inset), right: rc.right - s(3), bottom: rc.bottom - s(inset) };
     let fill_right = bar.left + 1 + (((bar.right - bar.left - 2) as f32) * pct) as i32;
-    let th = OpenThemeData(Some(queue), w!("PROGRESS"));
-    if th.0 != 0 {
-        let _ = DrawThemeBackground(th, dc, 1 /* PP_BAR */, 0, &bar, None);
-        let inner = RECT { left: bar.left + 1, top: bar.top + 1, right: fill_right, bottom: bar.bottom - 1 };
-        if inner.right > inner.left {
-            if kind == Bar::Done {
-                let g = CreateSolidBrush(rgb(176, 180, 186));
-                FillRect(dc, &inner, g);
-                let _ = DeleteObject(g.into());
-            } else {
-                let state = match kind {
-                    Bar::Paused => 3,
-                    Bar::Error => 2,
-                    _ => 1,
-                };
-                let _ = DrawThemeBackground(th, dc, 5 /* PP_FILL */, state, &inner, None);
-            }
-        }
-        let _ = CloseThemeData(th);
-    }
-    // The text over the fill is white, the rest black.
     SetBkMode(dc, TRANSPARENT);
     let old = SelectObject(dc, font().into());
     let mut t = wz(&text);
     t.pop();
-    let fill_col = if kind == Bar::Done { rgb(0, 0, 0) } else { rgb(255, 255, 255) };
-    for (l, rr, col) in [(bar.left, fill_right, fill_col), (fill_right, bar.right, rgb(0, 0, 0))] {
+    if kind == Bar::Done {
+        // Finished rows show their state as plain text, like the other columns.
+        let mut tr = RECT { left: rc.left + s(6), top: rc.top, right: rc.right - s(4), bottom: rc.bottom };
+        SetTextColor(dc, if sel && focused { COLORREF(GetSysColor(COLOR_HIGHLIGHTTEXT)) } else { rgb(120, 120, 120) });
+        DrawTextW(dc, &mut t, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+        SelectObject(dc, old);
+        return LRESULT(CDRF_SKIPDEFAULT as isize);
+    }
+    classic_progress(dc, bar, fill_right, kind);
+    // The text over the fill is white, the rest black.
+    for (l, rr, col) in [(bar.left, fill_right, rgb(255, 255, 255)), (fill_right, bar.right, rgb(0, 0, 0))] {
         if rr <= l {
             continue;
         }
@@ -1547,6 +1590,25 @@ unsafe fn queue_draw(lp: LPARAM, queue: HWND) -> LRESULT {
     }
     SelectObject(dc, old);
     LRESULT(CDRF_SKIPDEFAULT as isize)
+}
+
+/// A classic smooth progress bar: a sunken white well and a solid fill.
+unsafe fn classic_progress(dc: HDC, bar: RECT, fill_right: i32, kind: Bar) {
+    let mut well = bar;
+    FillRect(dc, &well, GetSysColorBrush(COLOR_WINDOW));
+    let _ = DrawEdge(dc, &mut well, BDR_SUNKENOUTER, BF_RECT);
+    let inner = RECT { left: bar.left + 1, top: bar.top + 1, right: fill_right.min(bar.right - 1), bottom: bar.bottom - 1 };
+    if inner.right <= inner.left {
+        return;
+    }
+    let fill = match kind {
+        Bar::Paused => rgb(204, 120, 0),
+        Bar::Error => rgb(192, 32, 32),
+        _ => COLORREF(GetSysColor(COLOR_HIGHLIGHT)),
+    };
+    let brush = CreateSolidBrush(fill);
+    FillRect(dc, &inner, brush);
+    let _ = DeleteObject(brush.into());
 }
 
 /// Log lines coloured by area: errors red, warnings orange.
@@ -1686,6 +1748,15 @@ fn command(id: i32) {
         ID_RESUME_ALL => send_cmd(Command::PauseAll(false)),
         ID_PAUSE_ALL => send_cmd(Command::PauseAll(true)),
         ID_COLUMNS => dialogs::columns(main),
+        ID_EXIT => {
+            ui(|u| u.exit_now = true);
+            unsafe {
+                let _ = PostMessageW(Some(main), WM_CLOSE, WPARAM(0), LPARAM(0));
+            }
+        }
+        ID_SPEED => dialogs::speed_limit(main),
+        ID_VIEW_CONNS => send_cmd(Command::MergeSettings(serde_json::json!({ "thread_list_visible": !setting_bool("thread_list_visible") }))),
+        i if (ID_VIEW_TAB..ID_VIEW_TAB + 4).contains(&i) => select_tab((i - ID_VIEW_TAB) as usize),
         ID_P2_START | ID_P2_REMOVE | ID_P2_UP | ID_P2_DOWN => {
             let lv = ui(|u| u.par2);
             let Some(i) = form::lv_selected(lv) else { return };

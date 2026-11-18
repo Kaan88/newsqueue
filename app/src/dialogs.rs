@@ -238,8 +238,9 @@ pub fn about(owner: HWND) {
 fn build_notes(owner: HWND) -> HWND {
     let d = form::create(Some(owner), "Notes", 480, 420, false);
     let text = with_engine(|e| e.settings.notes.clone());
-    let m = form::memo(d, 10, &text, 12, 12, 456, 350);
+    let m = form::memo(d, 10, &text, 12, 12, 456, 342);
     send(m, WM_SETFONT, mono().0 as usize, 1);
+    form::hline(d, 12, 366, 456);
     form::button(d, IDOK_, "Save", 302, 378, 80);
     form::button(d, IDCANCEL_, "Cancel", 388, 378, 80);
     d
@@ -488,7 +489,7 @@ unsafe fn paint_chart(h: HWND, dc: HDC) {
         SetTextColor(mem, COLORREF(GetSysColor(COLOR_GRAYTEXT)));
         DrawTextW(mem, &mut z, &mut r, flags | DT_SINGLELINE | DT_NOPREFIX);
     };
-    let grid = CreatePen(PS_SOLID, 1, rgb(232, 232, 236));
+    let grid = CreatePen(PS_SOLID, 1, rgb(0xEC, 0xEA, 0xE6));
     let op = SelectObject(mem, grid.into());
     for k in 0..=4 {
         let y = area.top + (area.bottom - area.top) * k / 4;
@@ -510,24 +511,34 @@ unsafe fn paint_chart(h: HWND, dc: HDC) {
             let n = values.len().max(1) as i32;
             let max = values.iter().cloned().fold(1.0f64, f64::max);
             let bw = (area.right - area.left) / n;
-            let fill = CreateSolidBrush(rgb(0x2D, 0x6C, 0xDF));
+            // Classic bars: selection navy with a light left and a dark right edge.
+            let fill = CreateSolidBrush(rgb(0x0A, 0x24, 0x6A));
+            let lit = CreateSolidBrush(rgb(0x6A, 0x84, 0xC8));
+            let dark = CreateSolidBrush(rgb(0x04, 0x10, 0x30));
             for (i, v) in values.iter().enumerate() {
                 let x = area.left + i as i32 * bw;
                 let hgt = ((v / max) * (area.bottom - area.top) as f64) as i32;
                 let bar = RECT { left: x + s(3), top: area.bottom - hgt, right: x + bw - s(3), bottom: area.bottom };
                 FillRect(mem, &bar, fill);
+                if hgt > 1 && bar.right - bar.left > 3 {
+                    FillRect(mem, &RECT { right: bar.left + 1, ..bar }, lit);
+                    FillRect(mem, &RECT { top: bar.top, left: bar.left, right: bar.right, bottom: bar.top + 1 }, lit);
+                    FillRect(mem, &RECT { left: bar.right - 1, ..bar }, dark);
+                }
                 if tab == 1 || i % 2 == 0 {
                     text(&labels[i], x + bw / 2, area.bottom + s(6), DT_CENTER);
                 }
             }
             let _ = DeleteObject(fill.into());
+            let _ = DeleteObject(lit.into());
+            let _ = DeleteObject(dark.into());
             text(&format!("{} per {} (max {:.0} MB)", "MB", if tab == 0 { "hour, today" } else { "month, this year" }, max), area.left, rc.top + s(6), DT_LEFT);
         }
         _ => {
             let data = &stats.speed_history;
             let max = data.iter().cloned().fold(1.0f32, f32::max);
             if data.len() > 1 {
-                let pen = CreatePen(PS_SOLID, s(2), rgb(46, 155, 62));
+                let pen = CreatePen(PS_SOLID, s(2), rgb(0x00, 0x80, 0x00));
                 let op = SelectObject(mem, pen.into());
                 let n = data.len() as i32;
                 for (i, v) in data.iter().enumerate() {
@@ -546,7 +557,7 @@ unsafe fn paint_chart(h: HWND, dc: HDC) {
             text("now", area.right - s(30), area.bottom + s(6), DT_CENTER);
         }
     }
-    let axis = CreatePen(PS_SOLID, 1, rgb(160, 160, 166));
+    let axis = CreatePen(PS_SOLID, 1, rgb(0x80, 0x80, 0x80));
     let op = SelectObject(mem, axis.into());
     let _ = MoveToEx(mem, area.left, area.top, None);
     let _ = LineTo(mem, area.left, area.bottom);

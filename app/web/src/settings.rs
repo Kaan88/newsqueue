@@ -1,12 +1,15 @@
-//! The Settings tab: the engine's public settings grouped in pages, plus
+//! The Options dialog: the engine's public settings grouped in pages, plus
 //! the server list and RSS feeds (their own endpoints, passwords hidden).
 
 use crate::net::{self, Client};
-use crate::{skin, theme};
-use egui::{RichText, TextEdit, Ui, vec2};
+use crate::skin::{self, Edge};
+use crate::theme::{self, BODY, FACE, GRAY_TEXT, Icon, SEL, SEL_TEXT, TEXT, WINDOW};
+use egui::{Align2, Rect, Sense, TextEdit, Ui, pos2, vec2};
 use serde_json::{Map, Value};
 
-pub const PAGES: [&str; 8] = ["Servers", "Folders", "Download", "Connection", "PAR2 & unpack", "Scheduler", "RSS", "Log & history"];
+pub const PAGES: [&str; 8] = ["Servers", "Folders", "Download", "Connection", "PAR2 & unpack", "Scheduler", "RSS feeds", "Log & history"];
+const PAGE_ICONS: [Icon; 8] = [Icon::Connect, Icon::Folder, Icon::Nzb, Icon::Link, Icon::Par2, Icon::PauseFor, Icon::Rss, Icon::Log];
+pub const RSS_PAGE: usize = 6;
 
 /// How one setting is edited.
 enum Kind {
@@ -15,7 +18,6 @@ enum Kind {
     Text,
     Long,
     Choice(&'static [(&'static str, &'static str)]),
-    Level(&'static [&'static str]),
 }
 
 use Kind::*;
@@ -102,8 +104,11 @@ fn fields(page: usize) -> Vec<(&'static str, &'static str, Kind, &'static str)> 
     }
 }
 
+
 const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const SLOTS: usize = 48;
+/// Height of the page area inside the dialog.
+const PAGE_H: f32 = 400.0;
 
 #[derive(Default)]
 pub struct SettingsPage {
@@ -114,6 +119,7 @@ pub struct SettingsPage {
     base: Map<String, Value>,
     servers: Option<Vec<Value>>,
     servers_base: Vec<Value>,
+    server_sel: usize,
     rss: Option<Vec<String>>,
     rss_base: Vec<String>,
     asked_servers: bool,
@@ -122,34 +128,27 @@ pub struct SettingsPage {
     paint: Option<bool>,
 }
 
-fn label_cell(ui: &mut Ui, label: &str, hint: &str, width: f32) {
-    let (rect, resp) = ui.allocate_exact_size(vec2(width, 26.0), egui::Sense::hover());
-    ui.painter().with_clip_rect(rect).text(
-        egui::pos2(rect.left(), rect.center().y),
-        egui::Align2::LEFT_CENTER,
-        label,
-        skin::sans(13.0),
-        theme::TEXT(),
-    );
-    if !hint.is_empty() {
-        resp.on_hover_text(hint);
-    }
-}
-
 impl SettingsPage {
+    /// Forget the drafts, so the dialog opens on what the server has now.
+    pub fn reset(&mut self) {
+        let page = self.page;
+        *self = Self { page, ..Self::default() };
+    }
+
     pub fn dirty(&self) -> bool {
         self.draft.as_ref().is_some_and(|d| *d != self.base)
             || self.servers.as_ref().is_some_and(|s| *s != self.servers_base)
             || self.rss.as_ref().is_some_and(|r| *r != self.rss_base)
     }
 
-    pub fn ui(&mut self, ui: &mut Ui, client: &Client, snap: &net::Snapshot, narrow: bool) {
-        let ctx = ui.ctx().clone();
+    /// Shows the dialog; true when it should close.
+    pub fn dialog(&mut self, ctx: &egui::Context, client: &Client, snap: &net::Snapshot, narrow: bool) -> bool {
         // Take what the server sent.
         {
             let mut s = net::lock(&client.shared);
             if let Some(list) = s.servers.take() {
                 self.servers_base = list.clone();
+                self.server_sel = self.server_sel.min(list.len().saturating_sub(1));
                 self.servers = Some(list);
             }
             if let Some(list) = s.rss.take() {
@@ -158,96 +157,115 @@ impl SettingsPage {
             }
         }
         if self.draft.is_none() {
-            if let Some(map) = snap.settings.as_object() {
+            if let Some(map) = snap.settings.as_object().filter(|m| !m.is_empty()) {
                 self.base = map.clone();
                 self.draft = Some(map.clone());
             }
         }
         if !self.asked_servers {
             self.asked_servers = true;
-            client.load_servers(&ctx);
+            client.load_servers(ctx);
         }
         if !self.asked_rss {
             self.asked_rss = true;
-            client.load_rss(&ctx);
+            client.load_rss(ctx);
         }
-
-        // Footer with Save / Revert.
-        egui::Panel::bottom("settings_footer")
-            .exact_size(44.0)
-            .frame(egui::Frame::NONE.fill(theme::BG()))
-            .show(ui, |ui| {
-                ui.painter().line_segment([ui.max_rect().left_top(), ui.max_rect().right_top()], egui::Stroke::new(1.0, theme::BORDER()));
-                ui.horizontal_centered(|ui| {
-                    ui.add_space(12.0);
-                    let dirty = self.dirty();
-                    if ui.add_enabled_ui(dirty, |ui| skin::button(ui, "Save")).inner.clicked() {
-                        self.save(client, &ctx);
-                    }
-                    if ui.add_enabled_ui(dirty, |ui| skin::button(ui, "Revert")).inner.clicked() {
-                        self.draft = Some(self.base.clone());
-                        self.servers = Some(self.servers_base.clone());
-                        self.rss = Some(self.rss_base.clone());
-                    }
-                    ui.add_space(8.0);
-                    let note = if dirty { "Unsaved changes" } else { "Saved on the server" };
-                    ui.label(RichText::new(note).color(theme::TEXT_MUTED()).font(skin::sans(12.0)));
-                });
-            });
-
-        if narrow {
-            egui::Panel::top("settings_pages")
-                .exact_size(40.0)
-                .frame(egui::Frame::NONE.fill(theme::BG()).inner_margin(egui::Margin::symmetric(10, 6)))
-                .show(ui, |ui| {
-                    skin::ComboBox::from_id_salt("settings_page_combo")
-                        .selected_text(PAGES[self.page])
-                        .width(ui.available_width())
-                        .show_ui(ui, |ui| {
-                            for (i, name) in PAGES.iter().enumerate() {
-                                skin::selectable_value(ui, &mut self.page, i, *name);
+        let mut close = false;
+        let width = if narrow { ctx.content_rect().width() } else { 680.0 };
+        let page_h = if narrow { (ctx.content_rect().height() - 150.0).clamp(220.0, PAGE_H) } else { PAGE_H };
+        let (_, x) = skin::dialog(ctx, "options", "Options", width, |ui| {
+            if narrow {
+                ui.horizontal(|ui| {
+                    skin::label(ui, "Page:");
+                    let w = ui.available_width();
+                    if let Some(Some(i)) = skin::combo(ui, "options-page", PAGES[self.page], w, |ui| {
+                        let mut pick = None;
+                        for (i, name) in PAGES.iter().enumerate() {
+                            if skin::list_item(ui, self.page == i, name).clicked() {
+                                pick = Some(i);
                             }
-                        });
+                        }
+                        pick
+                    }) {
+                        self.page = i;
+                    }
                 });
-        } else {
-            egui::Panel::left("settings_pages")
-                .exact_size(190.0)
-                .resizable(false)
-                .frame(egui::Frame::NONE.fill(theme::PANEL_WHITE()).inner_margin(egui::Margin::symmetric(6, 8)))
-                .show(ui, |ui| {
-                    ui.painter().line_segment([ui.max_rect().right_top(), ui.max_rect().right_bottom()], egui::Stroke::new(1.0, theme::BORDER()));
-                    skin::heading(ui, "Settings");
+                self.page_ui(ui, client, ctx, page_h, narrow);
+            } else {
+                ui.horizontal_top(|ui| {
+                    self.page_list(ui, page_h);
                     ui.add_space(4.0);
-                    for (i, name) in PAGES.iter().enumerate() {
-                        if skin::selectable(ui, self.page == i, *name).clicked() {
-                            self.page = i;
-                        }
-                    }
+                    ui.vertical(|ui| self.page_ui(ui, client, ctx, page_h, narrow));
                 });
-        }
+            }
+            skin::dialog_buttons(ui, |ui| {
+                let dirty = self.dirty();
+                if ui.add_enabled_ui(dirty, |ui| skin::button(ui, "Apply")).inner.clicked() {
+                    self.save(client, ctx);
+                }
+                if skin::button(ui, "Cancel").clicked() {
+                    close = true;
+                }
+                if skin::default_button(ui, "OK").clicked() {
+                    self.save(client, ctx);
+                    close = true;
+                }
+                if dirty {
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| skin::note(ui, "Changes are not saved yet."));
+                }
+            });
+        });
+        close || x
+    }
 
-        egui::CentralPanel::default()
-            .frame(egui::Frame::NONE.fill(theme::BG()).inner_margin(egui::Margin::symmetric(if narrow { 12 } else { 20 }, 14)))
+    /// The list of pages on the left, like a property sheet's tree.
+    fn page_list(&mut self, ui: &mut Ui, height: f32) {
+        let (rect, _) = ui.allocate_exact_size(vec2(150.0, height), Sense::hover());
+        ui.painter().rect_filled(rect, 0.0, WINDOW());
+        skin::edge(ui.painter(), rect, Edge::Sunken);
+        for (i, name) in PAGES.iter().enumerate() {
+            let r = Rect::from_min_size(pos2(rect.left() + 2.0, rect.top() + 3.0 + i as f32 * 22.0), vec2(rect.width() - 4.0, 22.0));
+            let resp = ui.interact(r, ui.scope_id().with(("optpage", i)), Sense::click());
+            let tw = skin::text_width(ui, name, theme::font(BODY));
+            let p = ui.painter();
+            theme::paint_icon(p, Rect::from_min_size(pos2(r.left() + 4.0, r.center().y - 8.0), vec2(16.0, 16.0)), PAGE_ICONS[i], true);
+            let tr = Rect::from_min_size(pos2(r.left() + 24.0, r.top() + 2.0), vec2(tw + 6.0, r.height() - 4.0));
+            let sel = self.page == i;
+            if sel {
+                p.rect_filled(tr, 0.0, SEL());
+            }
+            p.text(pos2(tr.left() + 3.0, r.center().y), Align2::LEFT_CENTER, *name, theme::font(BODY), if sel { SEL_TEXT() } else { TEXT() });
+            if resp.clicked() {
+                self.page = i;
+            }
+        }
+    }
+
+    fn page_ui(&mut self, ui: &mut Ui, client: &Client, ctx: &egui::Context, height: f32, narrow: bool) {
+        // A heading band like a property page title.
+        let (band, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+        skin::gradient(ui.painter(), band, theme::CAPTION_A(), FACE());
+        ui.painter().text(pos2(band.left() + 6.0, band.center().y), Align2::LEFT_CENTER, PAGES[self.page], theme::bold(BODY), egui::Color32::WHITE);
+        egui::ScrollArea::vertical()
+            .id_salt(("options-scroll", self.page))
+            .max_height(height - 28.0)
+            .min_scrolled_height(height - 28.0)
+            .auto_shrink([false, false])
             .show(ui, |ui| {
-                egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
-                    ui.label(RichText::new(PAGES[self.page]).font(theme::semibold(16.0)).color(theme::TEXT_GROUP()));
-                    ui.add_space(10.0);
-                    match self.page {
-                        0 => self.servers_ui(ui, narrow),
-                        5 => {
-                            self.fields_ui(ui, narrow);
-                            ui.add_space(8.0);
-                            self.scheduler_ui(ui);
-                        }
-                        6 => {
-                            self.rss_ui(ui, client, &ctx);
-                            ui.add_space(12.0);
-                            self.fields_ui(ui, narrow);
-                        }
-                        _ => self.fields_ui(ui, narrow),
+                ui.set_width(ui.available_width() - 4.0);
+                ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
+                match self.page {
+                    0 => self.servers_ui(ui, narrow),
+                    5 => {
+                        self.fields_ui(ui, narrow);
+                        skin::group(ui, "Download hours", |ui| self.scheduler_ui(ui));
                     }
-                    ui.add_space(20.0);
-                });
+                    6 => {
+                        self.rss_ui(ui, client, ctx);
+                        skin::group(ui, "Fetching", |ui| self.fields_ui(ui, narrow));
+                    }
+                    _ => self.fields_ui(ui, narrow),
+                }
             });
     }
 
@@ -257,7 +275,7 @@ impl SettingsPage {
                 draft.iter().filter(|(k, v)| self.base.get(*k) != Some(*v)).map(|(k, v)| (k.clone(), v.clone())).collect();
             if !changed.is_empty() {
                 let body = serde_json::to_vec(&Value::Object(changed)).unwrap_or_default();
-                client.post(ctx, "/api/settings", body, Some("Settings saved".into()));
+                client.post(ctx, "/api/settings", body, Some("Options saved".into()));
                 self.base = draft.clone();
             }
         }
@@ -266,6 +284,7 @@ impl SettingsPage {
                 let body = serde_json::to_vec(servers).unwrap_or_default();
                 client.post(ctx, "/api/servers", body, Some("Servers saved".into()));
                 // Re-read them, so indices and "password set" are current.
+                self.servers_base = servers.clone();
                 self.asked_servers = false;
             }
         }
@@ -280,194 +299,235 @@ impl SettingsPage {
 
     fn fields_ui(&mut self, ui: &mut Ui, narrow: bool) {
         let Some(draft) = self.draft.as_mut() else {
-            ui.label(RichText::new("Waiting for the server…").color(theme::TEXT_MUTED()));
+            skin::note(ui, "Waiting for the server...");
             return;
         };
-        let label_w = if narrow { ui.available_width() } else { 250.0 };
-        let field_w = if narrow { ui.available_width() - 4.0 } else { (ui.available_width() - label_w - 12.0).clamp(160.0, 420.0) };
+        let label_w = if narrow { 0.0 } else { 220.0 };
+        let field_w = if narrow { ui.available_width() } else { (ui.available_width() - label_w - 8.0).clamp(140.0, 300.0) };
         for (key, label, kind, hint) in fields(self.page) {
             let Some(value) = draft.get_mut(key) else { continue };
-            let changed = self.base.get(key) != Some(value);
-            let mut row = |ui: &mut Ui| match &kind {
+            match &kind {
                 Check => {
                     let mut on = value.as_bool().unwrap_or(false);
-                    let r = skin::checkbox_label(ui, &mut on, label);
+                    let r = skin::checkbox(ui, &mut on, label);
                     if !hint.is_empty() {
                         r.on_hover_text(hint);
                     }
                     *value = Value::Bool(on);
                 }
-                _ => {
-                    if narrow {
-                        ui.label(RichText::new(label).color(theme::TEXT()));
-                    } else {
-                        label_cell(ui, label, hint, label_w);
-                    }
+                _ if narrow => {
+                    skin::label(ui, &format!("{label}:"));
                     edit_value(ui, value, &kind, field_w, key);
-                }
-            };
-            if narrow && !matches!(kind, Check) {
-                ui.vertical(|ui| row(ui));
-            } else {
-                ui.horizontal(|ui| {
-                    row(ui);
-                    if changed {
-                        ui.label(RichText::new("•").color(theme::ACCENT()));
+                    if !hint.is_empty() {
+                        skin::note(ui, hint);
                     }
-                });
+                }
+                _ => {
+                    ui.horizontal_top(|ui| {
+                        row_label(ui, label, label_w);
+                        ui.vertical(|ui| {
+                            ui.spacing_mut().item_spacing.y = 1.0;
+                            edit_value(ui, value, &kind, field_w, key);
+                            if !hint.is_empty() {
+                                skin::note(ui, hint);
+                            }
+                        });
+                    });
+                }
             }
-            if narrow && !hint.is_empty() && !matches!(kind, Check) {
-                ui.label(RichText::new(hint).font(skin::sans(11.5)).color(theme::TEXT_MUTED()));
-            }
-            ui.add_space(if narrow { 8.0 } else { 3.0 });
         }
     }
 
     fn servers_ui(&mut self, ui: &mut Ui, narrow: bool) {
         let Some(servers) = self.servers.as_mut() else {
-            ui.label(RichText::new("Loading servers…").color(theme::TEXT_MUTED()));
+            skin::note(ui, "Loading servers...");
             return;
         };
-        ui.label(
-            RichText::new("Passwords are never sent to this page. Leave the field empty to keep the stored one.")
-                .color(theme::TEXT_MUTED())
-                .font(skin::sans(12.0)),
-        );
-        ui.add_space(8.0);
-        let mut remove = None;
-        let width = ui.available_width().min(640.0);
-        for (i, server) in servers.iter_mut().enumerate() {
-            skin::panel_frame().inner_margin(egui::Margin::same(12)).show(ui, |ui| {
-                ui.set_width(width - 26.0);
-                ui.horizontal(|ui| {
-                    let name = server["name"].as_str().unwrap_or("").to_string();
-                    let address = server["address"].as_str().unwrap_or("").to_string();
-                    let title = if name.is_empty() { address.clone() } else { name };
-                    ui.label(RichText::new(if title.is_empty() { "New server".into() } else { title }).font(theme::semibold(14.0)));
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        if skin::button(ui, "Remove").clicked() {
-                            remove = Some(i);
-                        }
-                        let mut on = server["enabled"].as_bool().unwrap_or(true);
-                        if skin::checkbox_label(ui, &mut on, "Enabled").changed() {
-                            server["enabled"] = on.into();
-                        }
-                    });
-                });
-                ui.add_space(6.0);
-                let lw = if narrow { 0.0 } else { 120.0 };
-                let fw = if narrow { ui.available_width() } else { (ui.available_width() - lw - 8.0).max(120.0) };
-                server_text(ui, server, "name", "Name", false, narrow, lw, fw);
-                server_text(ui, server, "address", "Address", false, narrow, lw, fw);
-                for (key, label, max, suffix) in [
-                    ("port", "Port", 65535.0, ""),
-                    ("connections", "Connections", 100.0, ""),
-                    ("level", "Priority", 9.0, ""),
-                    ("max_age", "Retention", 10000.0, " days"),
-                    ("quota_gb", "Monthly quota", 100000.0, " GB"),
-                ] {
-                    ui.horizontal(|ui| {
-                        label_cell(ui, label, "", if narrow { 110.0 } else { lw });
-                        let mut v = server[key].as_f64().unwrap_or(0.0);
-                        if skin::drag_value(ui, egui::DragValue::new(&mut v).range(0.0..=max).suffix(suffix)).changed() {
-                            server[key] = (v.round() as u64).into();
-                        }
-                    });
+        // The list and its buttons.
+        let mut add = false;
+        let mut remove = false;
+        let sel_now = self.server_sel;
+        let mut clicked = None;
+        ui.horizontal_top(|ui| {
+            let w = ui.available_width() - 90.0;
+            let (rect, _) = ui.allocate_exact_size(vec2(w, 94.0), Sense::hover());
+            ui.painter().rect_filled(rect, 0.0, WINDOW());
+            skin::edge(ui.painter(), rect, Edge::Sunken);
+            if servers.is_empty() {
+                ui.painter().text(rect.center(), Align2::CENTER_CENTER, "No servers. Add one.", theme::font(BODY), GRAY_TEXT());
+            }
+            for (i, s) in servers.iter().enumerate() {
+                let r = Rect::from_min_size(pos2(rect.left() + 2.0, rect.top() + 2.0 + i as f32 * 18.0), vec2(rect.width() - 4.0, 18.0));
+                if r.bottom() > rect.bottom() {
+                    break;
                 }
-                ui.horizontal(|ui| {
-                    let mut ssl = server["ssl"].as_bool().unwrap_or(true);
-                    if skin::checkbox_label(ui, &mut ssl, "TLS").changed() {
-                        server["ssl"] = ssl.into();
-                    }
-                    let mut auth = server["auth"].as_bool().unwrap_or(true);
-                    if skin::checkbox_label(ui, &mut auth, "Login").changed() {
-                        server["auth"] = auth.into();
-                    }
-                });
-                if server["auth"].as_bool().unwrap_or(true) {
-                    server_text(ui, server, "username", "Username", false, narrow, lw, fw);
-                    server_text(ui, server, "password", "Password", true, narrow, lw, fw);
+                let resp = ui.interact(r, ui.scope_id().with(("srv", i)), Sense::click());
+                let sel = sel_now == i;
+                let p = ui.painter();
+                if sel {
+                    p.rect_filled(r, 0.0, SEL());
                 }
-                if let Some(used) = server["used_bytes"].as_f64().filter(|u| *u > 0.0) {
-                    ui.label(
-                        RichText::new(format!("Used this month: {}", crate::app::size(used)))
-                            .font(skin::sans(11.5))
-                            .color(theme::TEXT_MUTED()),
-                    );
+                let enabled = s["enabled"].as_bool().unwrap_or(true);
+                theme::paint_icon(p, Rect::from_min_size(pos2(r.left() + 2.0, r.center().y - 8.0), vec2(16.0, 16.0)), Icon::Connect, enabled);
+                let name = s["name"].as_str().filter(|n| !n.is_empty()).or(s["address"].as_str()).filter(|n| !n.is_empty()).unwrap_or("New server");
+                let text = format!(
+                    "{name}  ({}:{}, {} connections{})",
+                    s["address"].as_str().unwrap_or(""),
+                    s["port"].as_u64().unwrap_or(0),
+                    s["connections"].as_u64().unwrap_or(0),
+                    if enabled { "" } else { ", off" }
+                );
+                let color = if sel { SEL_TEXT() } else if enabled { TEXT() } else { GRAY_TEXT() };
+                p.with_clip_rect(r).text(pos2(r.left() + 22.0, r.center().y), Align2::LEFT_CENTER, text, theme::font(BODY), color);
+                if resp.clicked() {
+                    clicked = Some(i);
+                }
+            }
+            ui.vertical(|ui| {
+                if skin::button_w(ui, "Add", 84.0).clicked() {
+                    add = true;
+                }
+                if ui.add_enabled_ui(!servers.is_empty(), |ui| skin::button_w(ui, "Remove", 84.0)).inner.clicked() {
+                    remove = true;
                 }
             });
-            ui.add_space(10.0);
+        });
+        if let Some(i) = clicked {
+            self.server_sel = i;
         }
-        if let Some(i) = remove {
-            servers.remove(i);
-            // Later servers keep pointing at their own stored passwords.
-        }
-        if skin::button(ui, "Add server").clicked() {
+        if add {
             servers.push(serde_json::json!({
                 "name": "", "address": "", "port": 563, "connections": 8, "ssl": true,
                 "auth": true, "username": "", "password": "", "enabled": true, "level": 0,
                 "max_age": 0, "quota_gb": 0
             }));
+            self.server_sel = servers.len() - 1;
         }
+        if remove && self.server_sel < servers.len() {
+            // Later servers keep pointing at their own stored passwords.
+            servers.remove(self.server_sel);
+            self.server_sel = self.server_sel.min(servers.len().saturating_sub(1));
+        }
+        let Some(server) = servers.get_mut(self.server_sel) else { return };
+        let lw = if narrow { 96.0 } else { 120.0 };
+        skin::group(ui, "Server", |ui| {
+            let fw = (ui.available_width() - lw - 8.0).max(100.0);
+            let mut on = server["enabled"].as_bool().unwrap_or(true);
+            if skin::checkbox(ui, &mut on, "Use this server").changed() {
+                server["enabled"] = on.into();
+            }
+            server_text(ui, server, "name", "Name", false, lw, fw);
+            server_text(ui, server, "address", "Address", false, lw, fw);
+            for (key, label, max, unit) in [
+                ("port", "Port", 65535.0, ""),
+                ("connections", "Connections", 100.0, ""),
+                ("level", "Priority", 9.0, "0 = main, higher = backup"),
+                ("max_age", "Retention", 10000.0, "days (0 = unknown)"),
+                ("quota_gb", "Monthly quota", 100000.0, "GB (0 = none)"),
+            ] {
+                ui.horizontal(|ui| {
+                    row_label(ui, label, lw);
+                    let mut v = server[key].as_f64().unwrap_or(0.0);
+                    if skin::spin(ui, ("srv", key), &mut v, 0.0, max, 0, 80.0).changed() {
+                        server[key] = (v.round() as u64).into();
+                    }
+                    if !unit.is_empty() {
+                        skin::label(ui, unit);
+                    }
+                });
+            }
+            let mut ssl = server["ssl"].as_bool().unwrap_or(true);
+            if skin::checkbox(ui, &mut ssl, "Secure connection (TLS)").changed() {
+                server["ssl"] = ssl.into();
+            }
+            if let Some(used) = server["used_bytes"].as_f64().filter(|u| *u > 0.0) {
+                skin::note(ui, &format!("Used this month: {}", crate::app::size(used)));
+            }
+        });
+        skin::group(ui, "Login", |ui| {
+            let fw = (ui.available_width() - lw - 8.0).max(100.0);
+            let mut auth = server["auth"].as_bool().unwrap_or(true);
+            if skin::checkbox(ui, &mut auth, "The server needs a login").changed() {
+                server["auth"] = auth.into();
+            }
+            ui.add_enabled_ui(auth, |ui| {
+                server_text(ui, server, "username", "User name", false, lw, fw);
+                server_text(ui, server, "password", "Password", true, lw, fw);
+            });
+            skin::note(ui, "Passwords are never sent to this page. Leave the field empty to keep the stored one.");
+        });
     }
 
     fn rss_ui(&mut self, ui: &mut Ui, client: &Client, ctx: &egui::Context) {
         let Some(feeds) = self.rss.as_mut() else {
-            ui.label(RichText::new("Loading feeds…").color(theme::TEXT_MUTED()));
+            skin::note(ui, "Loading feeds...");
             return;
         };
-        skin::heading(ui, "Feeds");
-        ui.add_space(4.0);
-        let width = (ui.available_width() - 90.0).clamp(160.0, 620.0);
         let mut remove = None;
-        for (i, url) in feeds.iter_mut().enumerate() {
+        let mut add = false;
+        skin::group(ui, "Feeds", |ui| {
+            if feeds.is_empty() {
+                skin::note(ui, "No feeds yet.");
+            }
+            for (i, url) in feeds.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    let w = ui.available_width() - 84.0;
+                    skin::field(ui, w, 1, TextEdit::singleline(url).hint_text("https://.../rss"));
+                    if skin::button_w(ui, "Remove", 78.0).clicked() {
+                        remove = Some(i);
+                    }
+                });
+            }
             ui.horizontal(|ui| {
-                skin::text_edit(ui, width, TextEdit::singleline(url).hint_text("https://…"));
-                if skin::button(ui, "Remove").clicked() {
-                    remove = Some(i);
+                if skin::button_w(ui, "Add feed", 84.0).clicked() {
+                    add = true;
+                }
+                if skin::button_w(ui, "Refresh now", 90.0).clicked() {
+                    client.post(ctx, "/api/rss/refresh", vec![], Some("RSS refresh started".into()));
                 }
             });
-        }
+        });
         if let Some(i) = remove {
             feeds.remove(i);
         }
-        ui.horizontal(|ui| {
-            if skin::button(ui, "Add feed").clicked() {
-                feeds.push(String::new());
-            }
-            if skin::button(ui, "Refresh now").clicked() {
-                client.post(ctx, "/api/rss/refresh", vec![], Some("RSS refresh started".into()));
-            }
-        });
+        if add {
+            feeds.push(String::new());
+        }
     }
 
-    /// 7 × 48 half-hour cells; click or drag to paint.
+    /// 7 x 48 half-hour cells; click or drag to paint.
     fn scheduler_ui(&mut self, ui: &mut Ui) {
         let Some(draft) = self.draft.as_mut() else { return };
         let Some(days) = draft.get_mut("scheduler").and_then(|v| v.as_array_mut()) else { return };
-        let label_w = 38.0;
-        let cell = ((ui.available_width() - label_w - 4.0) / SLOTS as f32).clamp(5.0, 14.0);
-        let h = 20.0;
+        let label_w = 34.0;
+        let cell = ((ui.available_width() - label_w - 6.0) / SLOTS as f32).floor().clamp(5.0, 12.0);
+        let h = 16.0;
+        let grid_w = cell * SLOTS as f32;
         // Hour ruler.
-        let (ruler, _) = ui.allocate_exact_size(vec2(label_w + cell * SLOTS as f32, 14.0), egui::Sense::hover());
+        let (ruler, _) = ui.allocate_exact_size(vec2(label_w + grid_w, 14.0), Sense::hover());
         for hour in (0..24).step_by(if cell < 8.0 { 6 } else { 3 }) {
-            let x = ruler.left() + label_w + hour as f32 * 2.0 * cell;
-            ui.painter().text(egui::pos2(x, ruler.center().y), egui::Align2::LEFT_CENTER, format!("{hour}"), skin::sans(10.5), theme::TEXT_MUTED());
+            let x = ruler.left() + label_w + 2.0 + hour as f32 * 2.0 * cell;
+            ui.painter().text(pos2(x, ruler.center().y), Align2::LEFT_CENTER, format!("{hour}"), theme::font(theme::SMALL), TEXT());
         }
         let pointer_down = ui.input(|i| i.pointer.primary_down());
         if !pointer_down {
             self.paint = None;
         }
+        let top = ui.cursor().top();
+        let grid = Rect::from_min_size(pos2(ruler.left() + label_w, top), vec2(grid_w + 4.0, h * 7.0 + 4.0));
+        ui.painter().rect_filled(grid, 0.0, WINDOW());
+        skin::edge(ui.painter(), grid, Edge::Sunken);
+        ui.spacing_mut().item_spacing.y = 0.0;
+        ui.add_space(2.0);
         for (d, day) in days.iter_mut().enumerate() {
             let mut bits: Vec<u8> = day.as_str().unwrap_or("").bytes().collect();
             bits.resize(SLOTS, b'1');
-            let (rect, _) = ui.allocate_exact_size(vec2(label_w + cell * SLOTS as f32, h), egui::Sense::hover());
-            ui.painter().text(egui::pos2(rect.left(), rect.center().y), egui::Align2::LEFT_CENTER, DAYS[d], skin::sans(12.0), theme::TEXT());
+            let (rect, _) = ui.allocate_exact_size(vec2(label_w + grid_w + 4.0, h), Sense::hover());
+            ui.painter().text(pos2(rect.left(), rect.center().y), Align2::LEFT_CENTER, DAYS[d], theme::font(BODY), TEXT());
             let mut changed = false;
             for (slot, bit) in bits.iter_mut().enumerate() {
-                let r = egui::Rect::from_min_size(egui::pos2(rect.left() + label_w + slot as f32 * cell, rect.top() + 1.0), vec2(cell - 1.0, h - 2.0));
-                let id = ui.scope_id().with(("sched", d, slot));
-                let resp = ui.interact(r, id, egui::Sense::click_and_drag());
+                let r = Rect::from_min_size(pos2(rect.left() + label_w + 2.0 + slot as f32 * cell, rect.top()), vec2(cell, h));
+                let resp = ui.interact(r, ui.scope_id().with(("sched", d, slot)), Sense::click_and_drag());
                 let on = *bit == b'1';
                 let hovered = ui.input(|i| i.pointer.interact_pos()).is_some_and(|p| r.contains(p));
                 if resp.drag_started() || resp.clicked() || (resp.is_pointer_button_down_on() && self.paint.is_none()) {
@@ -479,40 +539,54 @@ impl SettingsPage {
                         changed = true;
                     }
                 }
-                let fill = if *bit == b'1' { theme::GREEN() } else { theme::BG_ACTIVE() };
-                ui.painter().rect_filled(r, 1.5, fill);
+                let p = ui.painter();
+                if *bit == b'1' {
+                    p.rect_filled(r, 0.0, theme::GREEN());
+                }
+                // Grid lines: every hour darker.
+                let line = match (*bit == b'1', slot % 2 == 0) {
+                    (true, true) => egui::Color32::from_rgb(0x00, 0x50, 0x00),
+                    (true, false) => egui::Color32::from_rgb(0x20, 0x98, 0x20),
+                    (false, true) => theme::SHADOW(),
+                    (false, false) => theme::TRACK(),
+                };
+                p.line_segment([r.left_top(), r.left_bottom()], egui::Stroke::new(1.0, line));
+                p.line_segment([r.left_bottom(), r.right_bottom()], egui::Stroke::new(1.0, theme::SHADOW()));
             }
             if changed {
                 *day = Value::String(String::from_utf8_lossy(&bits).to_string());
             }
         }
-        ui.add_space(4.0);
-        ui.label(RichText::new("Green: downloading allowed. Click or drag to change.").font(skin::sans(11.5)).color(theme::TEXT_MUTED()));
+        ui.spacing_mut().item_spacing.y = 4.0;
+        ui.add_space(6.0);
+        skin::note(ui, "Green: downloading allowed. Click or drag to change.");
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn server_text(ui: &mut Ui, server: &mut Value, key: &str, label: &str, password: bool, narrow: bool, lw: f32, fw: f32) {
-    let mut layout = |ui: &mut Ui| {
+fn row_label(ui: &mut Ui, label: &str, width: f32) {
+    let (r, _) = ui.allocate_exact_size(vec2(width, 21.0), Sense::hover());
+    let text = format!("{label}:");
+    let p = ui.painter().with_clip_rect(r);
+    if ui.is_enabled() {
+        p.text(pos2(r.left(), r.center().y), Align2::LEFT_CENTER, text, theme::font(BODY), TEXT());
+    } else {
+        skin::text_disabled(&p, pos2(r.left(), r.center().y), Align2::LEFT_CENTER, &text, theme::font(BODY));
+    }
+}
+
+fn server_text(ui: &mut Ui, server: &mut Value, key: &str, label: &str, password: bool, lw: f32, fw: f32) {
+    ui.horizontal(|ui| {
+        row_label(ui, label, lw);
         let mut s = server[key].as_str().unwrap_or("").to_string();
         let mut edit = TextEdit::singleline(&mut s);
         if password {
-            let hint = if server["password_set"].as_bool() == Some(true) { "stored – type to replace" } else { "not set" };
+            let hint = if server["password_set"].as_bool() == Some(true) { "(stored - type to replace)" } else { "(not set)" };
             edit = edit.password(true).hint_text(hint);
         }
-        if skin::text_edit(ui, fw, edit).changed() {
+        if skin::field(ui, fw, 1, edit).changed() {
             server[key] = s.into();
         }
-    };
-    if narrow {
-        ui.label(label);
-        layout(ui);
-    } else {
-        ui.horizontal(|ui| {
-            label_cell(ui, label, "", lw);
-            layout(ui);
-        });
-    }
+    });
 }
 
 fn edit_value(ui: &mut Ui, value: &mut Value, kind: &Kind, width: f32, key: &str) {
@@ -520,23 +594,25 @@ fn edit_value(ui: &mut Ui, value: &mut Value, kind: &Kind, width: f32, key: &str
         Number { min, max, suffix } => {
             let integer = value.is_u64() || value.is_i64();
             let mut v = value.as_f64().unwrap_or(0.0);
-            let mut dv = egui::DragValue::new(&mut v).range(*min..=*max).suffix(*suffix);
-            if integer {
-                dv = dv.speed(1.0).fixed_decimals(0);
-            }
-            if skin::drag_value_sized(ui, width.min(140.0), dv).changed() {
-                *value = if integer { Value::from(v.round() as u64) } else { Value::from(v) };
-            }
+            ui.horizontal(|ui| {
+                if skin::spin(ui, key, &mut v, *min, *max, if integer { 0 } else { 1 }, 90.0).changed() {
+                    *value = if integer { Value::from(v.round() as u64) } else { Value::from(v) };
+                }
+                let unit = suffix.trim();
+                if !unit.is_empty() {
+                    skin::label(ui, unit);
+                }
+            });
         }
         Text => {
             let mut s = value.as_str().unwrap_or("").to_string();
-            if skin::text_edit(ui, width, TextEdit::singleline(&mut s)).changed() {
+            if skin::field(ui, width, 1, TextEdit::singleline(&mut s)).changed() {
                 *value = s.into();
             }
         }
         Long => {
             let mut s = value.as_str().unwrap_or("").to_string();
-            if skin::text_edit(ui, width, TextEdit::multiline(&mut s).desired_rows(5)).changed() {
+            if skin::field(ui, width, 5, TextEdit::multiline(&mut s)).changed() {
                 *value = s.into();
             }
         }
@@ -546,23 +622,18 @@ fn edit_value(ui: &mut Ui, value: &mut Value, kind: &Kind, width: f32, key: &str
                 other => other.to_string(),
             };
             let shown = options.iter().find(|o| o.0.eq_ignore_ascii_case(&current)).map(|o| o.1).unwrap_or(current.as_str()).to_string();
-            skin::ComboBox::from_id_salt(key).selected_text(shown).width(width.min(240.0)).show_ui(ui, |ui| {
+            let picked = skin::combo(ui, key, &shown, width.min(220.0), |ui| {
+                let mut pick = None;
                 for (v, label) in options.iter() {
-                    if skin::selectable(ui, v.eq_ignore_ascii_case(&current), *label).clicked() {
-                        *value = if value.is_number() { Value::from(v.parse::<u64>().unwrap_or(0)) } else { Value::from(*v) };
+                    if skin::list_item(ui, v.eq_ignore_ascii_case(&current), label).clicked() {
+                        pick = Some(*v);
                     }
                 }
+                pick
             });
-        }
-        Level(names) => {
-            let i = value.as_u64().unwrap_or(0) as usize;
-            skin::ComboBox::from_id_salt(key).selected_text(names.get(i).copied().unwrap_or("?")).width(width.min(240.0)).show_ui(ui, |ui| {
-                for (n, label) in names.iter().enumerate() {
-                    if skin::selectable(ui, n == i, *label).clicked() {
-                        *value = Value::from(n as u64);
-                    }
-                }
-            });
+            if let Some(Some(v)) = picked {
+                *value = if value.is_number() { Value::from(v.parse::<u64>().unwrap_or(0)) } else { Value::from(v) };
+            }
         }
         Check => {}
     }

@@ -1878,6 +1878,63 @@ pub fn demo_monthly_transfer() -> [f64; 12] {
     ]
 }
 
+/// The sample engine of screenshots and `newsqueue-server --demo`: neutral
+/// C:/NewsQueue paths, one job downloading, one paused part-way, demo
+/// connections and speed history. Front ends show it without ticking it.
+pub fn showcase_engine() -> Engine {
+    let mut settings = Settings::default();
+    settings.servers[0].name = "Primary provider".into();
+    settings.servers[0].address = "news.example.net".into();
+    settings.servers[0].username = "demo-user".into();
+    settings.servers[0].password = "secret".into();
+    settings.servers[0].connections = 20;
+    settings.servers[0].enabled = true;
+    settings.max_speed_kbps = 12_500.0;
+    settings.max_speed_mbps = 100.0;
+    let mut engine = Engine::new(settings, true);
+    let base = app_base().to_string_lossy().to_string();
+    let fix = |p: &mut String| {
+        if p.starts_with(&base) {
+            *p = format!(r"C:\NewsQueue{}", &p[base.len()..]);
+        }
+    };
+    for p in [&mut engine.settings.download_dir, &mut engine.settings.nzb_dir, &mut engine.settings.temp_dir, &mut engine.settings.unrar_dir] {
+        fix(p);
+    }
+    for c in &mut engine.queue {
+        fix(&mut c.folder);
+        fix(&mut c.unrar_folder);
+    }
+    // One collection downloading, one paused part-way, as in real use.
+    for (c, status, frac) in engine.queue.iter_mut().skip(1).zip([(ItemStatus::Downloading, 0.63), (ItemStatus::Paused, 0.38)]).map(|(c, (s, f))| (c, s, f)) {
+        c.status = status;
+        c.downloaded = c.total_bytes as f64 * frac;
+        let n = c.files.len() as f64;
+        for (i, f) in c.files.iter_mut().enumerate() {
+            let share = (frac * n - i as f64).clamp(0.0, 1.0);
+            f.downloaded = f.bytes as f64 * share;
+            f.done = share >= 1.0;
+        }
+    }
+    let subject = engine.queue.iter().find(|c| c.status == ItemStatus::Downloading).map(|c| c.subject.clone()).unwrap_or_default();
+    engine.threads = [
+        ("Download", format!("{subject}.part03.rar  [412/1024]"), "Downloading", "news.example.net"),
+        ("Download", format!("{subject}.part03.rar  [413/1024]"), "Downloading", "news.example.net"),
+        ("Download", format!("{subject}.part04.rar  [88/1024]"), "Downloading", "news.example.net"),
+        ("Download", format!("{subject}.part04.rar  [89/1024]"), "Downloading", "backup.example.org"),
+        ("Idle", String::new(), "Connected", "backup.example.org"),
+    ]
+    .into_iter()
+    .enumerate()
+    .map(|(i, (a, d, st, srv))| crate::model::ThreadRow { number: i as u32 + 1, action: a.into(), description: d, status: st.into(), server: srv.into() })
+    .collect();
+    engine.speed_history = (0..120).map(|i| (4.6 + 0.35 * ((i as f32) * 0.31).sin() + 0.15 * ((i as f32) * 0.9).cos()) * 1024.0 * 1024.0).collect();
+    engine.speed_bps = 4.82 * 1024.0 * 1024.0;
+    engine.connected = true;
+    engine.free_gb = 412.33;
+    engine
+}
+
 pub fn sample_history() -> Vec<HistoryItem> {
     vec![
         HistoryItem {

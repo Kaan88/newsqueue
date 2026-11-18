@@ -80,8 +80,8 @@ Win32 imports.
 **Status 2026-11-18: done.** `app/server`: every endpoint below, API key
 (header, query or login cookie), SSE, private settings never sent or
 changed, Ctrl+C/SIGTERM saves. `app/web`: the egui web UI (queue tree with
-drag reorder, history, log, settings, Add NZB, phone layout) in the
-Instrument skin. `Dockerfile` + `compose.yaml`; `docker-smoke.sh` (build, health, egui page,
+drag reorder, history, PAR2, log, RSS, Options, Add NZB, phone layout),
+since 2026-11-18 drawn as a classic Windows 2000 window like the desktop. `Dockerfile` + `compose.yaml`; `docker-smoke.sh` (build, health, egui page,
 API key, mock-NNTP download through the API, save on stop) passes on a Debian
 Docker host. The API is
 also a library, so the desktop app can serve it (Web access).
@@ -171,7 +171,8 @@ windows-rs is too verbose. Not `native-windows-gui` (unmaintained).
   unchanged, so there is a working app throughout the rewrite.
 - **No dark mode (decided 2026-11-18).** Win32 common controls have no
   complete dark theme (a test left tabs, status bar, edits and progress bars
-  light or broken); the native app is light-only with the stock Windows look.
+  light or broken); the native app is light-only with the classic look
+  (visual styles off for the client area, a menu bar).
   Mockups from real controls: `mockups/win32/shots/` (`nqmock --capture`).
 - Step 2, main window and queue: toolbar with the measured buttons and
   drawn icons, tab control, queue secondary toolbar, status bar with the

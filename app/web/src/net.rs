@@ -5,6 +5,7 @@ use serde::Deserialize;
 use std::sync::{Arc, Mutex};
 
 #[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[serde(default)]
 pub struct FileRow {
     pub name: String,
     pub bytes: u64,
@@ -29,7 +30,53 @@ pub struct QueueRow {
     pub has_password: bool,
     pub expanded: bool,
     pub age_days: f64,
+    pub parts: u32,
+    pub poster: String,
     pub file_rows: Vec<FileRow>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Par2Row {
+    pub name: String,
+    pub size_mb: f64,
+    pub blocks: u32,
+    pub info: String,
+    pub unrar: bool,
+    pub progress: f32,
+    pub status: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct RssRow {
+    pub name: String,
+    pub date: String,
+    pub description: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct ThreadRow {
+    pub number: u32,
+    pub action: String,
+    pub description: String,
+    pub status: String,
+    pub server: String,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default)]
+pub struct Stats {
+    pub daily: Vec<f64>,
+    pub monthly: Vec<f64>,
+    pub session_bytes: u64,
+    pub session_secs: u64,
+    pub session_collections: u64,
+    pub total_collections: u64,
+    pub startups: u64,
+    pub longest_uptime_secs: u64,
+    pub speed_history: Vec<f32>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -64,6 +111,12 @@ pub struct Snapshot {
     pub history: Vec<HistoryItem>,
     pub settings: serde_json::Value,
     pub free_gb: f64,
+    pub par2: Vec<Par2Row>,
+    pub rss: Vec<RssRow>,
+    pub rss_timer: bool,
+    pub threads: Vec<ThreadRow>,
+    pub stats: Stats,
+    pub scheduler_hold: bool,
 }
 
 /// What the HTTP callbacks hand back to the UI thread.

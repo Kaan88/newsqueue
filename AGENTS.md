@@ -42,7 +42,7 @@ cargo run -- --screenshot shots/now.png
 - `rss.rs` — RSS/Atom fetch, filter matching and NZB autodownload using `ureq` with native TLS.
 - `update.rs` — GitHub release check and verified silent self-update.
 - `unrar.rs` — extraction worker for completed collections. Uses the vendored 64-bit `app/tools/UnRAR.exe` (the original's bundled DLL is 32-bit), detects password-protected archives for the UI prompt, and builds archive/group/NZB subfolders. Do not delete the tool.
-- `web/src/skin.rs`, `web/src/theme.rs` — the Instrument skin and palette of the egui web UI.
+- `web/src/skin.rs`, `web/src/theme.rs` — the classic (Windows 2000) widgets, palette and drawn icons of the egui web UI.
 - `tray.rs` — native Win32 `Shell_NotifyIconW` tray thread: hidden message window, Show/Exit menu, minimize/close-to-tray with `SW_HIDE`, speed tooltip, balloon hints and the shared exit flag. `--screenshot` never starts the tray.
 - `shutdown.rs` — queue-drained power actions (`shutdown.exe /s`, `/h`, `SetSuspendState`, or app exit) with inspectable plans and a mock mode used by tests.
 - `package.ps1` / `build-installer.ps1` — portable release zip and Inno Setup exe (`installer/newsqueue.iss`): per-user files, shortcuts, HKCU uninstall entry and `unins000.exe`; it replaces an older IExpress install.
