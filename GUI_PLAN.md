@@ -235,6 +235,15 @@ Checked item by item against the code and by running both front ends:
   open File/Queue/View/Tools/Help on the owner-drawn menu bar (posted
   `SC_KEYMENU`, traced through `WM_INITMENUPOPUP`; no synthetic input).
 
+### Web UI review in progress (2026-11-18)
+
+- Done: queue, History, PAR2 and RSS tabs reviewed in light and dark at
+  800x600; progress bar captions are black on a light fill (the orange of a
+  paused job) and white on the dark highlight.
+- Open: the RSS list shows a horizontal scroll bar although its columns
+  fit; Log tab, dialogs (Add NZB, Options, Stats) and the phone layout
+  still to review. Not checked on a physical phone.
+
 ## Order and effort
 
 1. Phase 0 engine split: ~1 week.

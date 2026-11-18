@@ -745,7 +745,11 @@ pub fn progress(p: &egui::Painter, r: Rect, fraction: f32, text: &str, fill: Col
         p.rect_filled(fill_r, 0.0, fill);
     }
     let font = theme::font(theme::SMALL);
-    p.with_clip_rect(fill_r).text(inner.center(), Align2::CENTER_CENTER, text, font.clone(), Color32::WHITE);
+    // White on the dark highlight, black on a light fill (the orange of a
+    // paused job), so the caption stays readable across the boundary.
+    let luma = 0.299 * fill.r() as f32 + 0.587 * fill.g() as f32 + 0.114 * fill.b() as f32;
+    let on_fill = if luma > 140.0 { Color32::BLACK } else { Color32::WHITE };
+    p.with_clip_rect(fill_r).text(inner.center(), Align2::CENTER_CENTER, text, font.clone(), on_fill);
     let rest = Rect::from_min_max(pos2(fill_r.right(), inner.top()), inner.max);
     p.with_clip_rect(rest).text(inner.center(), Align2::CENTER_CENTER, text, font, TEXT());
 }
