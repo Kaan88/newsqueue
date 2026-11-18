@@ -615,6 +615,9 @@ fn find_7z_exe() -> Option<PathBuf> {
     if std::env::var_os("NQ_7Z_OFF").is_some() {
         return None;
     }
+    if let Some(p) = crate::tools::configured(crate::tools::Tool::SevenZip) {
+        return Some(p);
+    }
     if let Some(p) = std::env::var_os("NQ_7Z").map(PathBuf::from).filter(|p| p.is_file()) {
         return Some(p);
     }
@@ -768,6 +771,9 @@ pub fn unrar_available() -> bool {
 }
 
 fn find_unrar_exe() -> Option<PathBuf> {
+    if let Some(p) = crate::tools::configured(crate::tools::Tool::Unrar) {
+        return Some(p);
+    }
     if let Ok(value) = std::env::var("NQ_UNRAR") {
         let path = PathBuf::from(value);
         if path.is_file() {

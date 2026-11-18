@@ -100,6 +100,7 @@ pub struct Engine {
 impl Engine {
     pub fn new(settings: Settings, demo: bool) -> Self {
         ensure_dirs(&settings);
+        crate::tools::configure(&settings.unrar_path, &settings.par2_path, &settings.sevenzip_path);
         prune_old_logs(settings.keep_log_days);
         let queue = if demo {
             sample_queue(&settings)
@@ -1343,6 +1344,7 @@ impl Engine {
     }
 
     pub fn tick(&mut self) {
+        crate::tools::configure(&self.settings.unrar_path, &self.settings.par2_path, &self.settings.sevenzip_path);
         let now = Instant::now();
         let dt = (now - self.last_tick).as_secs_f64().clamp(0.0, 0.5);
         self.last_tick = now;

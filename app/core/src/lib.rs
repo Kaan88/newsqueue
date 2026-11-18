@@ -12,3 +12,6 @@ pub mod engine;
 pub mod command;
 pub mod host;
 pub mod snapshot;
+pub mod tools;
+#[cfg(test)]
+mod engine_tests;

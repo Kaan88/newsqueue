@@ -477,6 +477,10 @@ pub struct Settings {
     pub exp_folders_width: f32,
     pub startup_connect: bool,
     pub startup_speed_limit: Option<u8>,
+    /// External tools; empty = find them (`tools/`, install folders, PATH).
+    pub unrar_path: String,
+    pub par2_path: String,
+    pub sevenzip_path: String,
 }
 impl Default for Settings {
     fn default() -> Self {
@@ -572,6 +576,9 @@ impl Default for Settings {
             exp_folders_width: 250.0,
             startup_connect: false,
             startup_speed_limit: None,
+            unrar_path: String::new(),
+            par2_path: String::new(),
+            sevenzip_path: String::new(),
         }
     }
 }

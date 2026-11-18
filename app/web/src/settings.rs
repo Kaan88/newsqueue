@@ -79,6 +79,9 @@ fn fields(page: usize) -> Vec<(&'static str, &'static str, Kind, &'static str)> 
             ("pause_while_unraring", "Pause downloads while unpacking", Check, ""),
             ("move_files_to_unrar", "Move these files along", Text, "Patterns, e.g. *.nfo;*.srt"),
             ("delete_files_after_unrar", "Delete these files", Text, "Patterns, e.g. *.sfv;*.url"),
+            ("unrar_path", "unrar program", Text, "Empty: found on PATH."),
+            ("par2_path", "par2 program", Text, "Empty: found on PATH."),
+            ("sevenzip_path", "7-Zip program", Text, "Empty: found on PATH."),
         ],
         5 => vec![("scheduler_enabled", "Only download in the green hours", Check, "")],
         6 => vec![

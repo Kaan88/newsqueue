@@ -301,6 +301,9 @@ fn run_par2(exe: &Path, source: &Path, args: &[&str]) -> Result<(i32, String), S
 }
 
 fn find_par2_exe() -> Option<PathBuf> {
+    if let Some(p) = crate::tools::configured(crate::tools::Tool::Par2) {
+        return Some(p);
+    }
     if let Ok(value) = std::env::var("NQ_PAR2") {
         let path = PathBuf::from(value);
         if path.is_file() {
