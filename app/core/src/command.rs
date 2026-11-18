@@ -45,6 +45,8 @@ pub enum Command {
     AddNzbFile(String, bool),
     /// Queue the NZB of history entry N again.
     RetryHistory(usize),
+    /// Replace some settings (a JSON object; private keys are refused).
+    MergeSettings(serde_json::Value),
 }
 
 /// What [`Engine::apply`] did, for front ends that track a row.
@@ -87,6 +89,23 @@ impl Engine {
             Cleanup => self.cleanup(),
             RefreshRss => self.refresh_rss(),
             RetryHistory(index) => return self.retry_history(index),
+            MergeSettings(patch) => {
+                return match self.settings.merged(&patch) {
+                    Ok(settings) => {
+                        self.settings = settings;
+                        if !self.demo {
+                            self.settings.save();
+                        }
+                        let keys: Vec<&String> = patch.as_object().map(|m| m.keys().collect()).unwrap_or_default();
+                        self.log("Main", &format!("Settings changed: {}", keys.iter().map(|k| k.as_str()).collect::<Vec<_>>().join(", ")));
+                        Applied::Done
+                    }
+                    Err(error) => {
+                        self.log("Error", &format!("Settings not changed: {error}"));
+                        Applied::Failed
+                    }
+                };
+            }
             AddNzbFile(path, paused) => {
                 return match parse_nzb(std::path::Path::new(&path)) {
                     Ok(nzb) => Applied::Added(self.add_nzb_from_parsed(nzb, path, paused)),
@@ -409,6 +428,8 @@ mod tests {
         s.direct_unpack = true;
         s.auto_unrar = true;
         s.par2_checking = false;
+        s.sort_folder = root.join("sorted").to_string_lossy().to_string();
+        s.sort_pattern = "{date}/{name}".into();
         let mut e = Engine::new(s, true);
         e.queue.clear();
         let mut nzb = nzb_with(&names);
@@ -435,7 +456,9 @@ mod tests {
         assert!(e.logs.iter().any(|l| l.message.starts_with("Direct unpack: ")), "{:?}", e.logs.iter().map(|l| &l.message).collect::<Vec<_>>());
         assert!(!e.logs.iter().any(|l| l.message.starts_with("Unpack started")), "no second unpack");
         let found = walk(&root).into_iter().find(|p| p.ends_with("payload.bin")).expect("payload extracted");
-        assert_eq!(std::fs::metadata(found).unwrap().len(), 150_000);
+        assert_eq!(std::fs::metadata(&found).unwrap().len(), 150_000);
+        assert!(found.starts_with(root.join("sorted")), "moved by the sort pattern: {}", found.display());
+        assert!(found.parent().unwrap().ends_with("Rel"));
         // The bytes count against the server's monthly use.
         assert!(e.settings.servers[0].used_bytes >= 150_000, "{}", e.settings.servers[0].used_bytes);
         assert_eq!(e.history[0].status, "Completed");

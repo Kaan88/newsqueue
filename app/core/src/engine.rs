@@ -1010,6 +1010,7 @@ impl Engine {
             }
             Some(Some(true)) => {
                 self.direct_result.remove(&id);
+                self.sort_output(id);
                 self.run_execute_hook(id);
                 return;
             }
@@ -1047,6 +1048,36 @@ impl Engine {
             return;
         }
         self.run_execute_hook(id);
+    }
+
+    /// Moves a cleanly unpacked collection's output to the sort folder. The
+    /// collection's unrar folder then points there, so the execute hook and
+    /// "open folder" find it.
+    pub fn sort_output(&mut self, id: u64) {
+        let root = self.settings.sort_folder.trim().to_string();
+        if root.is_empty() {
+            return;
+        }
+        let Some(index) = self.index_of(id) else { return };
+        let collection = self.queue[index].clone();
+        let from = unrar::target_dir(&self.settings, &collection);
+        if !from.is_dir() || from == PathBuf::from(&self.settings.download_dir) {
+            return;
+        }
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let to = PathBuf::from(&root).join(unrar::expand_sort_pattern(
+            &self.settings.sort_pattern,
+            &collection.subject,
+            &collection.group,
+            &today,
+        ));
+        match unrar::move_dir(&from, &to) {
+            Ok(target) => {
+                self.log("Unrar", &format!("Moved {} to {}", collection.subject, target.display()));
+                self.queue[index].unrar_folder = target.to_string_lossy().to_string();
+            }
+            Err(e) => self.log("Error", &format!("Cannot move {} to {}: {e}", collection.subject, to.display())),
+        }
     }
 
     /// Adds what each server delivered since the last tick to its monthly use.
@@ -1235,6 +1266,7 @@ impl Engine {
                 self.log("Unrar", &message);
                 self.toast("Unpack complete");
                 self.notify("Unpack complete", &subject);
+                self.sort_output(active.collection_id);
                 self.run_execute_hook(active.collection_id);
             }
             Some(Err(unrar::UnrarError::PasswordRequired)) => {
@@ -1692,7 +1724,7 @@ impl Engine {
         }
     }}
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct HistoryItem {
     pub name: String,

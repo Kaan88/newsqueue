@@ -332,9 +332,14 @@ None are started. Categories stay cut (see `REMOVED.md`).
 
 ### With the Docker/web work
 
-11. **Web API with authentication** (GUI_PLAN Phase 1), which also enables
+11. **Done (2026-11-18): web API with authentication** — key header, query or
+    login cookie; SSE `/api/events`; history/log/settings endpoints (private
+    settings never sent or changed); `/api/nzb/url`; Ctrl+C/SIGTERM saves;
+    `Dockerfile` + `compose.yaml` (image build not tried here: no Docker).
+    Was: (GUI_PLAN Phase 1), which also enables
     phone control and scripting.
-12. **Pattern-based move/rename** of finished output (a small, category-free
+12. **Done (2026-11-18): pattern-based move** (`sort_folder`/`sort_pattern`,
+    tokens {name} {title} {year} {date} {group}). Was: of finished output (a small, category-free
     version of SABnzbd sorting).
 
 ## Suggested next order

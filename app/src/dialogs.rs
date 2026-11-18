@@ -910,6 +910,13 @@ fn page_unpack(ui: &mut Ui, s: &mut Settings) {
                     .hint_text("Example: *.sfv|*.md5"),
             );
             ui.end_row();
+            ui.label("Move unpacked output to");
+            crate::skin::text_edit(ui, 260.0, TextEdit::singleline(&mut s.sort_folder));
+            ui.end_row();
+            ui.label("Folder pattern");
+            crate::skin::text_edit(ui, 260.0, TextEdit::singleline(&mut s.sort_pattern))
+                .on_hover_text("{name} {title} {year} {date} {group}; / makes subfolders. Empty 'move to' = off.");
+            ui.end_row();
         });
 }
 

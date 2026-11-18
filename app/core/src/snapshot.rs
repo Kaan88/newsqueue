@@ -3,7 +3,7 @@
 //! The engine thread publishes a [`Snapshot`] after every tick; any number of
 //! front ends read it through an [`EngineHandle`] and change the engine only
 //! by sending [`Command`]s. A snapshot never contains secrets (no server
-//! passwords, no archive passwords, no settings).
+//! passwords, no archive passwords, no private settings).
 
 use crate::command::Command;
 use crate::engine::Engine;
@@ -47,6 +47,9 @@ pub struct Snapshot {
     pub queue: Vec<QueueRow>,
     /// The newest log lines, oldest first.
     pub log_tail: Vec<LogLine>,
+    pub history: Vec<crate::engine::HistoryItem>,
+    /// `Settings::public_json`: no accounts, logins or private URLs.
+    pub settings: serde_json::Value,
 }
 
 pub const LOG_TAIL: usize = 50;
@@ -89,6 +92,8 @@ impl Snapshot {
                     message: l.message.clone(),
                 })
                 .collect(),
+            history: engine.history.clone(),
+            settings: engine.settings.public_json(),
         }
     }
 }

@@ -12,6 +12,24 @@
 //! logs live. `--api-key` (or `NQ_API_KEY`) is required unless the server is
 //! bound to a loopback address. There is no built-in TLS: put a reverse proxy
 //! in front of it if it is reachable from other machines.
+//!
+//! Endpoints (all but `/api/health` and `/api/login` need the key, as the
+//! `X-Api-Key` header, `?apikey=` or the `nq_key` cookie from login):
+//!
+//! ```text
+//! GET  /api/health                      version, no key needed
+//! POST /api/login        body: key      sets the nq_key cookie
+//! GET  /api/state                       queue, speed, log tail, history, public settings
+//! GET  /api/events                      the same as Server-Sent Events, on change
+//! GET  /api/history | /api/log | /api/settings
+//! POST /api/settings     body: JSON     change settings (private keys refused)
+//! POST /api/history/N/retry
+//! POST /api/pause | resume | connect | disconnect | cleanup
+//! POST /api/speed-limit?tag=N|none
+//! POST /api/nzb?name=x.nzb&paused=1     body: NZB file
+//! POST /api/nzb/url?url=...&paused=1    the server fetches the NZB
+//! POST /api/queue/ID/(pause|resume|delete|up|down|top|bottom|unpack|password)
+//! ```
 
 use newsqueue_core::command::{Command, MoveDir};
 use newsqueue_core::engine::{Engine, Event};
@@ -111,15 +129,31 @@ fn main() {
     std::thread::Builder::new()
         .name("http".into())
         .spawn(move || {
+            // One thread per request: an event stream stays open for long.
             for request in server.incoming_requests() {
-                api.serve(request);
+                let api = api.clone();
+                std::thread::spawn(move || api.serve(request));
             }
         })
         .expect("spawn http thread");
 
+    let quit = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let quit_flag = quit.clone();
+    if let Err(e) = ctrlc::set_handler(move || quit_flag.store(true, std::sync::atomic::Ordering::Relaxed)) {
+        eprintln!("no Ctrl+C handler: {e}");
+    }
+
     // Nobody shows the engine's UI events here; log them so they are not lost.
     loop {
         std::thread::sleep(Duration::from_millis(500));
+        if quit.load(std::sync::atomic::Ordering::Relaxed) {
+            host.with(|e| {
+                e.log("Main", "Server stopping (Ctrl+C); state saved.");
+                e.save_all();
+            });
+            println!("Saved settings, queue, history and statistics. Bye.");
+            std::process::exit(0);
+        }
         for event in host.with(|e| e.take_events()) {
             let line = match event {
                 Event::Toast(t) => t,
@@ -135,6 +169,7 @@ fn main() {
     }
 }
 
+#[derive(Clone)]
 pub struct Api {
     pub handle: EngineHandle,
     pub api_key: Option<String>,
@@ -223,6 +258,13 @@ fn percent_decode(value: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+fn url_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| if b.is_ascii_alphanumeric() || b"-._~".contains(&b) { (b as char).to_string() } else { format!("%{b:02X}") })
+        .collect()
+}
+
 fn query_value(query: &str, key: &str) -> Option<String> {
     query
         .split('&')
@@ -231,15 +273,122 @@ fn query_value(query: &str, key: &str) -> Option<String> {
         .map(|(_, v)| percent_decode(v))
 }
 
+/// The `nq_key` value from a Cookie header.
+fn cookie_key(cookie: &str) -> Option<String> {
+    cookie
+        .split(';')
+        .filter_map(|part| part.trim().split_once('='))
+        .find(|(name, _)| *name == "nq_key")
+        .map(|(_, value)| percent_decode(value))
+}
+
+/// `GET /api/events`: a snapshot as `data:` each time it changes (checked
+/// four times a second), and a comment every 15 s so proxies keep it open.
+struct EventStream {
+    handle: EngineHandle,
+    last: String,
+    buf: Vec<u8>,
+    quiet_since: std::time::Instant,
+}
+
+impl EventStream {
+    fn new(handle: EngineHandle) -> Self {
+        Self { handle, last: String::new(), buf: b"retry: 2000\n\n".to_vec(), quiet_since: std::time::Instant::now() }
+    }
+
+    /// The next message, or None when nothing changed yet.
+    fn next_message(&mut self) -> Option<Vec<u8>> {
+        let mut snapshot = self.handle.snapshot();
+        snapshot.seq = 0;
+        let text = serde_json::to_string(&snapshot).unwrap_or_default();
+        if text != self.last {
+            self.last = text;
+            self.quiet_since = std::time::Instant::now();
+            return Some(format!("data: {}\n\n", self.last).into_bytes());
+        }
+        if self.quiet_since.elapsed() >= Duration::from_secs(15) {
+            self.quiet_since = std::time::Instant::now();
+            return Some(b": keep-alive\n\n".to_vec());
+        }
+        None
+    }
+}
+
+impl EventStream {
+    /// Writes the stream until the client goes away. tiny_http's chunked
+    /// responses buffer 8 KB, so this writes a plain `Connection: close`
+    /// response itself and flushes every message.
+    fn run(mut self, mut out: Box<dyn std::io::Write + Send>) {
+        let head = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nCache-Control: no-cache\r\nConnection: close\r\n\r\n";
+        if out.write_all(head.as_bytes()).is_err() {
+            return;
+        }
+        let mut pending = std::mem::take(&mut self.buf);
+        loop {
+            if !pending.is_empty() {
+                if out.write_all(&pending).and_then(|_| out.flush()).is_err() {
+                    return;
+                }
+                pending.clear();
+            }
+            match self.next_message() {
+                Some(message) => pending = message,
+                None => std::thread::sleep(Duration::from_millis(250)),
+            }
+        }
+    }
+}
+
 impl Api {
+    fn authorized(&self, query: &str, header_key: Option<&str>) -> bool {
+        let Some(expected) = &self.api_key else {
+            return true;
+        };
+        let given = header_key.map(str::to_string).or_else(|| query_value(query, "apikey")).unwrap_or_default();
+        same_secret(&given, expected)
+    }
+
     fn serve(&self, mut request: tiny_http::Request) {
         let method = request.method().as_str().to_ascii_uppercase();
         let url = request.url().to_string();
-        let header_key = request
-            .headers()
-            .iter()
-            .find(|h| h.field.equiv("X-Api-Key"))
-            .map(|h| h.value.as_str().to_string());
+        let header = |name: &'static str| {
+            request
+                .headers()
+                .iter()
+                .find(|h| h.field.equiv(name))
+                .map(|h| h.value.as_str().to_string())
+        };
+        let header_key = header("X-Api-Key").or_else(|| header("Cookie").and_then(|c| cookie_key(&c)));
+        let (path, query) = url.split_once('?').unwrap_or((url.as_str(), ""));
+        if method == "GET" && path == "/api/events" {
+            if !self.authorized(query, header_key.as_deref()) {
+                let _ = request.respond(tiny_http::Response::from_string("missing or wrong API key").with_status_code(401));
+                return;
+            }
+            EventStream::new(self.handle.clone()).run(request.into_writer());
+            return;
+        }
+        if method == "POST" && path == "/api/login" {
+            let mut given = String::new();
+            let _ = request.as_reader().take(1024).read_to_string(&mut given);
+            let given = given.trim().to_string();
+            let ok = match &self.api_key {
+                Some(expected) => same_secret(&given, expected),
+                None => true,
+            };
+            let reply = if ok { json(200, serde_json::json!({ "ok": true })) } else { error(401, "wrong API key") };
+            let mut response = tiny_http::Response::from_data(reply.body)
+                .with_status_code(reply.status)
+                .with_header(tiny_http::Header::from_bytes("Content-Type", reply.content_type).expect("header"));
+            if ok {
+                let cookie = format!("nq_key={}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000", url_encode(&given));
+                if let Ok(h) = tiny_http::Header::from_bytes("Set-Cookie", cookie) {
+                    response = response.with_header(h);
+                }
+            }
+            let _ = request.respond(response);
+            return;
+        }
         let mut body = Vec::new();
         let too_big = request
             .as_reader()
@@ -279,14 +428,8 @@ impl Api {
         if path == "/api/health" {
             return json(200, serde_json::json!({ "ok": true, "version": VERSION }));
         }
-        if let Some(expected) = &self.api_key {
-            let given = header_key
-                .map(str::to_string)
-                .or_else(|| query_value(query, "apikey"))
-                .unwrap_or_default();
-            if !same_secret(&given, expected) {
-                return error(401, "missing or wrong API key");
-            }
+        if !self.authorized(query, header_key) {
+            return error(401, "missing or wrong API key");
         }
         let parts: Vec<&str> = path.trim_matches('/').split('/').collect();
         let send = |command: Command| {
@@ -320,6 +463,33 @@ impl Api {
                 },
             },
             ("POST", ["api", "nzb"]) => self.add_nzb(query, body),
+            ("POST", ["api", "nzb", "url"]) => self.add_nzb_url(query, body),
+            ("GET", ["api", "history"]) => json(200, self.handle.read(|s| serde_json::to_value(&s.history).unwrap_or_default())),
+            ("GET", ["api", "log"]) => json(200, self.handle.read(|s| serde_json::to_value(&s.log_tail).unwrap_or_default())),
+            ("GET", ["api", "settings"]) => json(200, self.handle.read(|s| s.settings.clone())),
+            ("POST", ["api", "settings"]) => {
+                let Ok(patch) = serde_json::from_slice::<serde_json::Value>(body) else {
+                    return error(400, "send a JSON object");
+                };
+                // Check names and types against the current public settings.
+                let current: Settings = self
+                    .handle
+                    .read(|s| serde_json::from_value(s.settings.clone()))
+                    .unwrap_or_default();
+                if let Err(e) = current.merged(&patch) {
+                    return error(400, &e);
+                }
+                send(Command::MergeSettings(patch))
+            }
+            ("POST", ["api", "history", index, "retry"]) => {
+                let Ok(index) = index.parse::<usize>() else {
+                    return error(400, "bad history index");
+                };
+                if index >= self.handle.read(|s| s.history.len()) {
+                    return error(404, "no such history entry");
+                }
+                send(Command::RetryHistory(index))
+            }
             ("POST", ["api", "queue", id, action]) => {
                 let Ok(id) = id.parse::<u64>() else {
                     return error(400, "bad collection id");
@@ -351,12 +521,53 @@ impl Api {
         }
     }
 
+    /// `POST /api/nzb/url?url=https://...` (or the URL as the body): the
+    /// server downloads the NZB and queues it like an upload.
+    fn add_nzb_url(&self, query: &str, body: &[u8]) -> Reply {
+        let url = query_value(query, "url").unwrap_or_else(|| String::from_utf8_lossy(body).trim().to_string());
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return error(400, "send an http(s) URL as ?url= or the body");
+        }
+        let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(60)).build();
+        let response = match agent.get(&url).call() {
+            Ok(r) => r,
+            // The URL may hold an indexer key: never echo it.
+            Err(ureq::Error::Status(code, _)) => return error(502, &format!("the NZB server answered {code}")),
+            Err(_) => return error(502, "cannot fetch the NZB"),
+        };
+        let disposition = response.header("Content-Disposition").unwrap_or("").to_string();
+        let mut data = Vec::new();
+        if response
+            .into_reader()
+            .take(MAX_NZB_BYTES as u64 + 1)
+            .read_to_end(&mut data)
+            .map(|n| n > MAX_NZB_BYTES)
+            .unwrap_or(true)
+        {
+            return error(413, "NZB too large or unreadable");
+        }
+        let name = query_value(query, "name")
+            .or_else(|| disposition.split("filename=").nth(1).map(|n| n.trim_matches(['"', ';', ' ']).to_string()))
+            .filter(|n| !n.is_empty())
+            .unwrap_or_else(|| {
+                let path = url.split(['?', '#']).next().unwrap_or("");
+                path.rsplit('/').next().filter(|n| !n.is_empty()).unwrap_or("download.nzb").to_string()
+            });
+        let paused = matches!(query_value(query, "paused").as_deref(), Some("1") | Some("true"));
+        self.add_nzb_named(&name, paused, &data)
+    }
+
     /// `POST /api/nzb?name=x.nzb&paused=1` with the NZB XML as the body.
     fn add_nzb(&self, query: &str, body: &[u8]) -> Reply {
+        let name = query_value(query, "name").unwrap_or_else(|| "upload.nzb".into());
+        let paused = matches!(query_value(query, "paused").as_deref(), Some("1") | Some("true"));
+        self.add_nzb_named(&name, paused, body)
+    }
+
+    fn add_nzb_named(&self, name: &str, paused: bool, body: &[u8]) -> Reply {
         if body.is_empty() {
             return error(400, "send the NZB file as the request body");
         }
-        let name = query_value(query, "name").unwrap_or_else(|| "upload.nzb".into());
         let stem: String = name
             .trim_end_matches(".nzb")
             .chars()
@@ -389,7 +600,6 @@ impl Api {
                 return error(400, &format!("not a valid NZB: {e}"));
             }
         }
-        let paused = matches!(query_value(query, "paused").as_deref(), Some("1") | Some("true"));
         let command = Command::AddNzbFile(path.to_string_lossy().to_string(), paused);
         if self.handle.send(command) {
             json(202, serde_json::json!({ "queued": true, "file": path.file_name().map(|f| f.to_string_lossy().to_string()) }))
@@ -476,5 +686,110 @@ mod tests {
         assert!(same_secret("abc", "abc"));
         assert!(!same_secret("abc", "abd"));
         assert!(!same_secret("abc", "abcd"));
+        assert_eq!(cookie_key("a=1; nq_key=k%33y; b=2").as_deref(), Some("k3y"));
+        assert_eq!(cookie_key("a=1"), None);
+        assert_eq!(url_encode("a b&c"), "a%20b%26c");
+    }
+
+    #[test]
+    fn settings_are_public_and_private_keys_stay_put() {
+        let (mut host, api) = demo();
+        host.with(|e| {
+            e.settings.servers[0].password = "s3cret".into();
+            e.settings.notify_url = "https://ntfy.example/private".into();
+        });
+        host.tick_local();
+        let r = api.route("GET", "/api/settings", Some("k3y"), b"");
+        let text = String::from_utf8(r.body).unwrap();
+        assert!(text.contains("direct_unpack"));
+        for hidden in ["s3cret", "servers", "notify_url", "proxy_password", "rss_urls"] {
+            assert!(!text.contains(hidden), "{hidden} leaked");
+        }
+        let state = String::from_utf8(api.route("GET", "/api/state", Some("k3y"), b"").body).unwrap();
+        assert!(!state.contains("s3cret") && !state.contains("ntfy.example"));
+
+        let post = |body: &str| api.route("POST", "/api/settings", Some("k3y"), body.as_bytes()).status;
+        assert_eq!(post(r#"{"servers":[]}"#), 400);
+        assert_eq!(post(r#"{"no_such_setting":1}"#), 400);
+        assert_eq!(post(r#"{"direct_unpack":"yes"}"#), 400);
+        assert_eq!(post("[1]"), 400);
+        assert_eq!(post(r#"{"direct_unpack":true,"duplicate_check":2}"#), 202);
+        host.tick_local();
+        host.with(|e| {
+            assert!(e.settings.direct_unpack);
+            assert_eq!(e.settings.duplicate_check, 2);
+            assert_eq!(e.settings.servers[0].password, "s3cret");
+        });
+    }
+
+    #[test]
+    fn history_and_retry_routes() {
+        let (mut host, api) = demo();
+        host.with(|e| {
+            e.history.clear();
+            e.add_history("old".into(), 1, "Failed", String::new());
+        });
+        host.tick_local();
+        let body = String::from_utf8(api.route("GET", "/api/history", Some("k3y"), b"").body).unwrap();
+        assert!(body.contains("\"old\"") && body.contains("Failed"));
+        assert_eq!(api.route("POST", "/api/history/0/retry", Some("k3y"), b"").status, 202);
+        assert_eq!(api.route("POST", "/api/history/5/retry", Some("k3y"), b"").status, 404);
+        assert_eq!(api.route("POST", "/api/history/x/retry", Some("k3y"), b"").status, 400);
+        assert_eq!(api.route("GET", "/api/log", Some("k3y"), b"").status, 200);
+    }
+
+    #[test]
+    fn event_stream_sends_changes_only() {
+        let (mut host, api) = demo();
+        host.tick_local();
+        let mut events = EventStream::new(api.handle.clone());
+        let first = String::from_utf8(events.next_message().unwrap()).unwrap();
+        assert!(first.starts_with("data: {") && first.ends_with("\n\n"));
+        host.tick_local();
+        assert!(events.next_message().is_none(), "only seq changed");
+        host.with(|e| e.log("Main", "something new"));
+        host.tick_local();
+        let next = String::from_utf8(events.next_message().unwrap()).unwrap();
+        assert!(next.contains("something new"));
+    }
+
+    #[test]
+    fn nzb_by_url_is_fetched_and_queued() {
+        use std::io::{BufRead, BufReader, Write};
+        let config = std::env::temp_dir().join(format!("nq-server-url-{}", std::process::id()));
+        std::env::set_var("NQ_CONFIG", &config);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        std::thread::spawn(move || {
+            for status in ["200 OK", "404 Not Found"] {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" || line.is_empty() {
+                        break;
+                    }
+                }
+                let nzb = r#"<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb"><file poster="p" date="1" subject="x.rar (1/1)"><groups><group>a.b</group></groups><segments><segment bytes="10" number="1">x@y</segment></segments></file></nzb>"#;
+                let body = if status.starts_with("200") { nzb } else { "" };
+                let _ = write!(
+                    stream,
+                    "HTTP/1.1 {status}\r\nContent-Disposition: attachment; filename=\"Fetched.nzb\"\r\nContent-Length: {}\r\n\r\n{body}",
+                    body.len()
+                );
+            }
+        });
+        let (_host, api) = demo();
+        let r = api.route("POST", &format!("/api/nzb/url?url=http://127.0.0.1:{port}/get%3Fkey%3Dsecret"), Some("k3y"), b"");
+        let text = String::from_utf8(r.body).unwrap();
+        assert_eq!(r.status, 202, "{text}");
+        assert!(text.contains("Fetched.nzb"));
+        let r = api.route("POST", &format!("/api/nzb/url?url=http://127.0.0.1:{port}/get%3Fkey%3Dsecret"), Some("k3y"), b"");
+        let text = String::from_utf8(r.body).unwrap();
+        assert_eq!(r.status, 502);
+        assert!(!text.contains("secret"), "the URL is not echoed");
+        assert_eq!(api.route("POST", "/api/nzb/url?url=file:///etc/passwd", Some("k3y"), b"").status, 400);
+        let _ = std::fs::remove_dir_all(config);
     }
 }

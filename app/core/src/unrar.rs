@@ -125,6 +125,112 @@ pub fn poll(active: &ActiveUnrar) -> Option<Result<String, UnrarError>> {
     }
 }
 
+/// Fills a sort pattern for a release name. `{name}` is the name as is,
+/// `{title}` the part before the year / SxxEyy / quality tags with dots and
+/// underscores as spaces, `{year}` the first 19xx/20xx, `{date}` today,
+/// `{group}` the newsgroup. Empty brackets and separators left behind by a
+/// missing year are dropped; every path part is made safe.
+pub fn expand_sort_pattern(pattern: &str, name: &str, group: &str, today: &str) -> PathBuf {
+    let words: Vec<&str> = name.split(['.', '_', ' ']).filter(|w| !w.is_empty()).collect();
+    let is_year = |w: &str| w.len() == 4 && (w.starts_with("19") || w.starts_with("20")) && w.chars().all(|c| c.is_ascii_digit());
+    let is_episode = |w: &str| {
+        let l = w.to_ascii_lowercase();
+        l.len() >= 4 && l.starts_with('s') && l[1..].contains('e') && l[1..].chars().all(|c| c.is_ascii_digit() || c == 'e')
+    };
+    let stop = |w: &str| {
+        let l = w.to_ascii_lowercase();
+        is_year(w) || is_episode(w) || ["1080p", "720p", "2160p", "480p", "bluray", "webrip", "web-dl", "hdtv", "x264", "x265", "dvdrip"].contains(&l.as_str())
+    };
+    let year = words.iter().copied().find(|w| is_year(w)).unwrap_or("");
+    let title_words: Vec<&str> = words.iter().copied().take_while(|w| !stop(w)).collect();
+    let title = if title_words.is_empty() { name.to_string() } else { title_words.join(" ") };
+    let filled = pattern
+        .replace("{name}", name)
+        .replace("{title}", &title)
+        .replace("{year}", year)
+        .replace("{date}", today)
+        .replace("{group}", group);
+    let mut path = PathBuf::new();
+    for part in filled.split(['/', '\\']) {
+        let cleaned = part.replace("()", "").replace("[]", "");
+        let cleaned = cleaned.trim().trim_end_matches(['-', ' ', '.']).trim();
+        if !cleaned.is_empty() {
+            path.push(sanitize_folder(cleaned));
+        }
+    }
+    if path.as_os_str().is_empty() {
+        path.push(sanitize_folder(name));
+    }
+    path
+}
+
+/// Moves a folder, copying across drives when a rename is not possible.
+/// An existing target gets " (2)", " (3)" ... Returns where it went.
+pub fn move_dir(from: &Path, to: &Path) -> std::io::Result<PathBuf> {
+    let mut target = to.to_path_buf();
+    let mut n = 2;
+    while target.exists() {
+        target = PathBuf::from(format!("{} ({n})", to.display()));
+        n += 1;
+    }
+    if let Some(parent) = target.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    if fs::rename(from, &target).is_ok() {
+        return Ok(target);
+    }
+    copy_tree(from, &target)?;
+    fs::remove_dir_all(from)?;
+    Ok(target)
+}
+
+fn copy_tree(from: &Path, to: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(to)?;
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            copy_tree(&path, &to.join(entry.file_name()))?;
+        } else {
+            fs::copy(&path, to.join(entry.file_name()))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod sort_tests {
+    use super::*;
+
+    #[test]
+    fn sort_patterns_fill_in() {
+        let p = |pattern: &str, name: &str| expand_sort_pattern(pattern, name, "a.b.movies", "2026-11-18");
+        assert_eq!(p("{title} ({year})", "Some.Movie.2019.1080p.BluRay.x264-GRP"), PathBuf::from("Some Movie (2019)"));
+        assert_eq!(p("{title} ({year})", "Show_Name_S02E03_720p"), PathBuf::from("Show Name"));
+        assert_eq!(p("{group}/{date}/{name}", "x.y"), ["a.b.movies", "2026-11-18", "x.y"].iter().collect::<PathBuf>());
+        assert_eq!(p("{year}/{title}", "Plain Name"), PathBuf::from("Plain Name"));
+        // ".." parts vanish: a pattern cannot climb out of the sort folder.
+        assert_eq!(p("../{title}", "Evil.Name"), PathBuf::from("Evil Name"));
+    }
+
+    #[test]
+    fn move_dir_moves_and_avoids_clashes() {
+        let root = std::env::temp_dir().join(format!("newsqueue-sort-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let (a, b) = (root.join("a"), root.join("b"));
+        for dir in [&a, &b] {
+            fs::create_dir_all(dir.join("sub")).unwrap();
+            fs::write(dir.join("sub").join("f.txt"), b"x").unwrap();
+        }
+        let to = root.join("out").join("Name");
+        assert_eq!(move_dir(&a, &to).unwrap(), to);
+        assert!(to.join("sub").join("f.txt").is_file() && !a.exists());
+        let second = move_dir(&b, &to).unwrap();
+        assert_eq!(second, root.join("out").join("Name (2)"));
+        let _ = fs::remove_dir_all(root);
+    }
+}
+
 /// A RAR set being extracted while it downloads ("direct unpack").
 pub struct DirectUnrar {
     pub collection_id: u64,

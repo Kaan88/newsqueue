@@ -367,6 +367,9 @@ impl ProxyConfig {
     }
 }
 
+/// Settings never shown or changed over the API.
+pub const PRIVATE_SETTINGS: &[&str] = &["servers", "proxy_username", "proxy_password", "rss_urls", "notify_url"];
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
@@ -417,6 +420,10 @@ pub struct Settings {
     /// Webhook for finished/failed jobs. An ntfy URL gets a plain-text POST
     /// with a Title header; anything else gets JSON {title, text}.
     pub notify_url: String,
+    /// After a clean unpack, move the output to `sort_folder/<sort_pattern>`
+    /// (empty folder = off). Tokens: {name} {title} {year} {date} {group}.
+    pub sort_folder: String,
+    pub sort_pattern: String,
     pub auto_unrar: bool,
     pub create_dir_nzb_name: bool,
     pub create_dir_group_name: bool,
@@ -510,6 +517,8 @@ impl Default for Settings {
             direct_unpack: false,
             duplicate_check: 1,
             notify_url: String::new(),
+            sort_folder: String::new(),
+            sort_pattern: "{title} ({year})".into(),
             auto_unrar: false,
             create_dir_nzb_name: false,
             create_dir_group_name: false,
@@ -609,6 +618,36 @@ impl Settings {
         }
         Self::default()
     }
+    /// The settings without anything private: server accounts, proxy
+    /// login, feed URLs and the notification URL.
+    pub fn public_json(&self) -> serde_json::Value {
+        let mut value = serde_json::to_value(self).unwrap_or_default();
+        if let Some(map) = value.as_object_mut() {
+            for key in PRIVATE_SETTINGS {
+                map.remove(*key);
+            }
+        }
+        value
+    }
+
+    /// These settings with the keys of `patch` replaced. Private and
+    /// unknown keys are refused, as are values of the wrong type.
+    pub fn merged(&self, patch: &serde_json::Value) -> Result<Settings, String> {
+        let patch = patch.as_object().ok_or("send a JSON object")?;
+        let mut value = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        let map = value.as_object_mut().ok_or("settings are not an object")?;
+        for (key, new) in patch {
+            if PRIVATE_SETTINGS.contains(&key.as_str()) {
+                return Err(format!("{key} cannot be changed through the API"));
+            }
+            match map.get_mut(key) {
+                Some(slot) => *slot = new.clone(),
+                None => return Err(format!("unknown setting {key}")),
+            }
+        }
+        serde_json::from_value(value).map_err(|e| format!("bad value: {e}"))
+    }
+
     pub fn save(&self) {
         if let Ok(text) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(settings_path(), text);

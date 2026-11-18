@@ -1,0 +1,12 @@
+target
+dist
+download
+log
+nzb
+temp
+unrar
+docker
+newsqueue-*.json
+*.nqpart
+altbinz_original
+shots

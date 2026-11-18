@@ -31,3 +31,4 @@
 .DS_Store
 Thumbs.db
 /app/web/dist/
+/app/docker/
