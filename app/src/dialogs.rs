@@ -693,7 +693,7 @@ pub fn pause_for(owner: HWND) {
 // ---------------------------------------------------------- speed limit ---
 
 fn build_speed_limit(owner: HWND) -> HWND {
-    let d = form::create(Some(owner), "Speed limit", 280, 340, false);
+    let d = form::create(Some(owner), "Speed limit", 280, 376, false);
     let (ceiling, tag) = with_engine(|e| (e.speed_ceiling_mbps, e.speed_limit_tag));
     let mode = setting_u8("speed_bytes_mode");
     form::note(d, &format!("Full speed: {}", format_speed(ceiling * BPS_PER_MBPS, mode)), 14, 10, 252, 18);
@@ -703,9 +703,16 @@ fn build_speed_limit(owner: HWND) -> HWND {
         form::radio(d, 100 + t as i32, &format!("{}%   ({})", t as u32 * 10, format_speed(bps, mode)), 20, 36 + t as i32 * 24, 240, false);
     }
     form::set_check(form::item(d, 100 + tag.unwrap_or(0) as i32), true);
-    form::note(d, "The limit applies to all connections together.", 14, 276, 252, 18);
-    form::button(d, IDOK_, "OK", 100, 304, 80);
-    form::button(d, IDCANCEL_, "Cancel", 186, 304, 80);
+    form::note(
+        d,
+        "The limit applies to all connections together. Full speed is the line speed set in Setup > Connection, or the fastest speed seen so far.",
+        14,
+        276,
+        252,
+        48,
+    );
+    form::button(d, IDOK_, "OK", 100, 340, 80);
+    form::button(d, IDCANCEL_, "Cancel", 186, 340, 80);
     d
 }
 

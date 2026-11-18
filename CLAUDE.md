@@ -291,7 +291,8 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 113 unit/integration tests currently pass (78 in core, 23 in desktop, 12 in server).
+- 113 unit/integration tests currently pass (78 in core, 23 in desktop, 12 in server);
+  `cargo test -p newsqueue-web` runs the web UI's egui test natively (1).
 - `SETTINGS_CHECKLIST.md` lists every `Settings` field, its Setup page and
   the code that reads it; regenerate/extend it when adding a setting.
 - `download.rs` has a mock NNTP server used for success, missing-article,

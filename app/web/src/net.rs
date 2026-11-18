@@ -166,13 +166,12 @@ pub struct Client {
 
 impl Client {
     pub fn request(&self, method: &str, path: &str, body: Vec<u8>) -> ehttp::Request {
-        let mut req = ehttp::Request {
-            method: method.into(),
-            url: path.into(),
-            body,
-            headers: ehttp::Headers::new(&[]),
-            mode: ehttp::Mode::default(),
-        };
+        // Built field by field: `mode` exists only in the WebAssembly build
+        // of ehttp, so this also compiles natively (for `cargo test`).
+        let mut req = ehttp::Request::get(path);
+        req.method = method.into();
+        req.body = body;
+        req.headers = ehttp::Headers::new(&[]);
         if !self.key.is_empty() {
             req.headers.insert("X-Api-Key", &self.key);
         }

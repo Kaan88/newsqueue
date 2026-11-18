@@ -246,19 +246,18 @@ phone). Fixed:
   desktop) and white on the dark highlight.
 - RSS and Log lists fit an 800 px window by default (no needless
   horizontal scroll bar).
-- A click right after closing a dialog is no longer swallowed: egui keeps
-  the dialog as the top modal until the next frame, so the dialog asks for
-  that frame at once.
 - The queue summary ("3 jobs, ...") is shortened, or left out, instead of
   being drawn over the filter on a very narrow page.
 - Notes (explanatory text) are 505050 on the face in both front ends
   (dark: B0B0B4) instead of the disabled-text gray 808080, which was hard
   to read (about 2.6:1).
 
-The dialog fix rests on egui's `Memory::top_modal_layer`, which holds the
-previous frame's modal. In the browser pane (hidden, so Chrome throttles
-frames up to 1 s) a click 300 ms after closing opened Options in one of
-two trials; the throttling, not the dialog, decides that test.
+Clicks that seemed lost right after closing a dialog were the hidden
+browser pane throttling frames, not a bug: egui keeps a modal blocking
+until one frame has run without it, but the closing click itself asks for
+that frame. `skin::tests::a_closed_dialog_does_not_swallow_the_next_click`
+(`cargo test -p newsqueue-web`, native) drives a real dialog through egui
+and checks both halves.
 
 ### Desktop review (2026-11-18)
 
@@ -267,7 +266,11 @@ gradient captions, raised buttons with the default one framed, sunken
 edits and lists, classic check boxes, spin buttons and scroll bars are
 consistent. Fixed: the Version dialog's Close and the Pause for dialog's
 Pause are now the default (framed) buttons like OK elsewhere; notes are
-readable (above); paused progress captions are black.
+readable (above); paused progress captions are black. The live app (temp
+`NQ_CONFIG`, dialogs opened by posted `WM_COMMAND`, captured with
+`PrintWindow`) matches the screenshot mode. The Speed limit dialog now says
+where "full speed" comes from (line speed in Setup > Connection, or the
+fastest speed seen), since a fresh install starts at 0.44 Mbit/s.
 
 ### Status
 

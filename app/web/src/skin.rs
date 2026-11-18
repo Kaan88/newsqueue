@@ -810,12 +810,6 @@ pub fn dialog<R>(ctx: &egui::Context, id: &str, title: &str, width: f32, add: im
     if shown.is_top_modal && !shown.any_popup_open && ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape)) {
         close = true;
     }
-    // A click or key here may close the dialog. egui keeps it as the top
-    // modal until the next frame, which would swallow the next click on the
-    // window below, so run that frame now instead of on the next input.
-    if close || ctx.input(|i| i.pointer.any_released() || i.events.iter().any(|e| matches!(e, egui::Event::Key { pressed: true, .. }))) {
-        ctx.request_repaint();
-    }
     (shown.inner, close)
 }
 
@@ -1098,4 +1092,73 @@ fn scroll_bar(ui: &Ui, id: Id, bar: Rect, axis: usize, offset: f32, max: f32, pa
         edge(p, t, Edge::Raised);
     }
     off
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput { screen_rect: Some(Rect::from_min_size(pos2(0.0, 0.0), vec2(800.0, 600.0))), events, ..Default::default() }
+    }
+
+    fn click(at: egui::Pos2) -> Vec<egui::Event> {
+        let b = |pressed| egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers: egui::Modifiers::NONE };
+        vec![egui::Event::PointerMoved(at), b(true), b(false)]
+    }
+
+    /// One frame: a "behind" button at the top left, and the dialog with a
+    /// Cancel button while `open`. Returns (behind clicked, cancel rect).
+    fn frame(ctx: &egui::Context, open: &mut bool, events: Vec<egui::Event>) -> (bool, Option<Rect>) {
+        let mut behind = false;
+        let mut cancel = None;
+        let mut out = ctx.run_ui(input(events), |ui| {
+            behind = ui.button("Behind").clicked();
+            if *open {
+                let (clicked, close) = dialog(ui.ctx(), "t", "Test", 300.0, |ui| {
+                    let r = ui.button("Cancel");
+                    cancel = Some(r.rect);
+                    r.clicked()
+                });
+                if clicked || close {
+                    *open = false;
+                }
+            }
+        });
+        out.textures_delta.clear();
+        (behind, cancel)
+    }
+
+    /// Runs the close-then-click sequence; `idle_frame` adds the frame egui
+    /// asks for between closing the dialog and the next click.
+    fn click_after_close(idle_frame: bool) -> (bool, bool) {
+        let ctx = egui::Context::default();
+        let mut open = true;
+        let behind_at = pos2(20.0, 12.0);
+        // Two frames to lay the dialog out, then click its Cancel.
+        frame(&ctx, &mut open, vec![]);
+        let (_, cancel) = frame(&ctx, &mut open, vec![]);
+        frame(&ctx, &mut open, click(cancel.unwrap().center()));
+        assert!(!open, "Cancel closed the dialog");
+        let asked = ctx.has_requested_repaint();
+        if idle_frame {
+            frame(&ctx, &mut open, vec![]);
+        }
+        let (behind, _) = frame(&ctx, &mut open, click(behind_at));
+        (asked, behind)
+    }
+
+    #[test]
+    fn a_closed_dialog_does_not_swallow_the_next_click() {
+        // egui keeps a modal blocking until one frame has run without it:
+        // a click delivered in the very next frame is lost ...
+        let (_, behind) = click_after_close(false);
+        assert!(!behind, "egui's top modal is the previous frame's");
+        // ... but the closing click itself makes egui ask for a repaint, so
+        // that frame runs at once (in a visible tab, ~16 ms later) and the
+        // next click reaches the window below.
+        let (asked, behind) = click_after_close(true);
+        assert!(asked, "the closing click requests a repaint");
+        assert!(behind, "the click after the idle frame is not swallowed");
+    }
 }
