@@ -108,7 +108,7 @@ fn fields(page: usize) -> Vec<(&'static str, &'static str, Kind, &'static str)> 
 const DAYS: [&str; 7] = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const SLOTS: usize = 48;
 /// Height of the page area inside the dialog.
-const PAGE_H: f32 = 400.0;
+const PAGE_H: f32 = 520.0;
 
 #[derive(Default)]
 pub struct SettingsPage {
@@ -172,7 +172,7 @@ impl SettingsPage {
         }
         let mut close = false;
         let width = if narrow { ctx.content_rect().width() } else { 680.0 };
-        let page_h = if narrow { (ctx.content_rect().height() - 150.0).clamp(220.0, PAGE_H) } else { PAGE_H };
+        let page_h = if narrow { (ctx.content_rect().height() - 110.0).max(220.0) } else { PAGE_H.min(ctx.content_rect().height() - 90.0).max(260.0) };
         let (_, x) = skin::dialog(ctx, "options", "Options", width, |ui| {
             if narrow {
                 ui.horizontal(|ui| {
@@ -246,12 +246,10 @@ impl SettingsPage {
         let (band, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
         skin::gradient(ui.painter(), band, theme::CAPTION_A(), FACE());
         ui.painter().text(pos2(band.left() + 6.0, band.center().y), Align2::LEFT_CENTER, PAGES[self.page], theme::bold(BODY), egui::Color32::WHITE);
-        egui::ScrollArea::vertical()
-            .id_salt(("options-scroll", self.page))
-            .max_height(height - 28.0)
-            .min_scrolled_height(height - 28.0)
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
+        ui.add_space(2.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height - 30.0), Sense::hover());
+        skin::scroll_view(ui, rect, ("options-scroll", self.page), [false, true], false, 20.0, |area, ui| {
+            area.show(ui, |ui| {
                 ui.set_width(ui.available_width() - 4.0);
                 ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
                 match self.page {
@@ -266,7 +264,8 @@ impl SettingsPage {
                     }
                     _ => self.fields_ui(ui, narrow),
                 }
-            });
+            })
+        });
     }
 
     fn save(&mut self, client: &Client, ctx: &egui::Context) {
@@ -378,6 +377,7 @@ impl SettingsPage {
                     if enabled { "" } else { ", off" }
                 );
                 let color = if sel { SEL_TEXT() } else if enabled { TEXT() } else { GRAY_TEXT() };
+                let text = crate::app::elide(p, &text, theme::font(BODY), r.width() - 26.0);
                 p.with_clip_rect(r).text(pos2(r.left() + 22.0, r.center().y), Align2::LEFT_CENTER, text, theme::font(BODY), color);
                 if resp.clicked() {
                     clicked = Some(i);
@@ -421,14 +421,14 @@ impl SettingsPage {
             for (key, label, max, unit) in [
                 ("port", "Port", 65535.0, ""),
                 ("connections", "Connections", 100.0, ""),
-                ("level", "Priority", 9.0, "0 = main, higher = backup"),
-                ("max_age", "Retention", 10000.0, "days (0 = unknown)"),
-                ("quota_gb", "Monthly quota", 100000.0, "GB (0 = none)"),
+                ("level", "Priority", 9.0, if narrow { "0 = main" } else { "0 = main, higher = backup" }),
+                ("max_age", "Retention", 10000.0, if narrow { "days" } else { "days (0 = unknown)" }),
+                ("quota_gb", "Monthly quota", 100000.0, if narrow { "GB" } else { "GB (0 = none)" }),
             ] {
                 ui.horizontal(|ui| {
                     row_label(ui, label, lw);
                     let mut v = server[key].as_f64().unwrap_or(0.0);
-                    if skin::spin(ui, ("srv", key), &mut v, 0.0, max, 0, 80.0).changed() {
+                    if skin::spin(ui, ("srv", key), &mut v, 0.0, max, 0, if narrow { 70.0 } else { 80.0 }).changed() {
                         server[key] = (v.round() as u64).into();
                     }
                     if !unit.is_empty() {

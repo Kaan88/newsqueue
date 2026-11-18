@@ -56,7 +56,7 @@ first three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/src/setup.rs` | Modeless Setup: 15 pages from the `FIELDS` table bound to `Settings` JSON, server list + editor, scheduler grid |
 | `app/src/pick.rs` | File/folder pickers (`IFileOpenDialog`/`IFileSaveDialog`) |
 | `app/src/cli.rs` | `--download-test`, `--par2-test`, `--unrar-test`, `--rss-test`, `--rss-download-test`, `--update-test` |
-| `app/src/classic.rs` | Windows 2000 colours for this process (import-table redirect of `GetSysColor`/`GetSysColorBrush`/`FillRect`, menu face) |
+| `app/src/classic.rs` | Windows 2000 colours for this process (import-table redirect of `GetSysColor`/`GetSysColorBrush`/`FillRect`, menu face) and classic gradient captions (CBT hook, DWM non-client rendering off) |
 | `app/src/util.rs` | DPI scaling, fonts, window creation, icons/image lists, `PrintWindow` capture for screenshots |
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
@@ -393,8 +393,14 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
   the loaded modules to the Windows 2000 "Windows Standard" scheme (face
   D4D0C8, selection 0A246A), then makes comctl32 re-read its cached colours.
   This is process-local: never call `SetSysColors`. Drawing inside
-  user32/win32k (`DrawEdge`, scroll bars, captions) keeps the system
-  colours. Segoe UI, light only (no
+  user32/win32k (`DrawEdge`, scroll bars) keeps the system colours.
+  Captions: `classic::hook_captions` (a thread `WH_CBT` hook) turns DWM's
+  non-client rendering off (`DWMWA_NCRENDERING_POLICY`) for every top-level
+  window with a caption and subclasses it; `caption_proc` paints the
+  Windows 2000 gradient caption (navy to light blue, grey when inactive,
+  bold white title) after user32's own non-client painting, keeping the
+  classic caption buttons. `classic::FORCE_ACTIVE` paints captions active in
+  screenshot mode. Segoe UI, light only (no
   dark mode). Per-monitor DPI v2; sizes are written at 96 DPI and scaled with
   `util::s()`. The main window has a menu bar (File, Queue, View, Tools,
   Help; `menu_bar`/`update_menu` in `main.rs`) besides the toolbars; Ctrl+O
@@ -422,7 +428,9 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 - The web UI (egui) is a classic desktop window: menu bar, toolbar with a
   gripper, tabs (Download queue, History, PAR2, Log, RSS), sunken list views
   with resizable headers (`skin::Columns`, widths kept in localStorage),
-  status bar panes and modal dialogs with a gradient caption
+  classic scroll bars (`skin::scroll_view`: arrows that repeat, a track
+  that pages, a raised thumb; egui's own bars are hidden), status bar panes
+  and modal dialogs with a gradient caption
   (`skin::dialog`; buttons right to left, Cancel added before OK). Options is
   a modal property sheet (`settings.rs`). Use the `skin.rs` widgets, never
   stock egui ones; colours are functions with a light and a dark value

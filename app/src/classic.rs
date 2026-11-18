@@ -14,8 +14,8 @@
 //! colour through `face_menus`.
 
 use std::sync::atomic::{AtomicIsize, AtomicUsize, Ordering};
-use windows::Win32::Foundation::{COLORREF, HANDLE, HMODULE};
-use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH};
+use windows::Win32::Foundation::{COLORREF, HANDLE, HMODULE, HWND, LPARAM, LRESULT, RECT, WPARAM};
+use windows::Win32::Graphics::Gdi::{CreateSolidBrush, HBRUSH, HDC};
 use windows::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress};
 use windows::Win32::System::Memory::{PAGE_PROTECTION_FLAGS, PAGE_READWRITE, VirtualProtect};
 use windows::Win32::System::ProcessStatus::EnumProcessModules;
@@ -233,6 +233,169 @@ pub fn face_menus(menu: HMENU) {
     unsafe {
         let _ = SetMenuInfo(menu, &info);
     }
+}
+
+// ------------------------------------------------------------ captions ---
+//
+// Windows 10/11 draw every title bar through DWM in the modern style, even
+// with visual styles off. `hook_captions` turns DWM's non-client rendering
+// off for each top-level window with a caption (so user32 draws the classic
+// frame and caption buttons) and paints the caption bar itself the way
+// Windows 2000 did: a navy-to-light-blue gradient (grey when inactive), the
+// small icon and the title in bold white.
+
+
+const SUBCLASS_ID: usize = 0x4E51_4341; // "NQCA"
+/// Accessibility state bit of a title-bar part that is not shown.
+const STATE_SYSTEM_INVISIBLE: u32 = 0x8000;
+
+/// Screenshot mode: draw every caption as active (the captured windows are
+/// not in the foreground).
+pub static FORCE_ACTIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Starts giving classic captions to the top-level windows this thread creates.
+pub fn hook_captions() {
+    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::UI::WindowsAndMessaging::{SetWindowsHookExW, WH_CBT};
+    unsafe {
+        let _ = SetWindowsHookExW(WH_CBT, Some(cbt_proc), None, GetCurrentThreadId());
+    }
+}
+
+unsafe extern "system" fn cbt_proc(code: i32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::{CBT_CREATEWNDW, CallNextHookEx, HCBT_CREATEWND, HHOOK, WS_CAPTION, WS_CHILD};
+    if code == HCBT_CREATEWND as i32 {
+        let cs = &*(*(lp.0 as *const CBT_CREATEWNDW)).lpcs;
+        let style = cs.style as u32;
+        if style & WS_CHILD.0 == 0 && style & WS_CAPTION.0 == WS_CAPTION.0 {
+            classic_caption(HWND(wp.0 as *mut _));
+        }
+    }
+    CallNextHookEx(Some(HHOOK::default()), code, wp, lp)
+}
+
+/// Gives one window the classic caption.
+pub fn classic_caption(h: HWND) {
+    use windows::Win32::Graphics::Dwm::{DWMNCRP_DISABLED, DWMWA_NCRENDERING_POLICY, DwmSetWindowAttribute};
+    use windows::Win32::UI::Shell::SetWindowSubclass;
+    unsafe {
+        let policy = DWMNCRP_DISABLED;
+        let _ = DwmSetWindowAttribute(h, DWMWA_NCRENDERING_POLICY, &policy as *const _ as *const _, std::mem::size_of_val(&policy) as u32);
+        let _ = SetWindowSubclass(h, Some(caption_proc), SUBCLASS_ID, 0);
+    }
+}
+
+unsafe extern "system" fn caption_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
+    use windows::Win32::UI::Shell::{DefSubclassProc, RemoveWindowSubclass};
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    match m {
+        WM_NCPAINT | WM_SETTEXT | WM_NCACTIVATE | WM_SETICON | WM_NCLBUTTONDOWN | WM_NCLBUTTONUP | WM_NCMOUSEMOVE | WM_NCMOUSELEAVE => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            // WM_NCACTIVATE says which state to draw before the window has it.
+            let active = FORCE_ACTIVE.load(Ordering::Relaxed) || if m == WM_NCACTIVATE { wp.0 != 0 } else { windows::Win32::UI::Input::KeyboardAndMouse::GetActiveWindow() == h || GetForegroundWindow() == h };
+            let dc = GetWindowDC(Some(h));
+            if !dc.is_invalid() {
+                paint_caption(h, dc, active);
+                ReleaseDC(Some(h), dc);
+            }
+            r
+        }
+        WM_PRINT => {
+            let r = DefSubclassProc(h, m, wp, lp);
+            if lp.0 as u32 & PRF_NONCLIENT as u32 != 0 {
+                paint_caption(h, HDC(wp.0 as *mut _), true);
+            }
+            r
+        }
+        WM_NCDESTROY => {
+            let _ = RemoveWindowSubclass(h, Some(caption_proc), SUBCLASS_ID);
+            DefSubclassProc(h, m, wp, lp)
+        }
+        _ => DefSubclassProc(h, m, wp, lp),
+    }
+}
+
+/// Paints the caption bar of `h` into its window DC `dc`, leaving the
+/// caption buttons user32 drew.
+unsafe fn paint_caption(h: HWND, dc: HDC, active: bool) {
+    use windows::Win32::Graphics::Gdi::*;
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    let mut info = TITLEBARINFOEX { cbSize: std::mem::size_of::<TITLEBARINFOEX>() as u32, ..Default::default() };
+    SendMessageW(h, WM_GETTITLEBARINFOEX, Some(WPARAM(0)), Some(LPARAM(&mut info as *mut _ as isize)));
+    let mut wr = RECT::default();
+    if GetWindowRect(h, &mut wr).is_err() || info.rcTitleBar.bottom <= info.rcTitleBar.top {
+        return;
+    }
+    let to_window = |r: RECT| RECT { left: r.left - wr.left, top: r.top - wr.top, right: r.right - wr.left, bottom: r.bottom - wr.top };
+    let mut bar = to_window(info.rcTitleBar);
+    // rcTitleBar starts after the system icon; the bar runs from the frame.
+    let mut wi = WINDOWINFO { cbSize: std::mem::size_of::<WINDOWINFO>() as u32, ..Default::default() };
+    if GetWindowInfo(h, &mut wi).is_ok() {
+        bar.left = wi.cxWindowBorders as i32;
+    }
+    // The bar runs up to the first caption button; buttons stay as drawn.
+    let mut right = bar.right;
+    for (i, b) in info.rgrect.iter().enumerate().skip(2) {
+        let invisible = info.rgstate[i] & STATE_SYSTEM_INVISIBLE != 0;
+        if !invisible && b.right > b.left {
+            right = right.min(to_window(*b).left - 2);
+        }
+    }
+    let saved = SaveDC(dc);
+    let bar_rect = RECT { right: bar.right, ..bar };
+    IntersectClipRect(dc, bar_rect.left, bar_rect.top, bar_rect.right, bar_rect.bottom);
+    for (i, b) in info.rgrect.iter().enumerate().skip(2) {
+        if info.rgstate[i] & STATE_SYSTEM_INVISIBLE == 0 && b.right > b.left {
+            let b = to_window(*b);
+            ExcludeClipRect(dc, b.left, b.top, b.right, b.bottom);
+        }
+    }
+    let (a, b) = if active { (rgb(0x0A, 0x24, 0x6A), rgb(0xA6, 0xCA, 0xF0)) } else { (rgb(0x80, 0x80, 0x80), rgb(0xC0, 0xC0, 0xC0)) };
+    // Gradient over the whole bar; the buttons are clipped out.
+    let vert = |x: i32, y: i32, c: u32| TRIVERTEX {
+        x,
+        y,
+        Red: ((c & 0xFF) << 8) as u16,
+        Green: (((c >> 8) & 0xFF) << 8) as u16,
+        Blue: (((c >> 16) & 0xFF) << 8) as u16,
+        Alpha: 0,
+    };
+    let verts = [vert(bar_rect.left, bar_rect.top, a), vert(bar_rect.right, bar_rect.bottom, b)];
+    let rect = GRADIENT_RECT { UpperLeft: 0, LowerRight: 1 };
+    let _ = GdiGradientFill(dc, &verts, &rect as *const _ as *const _, 1, GRADIENT_FILL_RECT_H);
+    // Small icon.
+    let mut x = bar.left + 2;
+    let icon = {
+        let i = SendMessageW(h, WM_GETICON, Some(WPARAM(ICON_SMALL as usize)), Some(LPARAM(0))).0;
+        let i = if i == 0 { SendMessageW(h, WM_GETICON, Some(WPARAM(ICON_SMALL2 as usize)), Some(LPARAM(0))).0 } else { i };
+        if i == 0 { GetClassLongPtrW(h, GCLP_HICONSM) as isize } else { i }
+    };
+    let style = GetWindowLongW(h, GWL_STYLE) as u32;
+    if icon != 0 && style & WS_SYSMENU.0 != 0 {
+        let sz = GetSystemMetrics(SM_CXSMICON);
+        let y = bar.top + (bar.bottom - bar.top - sz) / 2;
+        let _ = DrawIconEx(dc, x, y, HICON(icon as *mut _), sz, sz, 0, None, DI_NORMAL);
+        x += sz + 3;
+    } else {
+        x += 2;
+    }
+    // Title in the caption font, bold white.
+    let len = GetWindowTextLengthW(h);
+    let mut buf = vec![0u16; len as usize + 1];
+    let n = GetWindowTextW(h, &mut buf) as usize;
+    let mut ncm = NONCLIENTMETRICSW { cbSize: std::mem::size_of::<NONCLIENTMETRICSW>() as u32, ..Default::default() };
+    let _ = SystemParametersInfoW(SPI_GETNONCLIENTMETRICS, ncm.cbSize, Some(&mut ncm as *mut _ as *mut _), SYSTEM_PARAMETERS_INFO_UPDATE_FLAGS(0));
+    ncm.lfCaptionFont.lfWeight = 700;
+    let font = CreateFontIndirectW(&ncm.lfCaptionFont);
+    let old = SelectObject(dc, font.into());
+    SetBkMode(dc, TRANSPARENT);
+    SetTextColor(dc, COLORREF(if active { rgb(0xFF, 0xFF, 0xFF) } else { rgb(0xD4, 0xD0, 0xC8) }));
+    let mut tr = RECT { left: x, top: bar.top, right: right - 2, bottom: bar.bottom };
+    DrawTextW(dc, &mut buf[..n], &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS | DT_NOPREFIX);
+    SelectObject(dc, old);
+    let _ = DeleteObject(font.into());
+    let _ = RestoreDC(dc, saved);
 }
 
 #[cfg(test)]

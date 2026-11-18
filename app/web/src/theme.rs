@@ -173,6 +173,7 @@ fn apply(ctx: &egui::Context) {
         dormant_handle_opacity: 1.0,
         active_handle_opacity: 1.0,
         interact_handle_opacity: 1.0,
+        fade: egui::style::ScrollFadeStyle { strength: 0.0, size: 0.0 },
         ..Default::default()
     };
     style.interaction.selectable_labels = false;

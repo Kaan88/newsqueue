@@ -308,7 +308,7 @@ impl eframe::App for WebApp {
                     0 => self.queue_page(&mut page_ui, &snap, narrow),
                     1 => self.history_page(&mut page_ui, &snap, narrow),
                     2 => self.par2_page(&mut page_ui, &snap, narrow),
-                    3 => self.log_page(&mut page_ui, &snap),
+                    3 => self.log_page(&mut page_ui, &snap, narrow),
                     _ => self.rss_page(&mut page_ui, &snap, narrow),
                 }
                 ui.allocate_rect(page, Sense::hover());
@@ -677,21 +677,18 @@ fn list_view(ui: &mut Ui, cols: &mut Columns, id: &str, height: f32, n: usize, r
     skin::edge(ui.painter(), rect, Edge::Sunken);
     let inner = rect.shrink(2.0);
     let body = Rect::from_min_max(pos2(inner.left(), inner.top() + skin::HEADER_H), inner.max);
-    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(body).layout(egui::Layout::top_down(egui::Align::Min)));
-    child.set_clip_rect(body);
-    child.spacing_mut().item_spacing = vec2(0.0, 0.0);
     let total = cols.total();
-    let out = egui::ScrollArea::both()
-        .id_salt(id)
-        .auto_shrink([false, false])
-        .stick_to_bottom(stick_bottom)
-        .show_rows(&mut child, row_h, n, |ui, range| {
+    let out = skin::scroll_view(ui, body, id, [true, true], stick_bottom, row_h, |area, ui| {
+        ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
+        area.show_rows(ui, row_h, n, |ui, range| {
+            let w = total.max(ui.available_width());
             for i in range {
-                let (r, _) = ui.allocate_exact_size(vec2(total.max(body.width() - 16.0), row_h), Sense::hover());
+                let (r, _) = ui.allocate_exact_size(vec2(w, row_h), Sense::hover());
                 let lefts = cols.lefts(r.left());
                 row(ui, i, r, &lefts, cols);
             }
-        });
+        })
+    });
     if n == 0 {
         ui.painter().with_clip_rect(body).text(pos2(body.center().x, body.top() + 22.0), Align2::CENTER_CENTER, empty, theme::font(BODY), GRAY_TEXT());
     }
@@ -699,12 +696,39 @@ fn list_view(ui: &mut Ui, cols: &mut Columns, id: &str, height: f32, n: usize, r
     skin::list_header(ui, cols, inner, out.state.clamped_offset().x);
 }
 
+/// On a phone the first column fills the visible width (the others are a
+/// horizontal scroll away). Returns the width to keep for the desktop.
+fn fit_first_column(ui: &Ui, cols: &mut Columns, narrow: bool) -> f32 {
+    let keep = cols.widths[0];
+    if narrow {
+        cols.widths[0] = (ui.available_width() - 6.0).max(120.0);
+    }
+    keep
+}
+
 /// Text in column `c` of a row, clipped to the cell.
 fn cell(p: &egui::Painter, r: Rect, lefts: &[f32], cols: &Columns, c: usize, text: &str, color: Color32) {
     let cell = Rect::from_min_size(pos2(lefts[c], r.top()), vec2(cols.widths[c], r.height()));
     let clip = cell.shrink2(vec2(6.0, 0.0)).intersect(p.clip_rect());
     let (pos, align) = if cols.right[c] { (pos2(clip.right(), r.center().y), Align2::RIGHT_CENTER) } else { (pos2(cell.left() + 6.0, r.center().y), Align2::LEFT_CENTER) };
+    let text = if cols.right[c] { text.to_string() } else { elide(p, text, theme::font(BODY), clip.right() - pos.x) };
     p.with_clip_rect(clip).text(pos, align, text, theme::font(BODY), color);
+}
+
+/// `text` shortened with "..." to fit `width` points, as list views do.
+pub fn elide(p: &egui::Painter, text: &str, font: egui::FontId, width: f32) -> String {
+    let fits = |t: &str| p.layout_no_wrap(t.to_string(), font.clone(), Color32::WHITE).size().x <= width;
+    if fits(text) {
+        return text.to_string();
+    }
+    let chars: Vec<char> = text.chars().collect();
+    let (mut lo, mut hi) = (0usize, chars.len());
+    while lo < hi {
+        let mid = (lo + hi + 1) / 2;
+        let t: String = chars[..mid].iter().collect::<String>() + "...";
+        if fits(&t) { lo = mid } else { hi = mid - 1 }
+    }
+    chars[..lo].iter().collect::<String>().trim_end().to_string() + "..."
 }
 
 fn row_ground(ui: &Ui, r: Rect, selected: bool) -> Color32 {
@@ -801,7 +825,7 @@ impl WebApp {
                 let color = if f.held || fdone || done { GRAY_TEXT() } else { TEXT() };
                 let name_cell = Rect::from_min_size(pos2(lefts[0], r.top()), vec2(cols.widths[0], r.height()));
                 theme::paint_icon(&p, Rect::from_min_size(pos2(name_cell.left() + 24.0, r.center().y - 8.0), vec2(16.0, 16.0)), Icon::File, true);
-                p.with_clip_rect(name_cell.shrink2(vec2(4.0, 0.0)).intersect(p.clip_rect())).text(pos2(name_cell.left() + 44.0, r.center().y), Align2::LEFT_CENTER, &f.name, theme::font(BODY), color);
+                p.with_clip_rect(name_cell.shrink2(vec2(4.0, 0.0)).intersect(p.clip_rect())).text(pos2(name_cell.left() + 44.0, r.center().y), Align2::LEFT_CENTER, elide(&p, &f.name, theme::font(BODY), name_cell.width() - 48.0), theme::font(BODY), color);
                 let status = if f.held { "Held (PAR2)".to_string() } else if fdone { "Completed".into() } else if f.progress > 0.0 { format!("{:.0}%", f.progress * 100.0) } else { String::new() };
                 for (k, title) in cols.titles.clone().iter().enumerate().skip(1) {
                     match *title {
@@ -834,7 +858,7 @@ impl WebApp {
             p.with_clip_rect(name_cell.shrink2(vec2(4.0, 0.0)).intersect(p.clip_rect())).text(
                 pos2(name_cell.left() + 39.0, r.center().y),
                 Align2::LEFT_CENTER,
-                &c.subject,
+                elide(&p, &c.subject, if active { theme::bold(BODY) } else { theme::font(BODY) }, name_cell.width() - 43.0),
                 if active { theme::bold(BODY) } else { theme::font(BODY) },
                 dim,
             );
@@ -995,6 +1019,7 @@ impl WebApp {
             }
         });
         let mut cols = self.cols_hist.clone();
+        let desktop_w = fit_first_column(ui, &mut cols, narrow);
         let mut select = None;
         list_view(ui, &mut cols, "history", 0.0, n, if narrow { 24.0 } else { 18.0 }, "No history yet. Finished and failed jobs are listed here.", false, |ui, row, r, lefts, cols| {
             let i = index_of(row);
@@ -1010,7 +1035,7 @@ impl WebApp {
             };
             let name_cell = Rect::from_min_size(pos2(lefts[0], r.top()), vec2(cols.widths[0], r.height()));
             theme::paint_icon(&p, Rect::from_min_size(pos2(name_cell.left() + 4.0, r.center().y - 7.0), vec2(14.0, 14.0)), icon, true);
-            p.with_clip_rect(name_cell.shrink2(vec2(4.0, 0.0)).intersect(p.clip_rect())).text(pos2(name_cell.left() + 24.0, r.center().y), Align2::LEFT_CENTER, &h.name, theme::font(BODY), fg);
+            p.with_clip_rect(name_cell.shrink2(vec2(4.0, 0.0)).intersect(p.clip_rect())).text(pos2(name_cell.left() + 24.0, r.center().y), Align2::LEFT_CENTER, elide(&p, &h.name, theme::font(BODY), name_cell.width() - 28.0), theme::font(BODY), fg);
             cell(&p, r, lefts, &cols, 1, status, fg);
             cell(&p, r, lefts, &cols, 2, &h.size, fg);
             cell(&p, r, lefts, &cols, 3, &h.date, fg);
@@ -1025,6 +1050,7 @@ impl WebApp {
                 }
             });
         });
+        cols.widths[0] = desktop_w;
         self.cols_hist = cols;
         if select.is_some() {
             self.hist_sel = select;
@@ -1049,8 +1075,9 @@ impl WebApp {
             }
         });
         let mut cols = self.cols_par2.clone();
+        let desktop_w = fit_first_column(ui, &mut cols, narrow);
         let mut select = None;
-        list_view(ui, &mut cols, "par2", 0.0, n, 18.0, "No PAR2 sets.", false, |ui, i, r, lefts, cols| {
+        list_view(ui, &mut cols, "par2", 0.0, n, if narrow { 24.0 } else { 18.0 }, "No PAR2 sets.", false, |ui, i, r, lefts, cols| {
             let s = &snap.par2[i];
             let resp = ui.interact(r, ui.scope_id().with(("prow", i)), Sense::click());
             let fg = row_ground(ui, r, sel == Some(i));
@@ -1073,6 +1100,7 @@ impl WebApp {
                 start = Some(i);
             }
         });
+        cols.widths[0] = desktop_w;
         self.cols_par2 = cols;
         if select.is_some() {
             self.par2_sel = select;
@@ -1082,7 +1110,7 @@ impl WebApp {
         }
     }
 
-    fn log_page(&mut self, ui: &mut Ui, snap: &Snapshot) {
+    fn log_page(&mut self, ui: &mut Ui, snap: &Snapshot, narrow: bool) {
         let ctx = ui.ctx().clone();
         let f = self.log_filter.trim().to_lowercase();
         let lines: Vec<&net::LogLine> = snap.log_tail.iter().filter(|l| f.is_empty() || l.message.to_lowercase().contains(&f) || l.level.to_lowercase().contains(&f)).collect();
@@ -1093,11 +1121,11 @@ impl WebApp {
                 self.toast = Some(("Log copied".into(), ctx.input(|i| i.time) + 4.0));
             }
             skin::label(ui, "Filter:");
-            skin::field(ui, 200.0, 1, egui::TextEdit::singleline(&mut self.log_filter).hint_text("Filter log lines"));
-            skin::label(ui, &format!("{} of {} lines", lines.len(), snap.log_tail.len()));
+            skin::field(ui, if narrow { 120.0 } else { 200.0 }, 1, egui::TextEdit::singleline(&mut self.log_filter).hint_text("Filter log lines"));
+            skin::label(ui, &if narrow { format!("{}/{}", lines.len(), snap.log_tail.len()) } else { format!("{} of {} lines", lines.len(), snap.log_tail.len()) });
         });
         let mut cols = self.cols_log.clone();
-        list_view(ui, &mut cols, "log", 0.0, lines.len(), 18.0, "The log is empty.", true, |ui, i, r, lefts, cols| {
+        list_view(ui, &mut cols, "log", 0.0, lines.len(), if narrow { 24.0 } else { 18.0 }, "The log is empty.", true, |ui, i, r, lefts, cols| {
             let l = lines[i];
             let color = match l.level.as_str() {
                 "Error" => theme::RED(),
@@ -1128,13 +1156,15 @@ impl WebApp {
             }
         });
         let mut cols = self.cols_rss.clone();
-        list_view(ui, &mut cols, "rss", 0.0, snap.rss.len(), 18.0, "No feed items. Add feeds with Feeds..., then Refresh.", false, |ui, i, r, lefts, cols| {
+        let desktop_w = fit_first_column(ui, &mut cols, narrow);
+        list_view(ui, &mut cols, "rss", 0.0, snap.rss.len(), if narrow { 24.0 } else { 18.0 }, "No feed items. Add feeds with Feeds..., then Refresh.", false, |ui, i, r, lefts, cols| {
             let it = &snap.rss[i];
             let p = ui.painter();
             cell(p, r, lefts, &cols, 0, &it.name, TEXT());
             cell(p, r, lefts, &cols, 1, &it.date, TEXT());
             cell(p, r, lefts, &cols, 2, &it.description, GRAY_TEXT());
         });
+        cols.widths[0] = desktop_w;
         self.cols_rss = cols;
     }
 }

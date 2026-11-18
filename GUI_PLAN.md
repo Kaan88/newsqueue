@@ -81,7 +81,9 @@ Win32 imports.
 (header, query or login cookie), SSE, private settings never sent or
 changed, Ctrl+C/SIGTERM saves. `app/web`: the egui web UI (queue tree with
 drag reorder, history, PAR2, log, RSS, Options, Add NZB, phone layout),
-since 2026-11-18 drawn as a classic Windows 2000 window like the desktop. `Dockerfile` + `compose.yaml`; `docker-smoke.sh` (build, health, egui page,
+since 2026-11-18 drawn as a classic Windows 2000 window like the desktop
+(classic scroll bars; the phone layout checked in a 375 px wide frame:
+names elide with "...", Options fills the screen, first columns fill the width). `Dockerfile` + `compose.yaml`; `docker-smoke.sh` (build, health, egui page,
 API key, mock-NNTP download through the API, save on stop) passes on a Debian
 Docker host. The API is
 also a library, so the desktop app can serve it (Web access).

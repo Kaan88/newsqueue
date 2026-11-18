@@ -300,13 +300,11 @@ pub fn field(ui: &mut Ui, width: f32, rows: usize, edit: TextEdit<'_>) -> Respon
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
         child.add(edit)
     } else {
-        let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-        egui::ScrollArea::vertical()
-            .id_salt(ui.scope_id().with(("field", rect.min.x as i32, rect.min.y as i32)))
-            .max_height(inner.height())
-            .auto_shrink([false, false])
-            .show(&mut child, |ui| ui.add_sized([inner.width() - 18.0, inner.height() - 2.0], edit.desired_rows(rows)))
-            .inner
+        scroll_view(ui, inner, ("field", rect.min.x as i32, rect.min.y as i32), [false, true], false, 14.0, |area, ui| {
+            let w = ui.available_width();
+            area.show(ui, |ui| ui.add_sized([w, inner.height() - 2.0], edit.desired_rows(rows)))
+        })
+        .inner
     }
 }
 
@@ -763,7 +761,7 @@ pub fn dialog<R>(ctx: &egui::Context, id: &str, title: &str, width: f32, add: im
     let screen = ctx.content_rect();
     let width = width.min(screen.width() - 8.0);
     let mut close = false;
-    let area = egui::Modal::default_area(id).anchor(Align2::CENTER_CENTER, offset);
+    let area = egui::Modal::default_area(id).anchor(Align2::CENTER_CENTER, offset).constrain(true);
     let shown = egui::Modal::new(id)
         .area(area)
         .backdrop_color(Color32::TRANSPARENT)
@@ -899,4 +897,195 @@ pub fn size_grip(p: &egui::Painter, corner: Pos2) {
         p.line_segment([pos2(corner.x - o + 1.0, corner.y - 1.0), pos2(corner.x - 1.0, corner.y - o + 1.0)], Stroke::new(1.0, SHADOW()));
         p.line_segment([pos2(corner.x - o + 2.0, corner.y - 1.0), pos2(corner.x - 1.0, corner.y - o + 2.0)], Stroke::new(1.0, SHADOW()));
     }
+}
+
+// ---------------------------------------------------------- scroll bars ---
+
+/// Width of a classic scroll bar.
+pub const SCROLL_BAR: f32 = 16.0;
+
+/// A scroll area in `rect` with classic Windows scroll bars: arrow buttons
+/// (held, they repeat), a dithered track that pages and a raised thumb.
+/// The egui bars stay hidden; a bar appears only while its axis overflows.
+/// `show` gets the configured `ScrollArea` and the viewport ui and must call
+/// one of its `show` functions.
+pub fn scroll_view<R>(
+    ui: &mut Ui,
+    rect: Rect,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    dirs: [bool; 2],
+    stick_bottom: bool,
+    step: f32,
+    show: impl FnOnce(egui::ScrollArea, &mut Ui) -> egui::scroll_area::ScrollAreaOutput<R>,
+) -> egui::scroll_area::ScrollAreaOutput<R> {
+    let key = ui.scope_id().with(("scroll-view", id_salt));
+    let content: Vec2 = ui.data(|d| d.get_temp(key)).unwrap_or(Vec2::ZERO);
+    // Which bars are needed (one bar can make the other necessary).
+    let mut need = [false, false];
+    for _ in 0..2 {
+        let w = rect.width() - if need[1] { SCROLL_BAR } else { 0.0 };
+        let h = rect.height() - if need[0] { SCROLL_BAR } else { 0.0 };
+        need = [dirs[0] && content.x > w + 0.5, dirs[1] && content.y > h + 0.5];
+    }
+    let view = Rect::from_min_max(rect.min, pos2(rect.right() - if need[1] { SCROLL_BAR } else { 0.0 }, rect.bottom() - if need[0] { SCROLL_BAR } else { 0.0 }));
+    let area_id: Option<Id> = ui.data(|d| d.get_temp(key.with("area")));
+    let offset = area_id.and_then(|id| egui::scroll_area::State::load(ui.ctx(), id)).map(|s| s.clamped_offset()).unwrap_or(Vec2::ZERO);
+    let max = (content - view.size()).max(Vec2::ZERO);
+    let mut wanted = offset;
+    for axis in 0..2 {
+        if !need[axis] {
+            continue;
+        }
+        let bar = if axis == 1 {
+            Rect::from_min_max(pos2(view.right(), rect.top()), pos2(rect.right(), view.bottom()))
+        } else {
+            Rect::from_min_max(pos2(rect.left(), view.bottom()), pos2(view.right(), rect.bottom()))
+        };
+        let page = if axis == 1 { view.height() } else { view.width() };
+        wanted[axis] = scroll_bar(ui, key.with(axis), bar, axis, offset[axis], max[axis], page, step);
+    }
+    if need[0] && need[1] {
+        ui.painter().rect_filled(Rect::from_min_max(view.max, rect.max), 0.0, FACE());
+    }
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(view).layout(egui::Layout::top_down(egui::Align::Min)));
+    child.set_clip_rect(view.intersect(ui.clip_rect()));
+    let mut area = egui::ScrollArea::new(dirs)
+        .id_salt(key)
+        .auto_shrink([false, false])
+        .stick_to_bottom(stick_bottom)
+        .scroll_bar_visibility(egui::scroll_area::ScrollBarVisibility::AlwaysHidden);
+    if wanted != offset {
+        area = area.scroll_offset(wanted);
+    }
+    let out = show(area, &mut child);
+    ui.data_mut(|d| {
+        d.insert_temp(key, out.content_size);
+        d.insert_temp(key.with("area"), out.id);
+    });
+    // Bars drawn for an older size or offset: draw again.
+    if out.content_size != content || out.state.clamped_offset() != wanted {
+        ui.ctx().request_repaint();
+    }
+    out
+}
+
+/// True on the press of `r` and then, while it is held, every 50 ms after
+/// a 400 ms delay, like a held scroll arrow.
+fn auto_repeat(ui: &Ui, r: &Response, key: Id) -> bool {
+    if !r.is_pointer_button_down_on() {
+        ui.data_mut(|d| d.remove::<f64>(key));
+        return false;
+    }
+    let now = ui.input(|i| i.time);
+    ui.ctx().request_repaint_after(std::time::Duration::from_millis(50));
+    match ui.data(|d| d.get_temp::<f64>(key)) {
+        None => {
+            ui.data_mut(|d| d.insert_temp(key, now + 0.4));
+            true
+        }
+        Some(t) if now >= t => {
+            ui.data_mut(|d| d.insert_temp(key, now + 0.05));
+            true
+        }
+        _ => false,
+    }
+}
+
+/// One classic scroll bar along `axis` (0 horizontal, 1 vertical) in `bar`.
+/// Returns the offset the user asked for.
+#[allow(clippy::too_many_arguments)]
+fn scroll_bar(ui: &Ui, id: Id, bar: Rect, axis: usize, offset: f32, max: f32, page: f32, step: f32) -> f32 {
+    let along = |r: Rect| if axis == 1 { r.height() } else { r.width() };
+    let len = along(bar);
+    let arrow = SCROLL_BAR.min(len / 2.0);
+    let (a_rect, b_rect) = if axis == 1 {
+        (Rect::from_min_size(bar.min, vec2(bar.width(), arrow)), Rect::from_min_max(pos2(bar.left(), bar.bottom() - arrow), bar.max))
+    } else {
+        (Rect::from_min_size(bar.min, vec2(arrow, bar.height())), Rect::from_min_max(pos2(bar.right() - arrow, bar.top()), bar.max))
+    };
+    let track = if axis == 1 {
+        Rect::from_min_max(pos2(bar.left(), a_rect.bottom()), pos2(bar.right(), b_rect.top()))
+    } else {
+        Rect::from_min_max(pos2(a_rect.right(), bar.top()), pos2(b_rect.left(), bar.bottom()))
+    };
+    let track_len = along(track).max(0.0);
+    let thumb_len = if max > 0.0 { (track_len * page / (page + max)).max(8.0).min(track_len) } else { track_len };
+    let thumb_rect = |off: f32| {
+        let t = if max > 0.0 { (track_len - thumb_len) * (off / max).clamp(0.0, 1.0) } else { 0.0 };
+        if axis == 1 {
+            Rect::from_min_size(pos2(track.left(), track.top() + t), vec2(track.width(), thumb_len))
+        } else {
+            Rect::from_min_size(pos2(track.left() + t, track.top()), vec2(thumb_len, track.height()))
+        }
+    };
+    // The track first: the thumb is registered later, so it is on top.
+    let tr = ui.interact(track, id.with("track"), Sense::click_and_drag());
+    let a = ui.interact(a_rect, id.with("a"), Sense::click_and_drag());
+    let b = ui.interact(b_rect, id.with("b"), Sense::click_and_drag());
+    let show_thumb = track_len >= 8.0 && max > 0.0;
+    let thumb = ui.interact(if show_thumb { thumb_rect(offset) } else { Rect::NOTHING }, id.with("thumb"), Sense::drag());
+    let mut off = offset;
+    if auto_repeat(ui, &a, id.with("ra")) {
+        off -= step;
+    }
+    if auto_repeat(ui, &b, id.with("rb")) {
+        off += step;
+    }
+    let mut paging = None;
+    let pointer = ui.input(|i| i.pointer.interact_pos());
+    match pointer.filter(|_| tr.is_pointer_button_down_on()) {
+        Some(p) => {
+            let t = thumb_rect(offset);
+            let before = if axis == 1 { p.y < t.top() } else { p.x < t.left() };
+            let after = if axis == 1 { p.y > t.bottom() } else { p.x > t.right() };
+            if before || after {
+                paging = Some(before);
+                if auto_repeat(ui, &tr, id.with("rt")) {
+                    off += if before { -page } else { page };
+                }
+            }
+        }
+        None => {
+            auto_repeat(ui, &tr, id.with("rt"));
+        }
+    }
+    if thumb.dragged() && track_len > thumb_len {
+        off += thumb.drag_delta()[axis] * max / (track_len - thumb_len);
+    }
+    let off = off.clamp(0.0, max);
+    // Paint.
+    let p = ui.painter();
+    p.rect_filled(track, 0.0, theme::TRACK());
+    if let Some(before) = paging {
+        // The pressed part of the track turns dark, as in Windows 2000.
+        let t = thumb_rect(off);
+        let part = match (axis, before) {
+            (1, true) => Rect::from_min_max(track.min, pos2(track.right(), t.top())),
+            (1, false) => Rect::from_min_max(pos2(track.left(), t.bottom()), track.max),
+            (_, true) => Rect::from_min_max(track.min, pos2(t.left(), track.bottom())),
+            (_, false) => Rect::from_min_max(pos2(t.right(), track.top()), track.max),
+        };
+        p.rect_filled(part, 0.0, DKSHADOW());
+    }
+    for (r, resp, back) in [(a_rect, &a, true), (b_rect, &b, false)] {
+        let down = resp.is_pointer_button_down_on() && resp.hovered();
+        p.rect_filled(r, 0.0, FACE());
+        edge(p, r, if down { Edge::Pressed } else { Edge::Raised });
+        let c = r.center() + if down { vec2(1.0, 1.0) } else { Vec2::ZERO };
+        let color = if max > 0.0 { TEXT() } else { GRAY_TEXT() };
+        let (s, h) = (3.5, 2.0);
+        let pts = match (axis, back) {
+            (1, true) => vec![pos2(c.x - s, c.y + h), pos2(c.x + s, c.y + h), pos2(c.x, c.y - h)],
+            (1, false) => vec![pos2(c.x - s, c.y - h), pos2(c.x + s, c.y - h), pos2(c.x, c.y + h)],
+            (_, true) => vec![pos2(c.x + h, c.y - s), pos2(c.x + h, c.y + s), pos2(c.x - h, c.y)],
+            (_, false) => vec![pos2(c.x - h, c.y - s), pos2(c.x - h, c.y + s), pos2(c.x + h, c.y)],
+        };
+        p.add(Shape::convex_polygon(pts, color, Stroke::NONE));
+    }
+    if show_thumb {
+        let t = thumb_rect(off);
+        p.rect_filled(t, 0.0, FACE());
+        edge(p, t, Edge::Raised);
+    }
+    off
 }

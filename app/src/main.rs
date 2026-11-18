@@ -254,6 +254,8 @@ fn main() {
         // ...in the Windows 2000 colours (this process only; see classic.rs).
         let patched = classic::install();
         classic::face_classes();
+        classic::hook_captions();
+        classic::FORCE_ACTIVE.store(demo, std::sync::atomic::Ordering::Relaxed);
         if patched == 0 {
             eprintln!("classic colours: no import slots found");
         }
