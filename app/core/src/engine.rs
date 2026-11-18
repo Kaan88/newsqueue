@@ -1213,7 +1213,7 @@ impl Engine {
                     .cloned()
                     .collect();
                 if !servers.is_empty() {
-                    let job = download::job_for_collection(
+                    let mut job = download::job_for_collection(
                         &self.queue[i],
                         self.settings.skip_existing,
                         self.settings.retry_count,
@@ -1223,6 +1223,8 @@ impl Engine {
                         self.settings.cache_cleanup_minutes,
                         ProxyConfig::from_settings(&self.settings),
                     );
+                    job.precheck = self.settings.precheck_articles;
+                    job.max_missing = repair_budget(&self.queue[i]);
                     // The downloader opens each server's connection count and
                     // splits the global limit across all workers
                     // (function 0x835e38 divides by the active count).
@@ -1246,7 +1248,24 @@ impl Engine {
             let mut completed_id: Option<u64> = None;
             let mut count_collection = false;
             let mut failed: Option<(String, String)> = None;
+            let abort_hopeless = self.settings.abort_hopeless;
             if let Some(c) = self.queue.iter_mut().find(|c| c.id == snapshot.id) {
+                // More is missing than the PAR2 set can rebuild: stop now
+                // instead of downloading the rest for nothing.
+                let judged = matches!(snapshot.stage, download::Stage::Downloading | download::Stage::Incomplete);
+                if abort_hopeless && judged {
+                    if let Some(budget) = repair_budget(c).filter(|b| snapshot.missing > *b) {
+                        c.status = ItemStatus::Error;
+                        failed = Some((
+                            c.subject.clone(),
+                            format!(
+                                "Stopped: {} articles are missing; the PAR2 set can rebuild about {budget}.",
+                                snapshot.missing
+                            ),
+                        ));
+                        clear = true;
+                    }
+                }
                 let previous = c.downloaded;
                 if snapshot.stage == download::Stage::Completed {
                     c.downloaded = c.total_bytes as f64;
@@ -1269,6 +1288,7 @@ impl Engine {
                     speed_this_frame = snapshot.speed_bps;
                 }
                 match snapshot.stage {
+                    _ if failed.is_some() => {}
                     download::Stage::Completed => {
                         completed = Some((c.subject.clone(), c.total_bytes));
                         completed_id = Some(c.id);
@@ -1465,6 +1485,33 @@ pub struct HistoryItem {
     pub name: String,
     pub date: String,
     pub size: String,
+}
+
+/// How many missing articles the collection's PAR2 recovery volumes can
+/// make up for (held ones included), estimated from their size and the
+/// average article size. `None` when there is no PAR2 data to judge by.
+pub fn repair_budget(c: &Collection) -> Option<usize> {
+    let is_par2 = |n: &str| n.to_ascii_lowercase().ends_with(".par2");
+    if !c.files.iter().any(|f| is_par2(&f.name)) {
+        return None;
+    }
+    let recovery: u64 = c
+        .files
+        .iter()
+        .filter(|f| par2::volume_blocks(&f.name).is_some())
+        .map(|f| f.bytes)
+        .sum();
+    let (bytes, articles) = c
+        .files
+        .iter()
+        .filter(|f| !is_par2(&f.name))
+        .flat_map(|f| f.segments.iter())
+        .fold((0u64, 0u64), |(b, n), s| (b + s.bytes, n + 1));
+    if articles == 0 {
+        return None;
+    }
+    let average = (bytes / articles).max(1);
+    Some((recovery / average) as usize)
 }
 
 pub fn history_path() -> PathBuf {

@@ -385,6 +385,11 @@ pub struct Settings {
     /// Download only the PAR2 index first; fetch recovery volumes when a
     /// verify finds damage, and only as many blocks as the repair needs.
     pub par2_on_demand: bool,
+    /// Stop a download once more articles are missing than its PAR2
+    /// recovery volumes can rebuild.
+    pub abort_hopeless: bool,
+    /// Check every article with STAT before downloading a collection.
+    pub precheck_articles: bool,
     pub auto_unrar: bool,
     pub create_dir_nzb_name: bool,
     pub create_dir_group_name: bool,
@@ -473,6 +478,8 @@ impl Default for Settings {
             par2_repairing: true,
             cleanup_after_repair: true,
             par2_on_demand: true,
+            abort_hopeless: true,
+            precheck_articles: false,
             auto_unrar: false,
             create_dir_nzb_name: false,
             create_dir_group_name: false,

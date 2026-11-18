@@ -284,6 +284,64 @@ mod tests {
     }
 
     #[test]
+    fn a_download_par2_cannot_save_is_stopped() {
+        use crate::download::tests::{local_server, mock_server_counted, yenc_part};
+        let root = std::env::temp_dir().join(format!("newsqueue-hopeless-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        // Only the first of five a.rar articles exists; the set has one
+        // article's worth of recovery data.
+        let (port, _) = mock_server_counted(vec![("a.rar@x".into(), yenc_part(b"ABCDE", 5, 1))]);
+        let mut s = Settings::default();
+        s.servers = vec![local_server(port, 2)];
+        s.download_dir = root.to_string_lossy().to_string();
+        s.low_free_space_mb = 0;
+        let mut e = Engine::new(s, true);
+        e.queue.clear();
+        let mut nzb = nzb_with(&["a.rar", "a.par2", "a.vol0+1.par2"]);
+        nzb.files[0].segments = (1..=5)
+            .map(|n| crate::model::Segment {
+                number: n,
+                bytes: 100,
+                id: if n == 1 { "a.rar@x".into() } else { format!("gone{n}@x") },
+            })
+            .collect();
+        nzb.files[0].bytes = 500;
+        let id = e.add_nzb_from_parsed(nzb, String::new(), false);
+        e.connect();
+        let started = std::time::Instant::now();
+        while started.elapsed() < std::time::Duration::from_secs(10) {
+            e.tick();
+            let status = e.queue[e.index_of(id).unwrap()].status;
+            if !matches!(status, crate::model::ItemStatus::Queued | crate::model::ItemStatus::Downloading) {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert_eq!(e.queue[e.index_of(id).unwrap()].status, crate::model::ItemStatus::Error);
+        assert!(e.logs.iter().any(|l| l.message.contains("articles are missing; the PAR2 set can rebuild about 1")));
+        assert!(e.active_dl.is_none());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn repair_budget_comes_from_the_recovery_volumes() {
+        let mut e = Engine::new(Settings::default(), true);
+        // 100-byte articles; 300 bytes of recovery volumes: about 3 articles.
+        let id = e.add_nzb_from_parsed(
+            nzb_with(&["a.rar", "b.rar", "a.par2", "a.vol0+1.par2", "a.vol1+2.par2", "a.vol3+4.par2"]),
+            String::new(),
+            true,
+        );
+        let c = &e.queue[e.index_of(id).unwrap()];
+        assert_eq!(crate::engine::repair_budget(c), Some(3));
+        let id = e.add_nzb_from_parsed(nzb_with(&["a.rar", "b.rar"]), String::new(), true);
+        assert_eq!(crate::engine::repair_budget(&e.queue[e.index_of(id).unwrap()]), None);
+        let id = e.add_nzb_from_parsed(nzb_with(&["a.rar", "a.par2"]), String::new(), true);
+        assert_eq!(crate::engine::repair_budget(&e.queue[e.index_of(id).unwrap()]), Some(0));
+    }
+
+    #[test]
     fn par2_volumes_are_held_then_released_on_demand() {
         let mut e = Engine::new(Settings::default(), true);
         e.queue.clear();

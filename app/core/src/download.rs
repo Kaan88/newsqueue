@@ -81,6 +81,11 @@ pub struct DownloadJob {
     pub cache_mb: u32,
     pub cache_cleanup_minutes: u32,
     pub proxy: ProxyConfig,
+    /// STAT every article before downloading (`precheck_articles`).
+    pub precheck: bool,
+    /// Most missing articles the PAR2 set can still make up for; `None`
+    /// when the collection has no PAR2 data to judge by.
+    pub max_missing: Option<usize>,
     pub files: Vec<DownloadFile>,
 }
 
@@ -104,6 +109,8 @@ pub fn job_for_collection(
         cache_mb,
         cache_cleanup_minutes,
         proxy,
+        precheck: false,
+        max_missing: None,
         files: c
             .files
             .iter()
@@ -296,6 +303,9 @@ fn run_job(
         return Ok(());
     }
     fs::create_dir_all(&job.folder).map_err(|e| format!("Cannot create folder: {e}"))?;
+    if job.precheck {
+        precheck(job, servers, snap)?;
+    }
     snapshot_set(snap, |s| {
         s.stage = Stage::Connecting;
         s.message = format!(
@@ -762,6 +772,47 @@ enum Next {
     Task(Box<Task>),
     Wait,
     Done,
+}
+
+/// Asks the servers (in order) for every article with STAT. Fails the job
+/// when more are missing everywhere than `max_missing` allows.
+fn precheck(job: &DownloadJob, servers: &[Server], snap: &Mutex<DownloadSnapshot>) -> Result<(), String> {
+    let ids: Vec<&str> = job
+        .files
+        .iter()
+        .filter(|f| !f.skip)
+        .flat_map(|f| f.segments.iter().map(|s| s.id.as_str()))
+        .collect();
+    snapshot_set(snap, |s| s.message = format!("Pre-check: {} articles", ids.len()));
+    let mut unknown: Vec<&str> = ids.clone();
+    for server in servers {
+        if unknown.is_empty() {
+            break;
+        }
+        let Ok(mut nntp) = Nntp::connect(server, &job.proxy) else { continue };
+        let mut still = Vec::new();
+        for id in unknown {
+            match nntp.stat(id) {
+                Ok(true) => {}
+                Ok(false) => still.push(id),
+                // Some servers have no STAT: do not judge by this one.
+                Err(_) => still.push(id),
+            }
+        }
+        let _ = nntp.quit();
+        unknown = still;
+    }
+    let missing = unknown.len();
+    snapshot_set(snap, |s| {
+        s.message = format!("Pre-check: {} of {} articles available", ids.len() - missing, ids.len())
+    });
+    if missing > 0 && job.max_missing.map(|m| missing > m).unwrap_or(false) {
+        return Err(format!(
+            "Pre-check: {missing} of {} articles are missing, more than the PAR2 set can repair",
+            ids.len()
+        ));
+    }
+    Ok(())
 }
 
 fn mark_missing(snap: &Mutex<DownloadSnapshot>, count: usize) {
@@ -1449,6 +1500,16 @@ impl Nntp {
         Ok(out)
     }
 
+    /// True when the server has the article (`223`), false on `430`/`423`.
+    fn stat(&mut self, id: &str) -> Result<bool, String> {
+        let response = self.command(&format!("STAT <{id}>"))?;
+        match reply_code(&response).as_str() {
+            "223" => Ok(true),
+            "430" | "423" => Ok(false),
+            code => Err(format!("Server refused STAT: {code}")),
+        }
+    }
+
     fn quit(&mut self) -> Result<(), String> {
         let _ = self.send("QUIT");
         Ok(())
@@ -1731,7 +1792,7 @@ fn crc32(data: &[u8]) -> u32 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     #[test]
@@ -1789,7 +1850,7 @@ mod tests {
         mock_server_counted(articles).0
     }
 
-    fn mock_server_counted(
+    pub(crate) fn mock_server_counted(
         articles: Vec<(String, Vec<u8>)>,
     ) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
         let counter = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -1815,6 +1876,10 @@ mod tests {
                         let _ = stream.write_all(b"281 ok\r\n");
                     } else if line == "QUIT" {
                         break;
+                    } else if let Some(id) = line.strip_prefix("STAT <") {
+                        let id = id.trim_end_matches('>');
+                        let have = articles.iter().any(|(key, _)| key == id);
+                        let _ = stream.write_all(if have { b"223 0 ok\r\n" } else { b"430 no such article\r\n" });
                     } else if let Some(id) = line.strip_prefix("BODY <") {
                         count.fetch_add(1, Ordering::Relaxed);
                         let id = id.trim_end_matches('>');
@@ -1843,6 +1908,8 @@ mod tests {
             cache_mb: 0,
             cache_cleanup_minutes: 30,
             proxy: ProxyConfig::default(),
+            precheck: false,
+            max_missing: None,
             files: vec![DownloadFile {
                 skip: false,
                 name: "mock.bin".into(),
@@ -2140,6 +2207,8 @@ mod tests {
             cache_mb: 1,
             cache_cleanup_minutes: 30,
             proxy: ProxyConfig::default(),
+            precheck: false,
+            max_missing: None,
             files: vec![
                 DownloadFile {
                     skip: false,
@@ -2173,7 +2242,7 @@ mod tests {
     }
 
     /// One yEnc part of a `total`-byte file starting at 1-based `begin`.
-    fn yenc_part(data: &[u8], total: usize, begin: usize) -> Vec<u8> {
+    pub(crate) fn yenc_part(data: &[u8], total: usize, begin: usize) -> Vec<u8> {
         let mut out = format!(
             "=ybegin part=1 line=128 size={total} name=mock.bin\n=ypart begin={begin} end={}\n",
             begin + data.len() - 1
@@ -2251,7 +2320,7 @@ mod tests {
         port
     }
 
-    fn local_server(port: u16, connections: u32) -> Server {
+    pub(crate) fn local_server(port: u16, connections: u32) -> Server {
         let mut server = Server::default();
         server.address = "127.0.0.1".into();
         server.port = port;
@@ -2450,6 +2519,32 @@ mod tests {
     }
 
     #[test]
+    fn precheck_refuses_a_job_with_too_many_missing_articles() {
+        let root = temp_root("precheck");
+        // p2 is gone everywhere; the PAR2 set could make up for none.
+        let (port, count) = mock_server_counted(vec![("p1".into(), yenc_part(b"ABCDE", 10, 1))]);
+        let mut job = two_part_job(&root);
+        job.precheck = true;
+        job.max_missing = Some(0);
+        let active = spawn(job, vec![local_server(port, 1)], 0.0);
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Error, "{}", snapshot.message);
+        assert!(snapshot.message.contains("Pre-check: 1 of 2"), "{}", snapshot.message);
+        assert_eq!(count.load(Ordering::Relaxed), 0, "nothing is downloaded");
+        let _ = fs::remove_dir_all(&root);
+
+        // Within budget (or no PAR2 to judge by): the job runs.
+        let root = temp_root("precheck-ok");
+        let (port, _) = mock_server_counted(vec![("p1".into(), yenc_part(b"ABCDE", 10, 1))]);
+        let mut job = two_part_job(&root);
+        job.precheck = true;
+        job.max_missing = Some(1);
+        let snapshot = wait_for(&spawn(job, vec![local_server(port, 1)], 0.0));
+        assert_eq!(snapshot.stage, Stage::Incomplete, "{}", snapshot.message);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
     fn skipped_files_are_neither_fetched_nor_written() {
         let root = temp_root("skip");
         let (port, count) = mock_server_counted(vec![("p2".into(), yenc_part(b"FGHIJ", 5, 1))]);
@@ -2535,6 +2630,8 @@ pub fn run_download_test(path: &str) -> Result<(), String> {
         cache_mb: settings.article_cache_mb,
         cache_cleanup_minutes: settings.cache_cleanup_minutes,
         proxy: ProxyConfig::from_settings(&settings),
+        precheck: false,
+        max_missing: None,
         files: parsed
             .files
             .iter()

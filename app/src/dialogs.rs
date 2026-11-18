@@ -580,6 +580,12 @@ fn page_par2(ui: &mut Ui, s: &mut Settings) {
             ui.label("Fetch recovery volumes only when needed");
             crate::skin::checkbox_label(ui, &mut s.par2_on_demand, "");
             ui.end_row();
+            ui.label("Stop downloads PAR2 cannot repair");
+            crate::skin::checkbox_label(ui, &mut s.abort_hopeless, "");
+            ui.end_row();
+            ui.label("Check articles (STAT) before downloading");
+            crate::skin::checkbox_label(ui, &mut s.precheck_articles, "");
+            ui.end_row();
         });
 }
 
