@@ -5,7 +5,7 @@
 //! (vendored in `tools/`) in a worker thread. The UI polls a channel, just
 //! like the NNTP downloader.
 
-use crate::container;
+use crate::container::{self, Container};
 use crate::model::{app_base, sanitize_folder, Collection, Settings};
 use std::fs;
 use std::io::Read;
@@ -137,8 +137,12 @@ pub fn extract(
 ) -> Result<String, UnrarError> {
     normalize_obfuscated_names(source);
     let archive = find_archive(source, &options.expected_files).ok_or_else(|| {
-        UnrarError::Failed(format!("No RAR archive found in {}", source.display()))
+        UnrarError::Failed(format!("No archive found in {}", source.display()))
     })?;
+    if matches!(archive_kind(&archive), Some(Container::SevenZip | Container::Zip)) {
+        let (code, stdout, stderr) = run_7z(&archive, dest, options)?;
+        return finish(source, dest, &archive, options, code, &stdout, &stderr);
+    }
     let exe = find_unrar_exe().ok_or_else(|| {
         UnrarError::Failed(
             "UnRAR.exe not found. Put UnRAR.exe in app/tools/ or install WinRAR.".to_string(),
@@ -191,7 +195,126 @@ pub fn extract(
             archive.file_name().unwrap_or_default().to_string_lossy()
         )));
     }
+    finish(source, dest, &archive, options, code, &stdout, &stderr)
+}
 
+/// What the archive is, from its first bytes (names can lie or be missing).
+fn archive_kind(archive: &Path) -> Option<Container> {
+    use std::io::Read;
+    let mut head = [0u8; crate::container::SNIFF_LEN];
+    let n = fs::File::open(archive).ok()?.read(&mut head).ok()?;
+    crate::container::sniff(&head[..n])
+}
+
+/// 7z.exe: `NQ_7Z`, `tools/7z.exe`, 7-Zip's install folder, or `7z` on PATH.
+fn find_7z_exe() -> Option<PathBuf> {
+    if std::env::var_os("NQ_7Z_OFF").is_some() {
+        return None;
+    }
+    if let Some(p) = std::env::var_os("NQ_7Z").map(PathBuf::from).filter(|p| p.is_file()) {
+        return Some(p);
+    }
+    let mut candidates = vec![
+        app_base().join("tools").join("7z.exe"),
+        PathBuf::from(r"C:\Program Files\7-Zip\7z.exe"),
+        PathBuf::from(r"C:\Program Files (x86)\7-Zip\7z.exe"),
+    ];
+    if let Some(path) = std::env::var_os("PATH") {
+        for dir in std::env::split_paths(&path) {
+            for name in ["7z.exe", "7za.exe", "7z", "7zz"] {
+                candidates.push(dir.join(name));
+            }
+        }
+    }
+    candidates.into_iter().find(|p| p.is_file())
+}
+
+/// bsdtar (Windows 10+ ships it as `System32\tar.exe`) reads ZIP and 7z.
+fn find_bsdtar_exe() -> Option<PathBuf> {
+    if let Some(p) = std::env::var_os("NQ_TAR").map(PathBuf::from).filter(|p| p.is_file()) {
+        return Some(p);
+    }
+    let windir = std::env::var_os("SystemRoot").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(r"C:\Windows"));
+    [windir.join("System32").join("tar.exe"), PathBuf::from("/usr/bin/bsdtar")]
+        .into_iter()
+        .find(|p| p.is_file())
+}
+
+/// Whether 7z/ZIP archives can be extracted here.
+pub fn sevenzip_available() -> bool {
+    find_7z_exe().is_some() || find_bsdtar_exe().is_some()
+}
+
+/// Extracts a 7z or ZIP archive (first volume of a `.7z.001` set too).
+/// Returns (exit code mapped to UnRAR's 0 ok / 1 warning / 2+ error, stdout, stderr).
+fn run_7z(archive: &Path, dest: &Path, options: &UnrarOptions) -> Result<(i32, String, String), UnrarError> {
+    fs::create_dir_all(dest)
+        .map_err(|e| UnrarError::Failed(format!("Cannot create {}: {e}", dest.display())))?;
+    let password = options.password.trim();
+    let output = if let Some(exe) = find_7z_exe() {
+        let mut c = Command::new(&exe);
+        c.arg("x").arg("-y").arg("-bso0").arg("-bsp0");
+        c.arg(if options.overwrite {
+            "-aoa"
+        } else if options.rename_existing {
+            "-aou"
+        } else {
+            "-aos"
+        });
+        // An empty -p makes 7z fail on encryption instead of asking.
+        c.arg(format!("-p{password}"));
+        c.arg(archive).arg(format!("-o{}", dest.display()));
+        c.output().map_err(|e| UnrarError::Failed(format!("Cannot run {}: {e}", exe.display())))?
+    } else if let Some(exe) = find_bsdtar_exe() {
+        let mut c = Command::new(&exe);
+        c.arg("-x");
+        if !options.overwrite {
+            c.arg("-k");
+        }
+        if !password.is_empty() {
+            c.arg("--passphrase").arg(password);
+        }
+        c.arg("-f").arg(archive).arg("-C").arg(dest);
+        c.output().map_err(|e| UnrarError::Failed(format!("Cannot run {}: {e}", exe.display())))?
+    } else {
+        return Err(UnrarError::Failed(
+            "No 7z/ZIP extractor: put 7z.exe in app/tools/ or install 7-Zip.".into(),
+        ));
+    };
+    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    let lower = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    if lower.contains("wrong password")
+        || lower.contains("encrypted archive")
+        || lower.contains("passphrase required")
+        || lower.contains("couldn't read passphrase")
+        || lower.contains("incorrect passphrase")
+        || lower.contains("encrypted file is unsupported")
+    {
+        return Err(UnrarError::PasswordRequired);
+    }
+    let code = output.status.code().unwrap_or(-1);
+    if code != 0 && code != 1 {
+        let detail = last_nonempty(&stderr).or_else(|| last_nonempty(&stdout)).unwrap_or_else(|| format!("exit code {code}"));
+        return Err(UnrarError::Failed(format!(
+            "Extract failed for {}: {detail}",
+            archive.file_name().unwrap_or_default().to_string_lossy()
+        )));
+    }
+    Ok((code, stdout, stderr))
+}
+
+/// The steps after a successful extract, the same for every format.
+fn finish(
+    source: &Path,
+    dest: &Path,
+    archive: &Path,
+    options: &UnrarOptions,
+    code: i32,
+    stdout: &str,
+    stderr: &str,
+) -> Result<String, UnrarError> {
+    let archive = archive.to_path_buf();
     if options.strip_root {
         let _ = strip_single_root(dest);
     }
@@ -210,8 +333,8 @@ pub fn extract(
 
     let extracted = count_files(dest);
     let warning = if code == 1 {
-        last_nonempty(&stderr)
-            .or_else(|| last_nonempty(&stdout))
+        last_nonempty(stderr)
+            .or_else(|| last_nonempty(stdout))
             .map(|line| format!(" ({line})"))
             .unwrap_or_default()
     } else {
@@ -277,15 +400,20 @@ fn find_archive(source: &Path, expected: &[String]) -> Option<PathBuf> {
                 .file_name()
                 .map(|name| name.to_string_lossy().to_ascii_lowercase())
                 .unwrap_or_default();
-            if is_first_volume(&name) {
+            if is_first_volume(&name) || name.ends_with(".7z") || name.ends_with(".zip") {
                 candidates.push(path);
             }
         }
     }
+    // RAR sets first: a release may also carry a small .zip (sample, extras).
+    let not_rar = |p: &PathBuf| {
+        let n = p.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+        n.ends_with(".7z") || n.ends_with(".zip") || n.ends_with(".7z.001") || n.ends_with(".zip.001")
+    };
     candidates.sort_by(|a, b| {
         let an = a.file_name().unwrap_or_default().to_string_lossy().to_string();
         let bn = b.file_name().unwrap_or_default().to_string_lossy().to_string();
-        an.len().cmp(&bn.len()).then(an.cmp(&bn))
+        not_rar(a).cmp(&not_rar(b)).then(an.len().cmp(&bn.len())).then(an.cmp(&bn))
     });
     for candidate in &candidates {
         let name = candidate
@@ -421,6 +549,8 @@ fn delete_archive_set(archive: &Path) {
             continue;
         };
         let is_volume = suffix == "rar"
+            || suffix == "7z"
+            || suffix == "zip"
             || suffix == "rev"
             || (suffix.starts_with("part") && (suffix.ends_with(".rar") || suffix.ends_with(".rev")))
             || (suffix.len() == 3
@@ -860,6 +990,111 @@ mod tests {
 
     #[test]
     fn password_protected_archive_prompts_then_extracts_with_the_password() {
+        password_protected_rar();
+    }
+
+    fn plain_options() -> UnrarOptions {
+        UnrarOptions {
+            overwrite: true,
+            rename_existing: true,
+            strip_root: false,
+            delete_archives: true,
+            delete_empty_folder: false,
+            auto_rename: false,
+            collection_name: String::new(),
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        }
+    }
+
+    /// Builds `name` from `files` with bsdtar (`format`: zip or 7zip).
+    fn make_archive(dir: &Path, name: &str, format: &str, passphrase: Option<&str>) -> bool {
+        let Some(tar) = find_bsdtar_exe() else { return false };
+        let mut c = Command::new(tar);
+        c.current_dir(dir).arg("-c").arg("--format").arg(format);
+        if let Some(p) = passphrase {
+            c.arg("--options").arg("zip:encryption=zipcrypt").arg("--passphrase").arg(p);
+        }
+        c.arg("-f").arg(name).arg("inner");
+        c.status().map(|s| s.success()).unwrap_or(false)
+    }
+
+    fn sevenzip_round_trip(tag: &str, format: &str, archive: &str, use_7z_exe: bool) {
+        if find_bsdtar_exe().is_none() || (use_7z_exe && find_7z_exe().is_none()) {
+            eprintln!("skipped: tool not found");
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("newsqueue-7z-{tag}-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&root);
+        let source = root.join("source");
+        fs::create_dir_all(source.join("inner")).unwrap();
+        fs::write(source.join("inner").join("movie.mkv"), vec![7u8; 50_000]).unwrap();
+        assert!(make_archive(&source, archive, format, None));
+        fs::remove_dir_all(source.join("inner")).unwrap();
+        // Obfuscated: no extension; the name is repaired from the content later.
+        let dest = root.join("dest");
+        let opts = plain_options();
+        let message = with_extractor(use_7z_exe, || extract(&source, &dest, &opts)).unwrap();
+        assert!(message.starts_with("Unpacked 1 file"), "{message}");
+        assert_eq!(fs::read(dest.join("inner").join("movie.mkv")).unwrap(), vec![7u8; 50_000]);
+        assert!(!source.join(archive).exists(), "delete_archives removes the archive");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    /// Runs `f` with only 7z.exe (true) or only bsdtar (false) visible.
+    fn with_extractor<R>(use_7z_exe: bool, f: impl FnOnce() -> R) -> R {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved = std::env::var_os("NQ_7Z_OFF");
+        if use_7z_exe {
+            std::env::remove_var("NQ_7Z_OFF");
+        } else {
+            std::env::set_var("NQ_7Z_OFF", "1");
+        }
+        let r = f();
+        match saved {
+            Some(v) => std::env::set_var("NQ_7Z_OFF", v),
+            None => std::env::remove_var("NQ_7Z_OFF"),
+        }
+        r
+    }
+
+    #[test]
+    fn extracts_zip_and_7z_with_either_tool() {
+        sevenzip_round_trip("zip-tar", "zip", "set.zip", false);
+        sevenzip_round_trip("7z-tar", "7zip", "set.7z", false);
+        sevenzip_round_trip("zip-7z", "zip", "set.zip", true);
+        sevenzip_round_trip("7z-7z", "7zip", "set.7z", true);
+    }
+
+    #[test]
+    fn encrypted_zip_asks_for_the_password() {
+        for use_7z_exe in [false, true] {
+            if find_bsdtar_exe().is_none() || (use_7z_exe && find_7z_exe().is_none()) {
+                continue;
+            }
+            let root = std::env::temp_dir().join(format!("newsqueue-7z-pw-{use_7z_exe}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            let source = root.join("source");
+            fs::create_dir_all(source.join("inner")).unwrap();
+            fs::write(source.join("inner").join("a.txt"), b"secret contents").unwrap();
+            assert!(make_archive(&source, "locked.zip", "zip", Some("pw1")));
+            fs::remove_dir_all(source.join("inner")).unwrap();
+            let dest = root.join("dest");
+            let mut opts = plain_options();
+            opts.delete_archives = false;
+            assert_eq!(with_extractor(use_7z_exe, || extract(&source, &dest, &opts)), Err(UnrarError::PasswordRequired));
+            opts.password = "pw1".into();
+            with_extractor(use_7z_exe, || extract(&source, &dest, &opts)).unwrap();
+            assert_eq!(fs::read(dest.join("inner").join("a.txt")).unwrap(), b"secret contents");
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    fn password_protected_rar() {
         if find_unrar_exe().is_none() {
             eprintln!("skipped: tool not found");
             return;
