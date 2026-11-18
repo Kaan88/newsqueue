@@ -390,6 +390,8 @@ pub struct Settings {
     pub abort_hopeless: bool,
     /// Check every article with STAT before downloading a collection.
     pub precheck_articles: bool,
+    /// Extract RAR volumes while the rest of the set downloads.
+    pub direct_unpack: bool,
     pub auto_unrar: bool,
     pub create_dir_nzb_name: bool,
     pub create_dir_group_name: bool,
@@ -480,6 +482,7 @@ impl Default for Settings {
             par2_on_demand: true,
             abort_hopeless: true,
             precheck_articles: false,
+            direct_unpack: false,
             auto_unrar: false,
             create_dir_nzb_name: false,
             create_dir_group_name: false,

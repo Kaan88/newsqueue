@@ -11,7 +11,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
+use std::sync::{Arc, Mutex};
 
 pub struct ActiveUnrar {
     pub collection_id: u64,
@@ -120,6 +122,302 @@ pub fn poll(active: &ActiveUnrar) -> Option<Result<String, UnrarError>> {
         Err(TryRecvError::Disconnected) => Some(Err(UnrarError::Failed(
             "Unrar worker stopped unexpectedly".into(),
         ))),
+    }
+}
+
+/// A RAR set being extracted while it downloads ("direct unpack").
+pub struct DirectUnrar {
+    pub collection_id: u64,
+    /// Volumes whose articles are all written.
+    pub ready: Arc<Mutex<Vec<PathBuf>>>,
+    /// The download is over: any volume that exists now is as good as it gets.
+    pub finished: Arc<AtomicBool>,
+    pub cancel: Arc<AtomicBool>,
+    pub rx: Receiver<Result<String, UnrarError>>,
+}
+
+impl DirectUnrar {
+    pub fn poll(&self) -> Option<Result<String, UnrarError>> {
+        match self.rx.try_recv() {
+            Ok(value) => Some(value),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => Some(Err(UnrarError::Failed("Direct unpack worker stopped".into()))),
+        }
+    }
+}
+
+impl Drop for DirectUnrar {
+    fn drop(&mut self) {
+        self.cancel.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Whether `name` is the volume a RAR set is opened from.
+pub fn is_first_rar_volume(name: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    let Some(stem) = lower.strip_suffix(".rar") else {
+        return false;
+    };
+    match stem.rfind(".part") {
+        Some(at) => {
+            let digits = &stem[at + 5..];
+            !digits.is_empty() && digits.chars().all(|c| c.is_ascii_digit()) && digits.trim_start_matches('0') == "1"
+        }
+        None => true,
+    }
+}
+
+/// Starts UnRAR on `first` with `-vp`: it asks for each next volume, and
+/// the worker answers once that volume is in `ready` (or the download is
+/// over and the file exists). Cancelling answers "Quit".
+pub fn spawn_direct(collection_id: u64, first: PathBuf, source: PathBuf, dest: PathBuf, options: UnrarOptions) -> DirectUnrar {
+    let (tx, rx) = mpsc::channel();
+    let ready = Arc::new(Mutex::new(vec![first.clone()]));
+    let finished = Arc::new(AtomicBool::new(false));
+    let cancel = Arc::new(AtomicBool::new(false));
+    let (r, f, c) = (ready.clone(), finished.clone(), cancel.clone());
+    std::thread::spawn(move || {
+        let _ = tx.send(run_direct(&first, &source, &dest, &options, &r, &f, &c));
+    });
+    DirectUnrar { collection_id, ready, finished, cancel, rx }
+}
+
+fn run_direct(
+    first: &Path,
+    source: &Path,
+    dest: &Path,
+    options: &UnrarOptions,
+    ready: &Mutex<Vec<PathBuf>>,
+    finished: &AtomicBool,
+    cancel: &AtomicBool,
+) -> Result<String, UnrarError> {
+    use std::process::Stdio;
+    let exe = find_unrar_exe().ok_or_else(|| UnrarError::Failed("UnRAR.exe not found".into()))?;
+    fs::create_dir_all(dest).map_err(|e| UnrarError::Failed(format!("Cannot create unrar folder: {e}")))?;
+    let mut command = Command::new(&exe);
+    command.arg("x").arg("-y").arg("-vp");
+    command.arg(if options.overwrite { "-o+" } else if options.rename_existing { "-or" } else { "-o-" });
+    if options.password.trim().is_empty() {
+        command.arg("-p-");
+    } else {
+        command.arg(format!("-p{}", options.password));
+    }
+    command.arg(first).arg(format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR));
+    command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = command.spawn().map_err(|e| UnrarError::Failed(format!("Cannot run {}: {e}", exe.display())))?;
+    // UnRAR asks for the next volume on stderr; stdout only lists files.
+    let mut stdout_pipe = child.stdout.take().unwrap();
+    let stdout_thread = std::thread::spawn(move || {
+        let mut bytes = Vec::new();
+        let _ = stdout_pipe.read_to_end(&mut bytes);
+        String::from_utf8_lossy(&bytes).to_string()
+    });
+    let stderr_pipe = child.stderr.take().unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    let volume_ready = |path: &Path| {
+        let name = path.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase());
+        let listed = ready
+            .lock()
+            .map(|r| r.iter().any(|p| p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) == name))
+            .unwrap_or(false);
+        let over = finished.load(Ordering::Relaxed);
+        if listed || (over && path.is_file()) {
+            Some(true)
+        } else if over {
+            Some(false)
+        } else {
+            None
+        }
+    };
+    let (stderr, quit) = answer_prompts(stderr_pipe, &mut stdin, volume_ready, cancel);
+    drop(stdin);
+    let status = child.wait().map_err(|e| UnrarError::Failed(e.to_string()))?;
+    let stdout = stdout_thread.join().unwrap_or_default();
+    let lower = format!("{stdout}\n{stderr}").to_ascii_lowercase();
+    if lower.contains("incorrect password") || lower.contains("enter password") || lower.contains("specified password") {
+        return Err(UnrarError::PasswordRequired);
+    }
+    if let Some(reason) = quit {
+        return Err(UnrarError::Failed(reason));
+    }
+    let code = status.code().unwrap_or(-1);
+    if code != 0 && code != 1 {
+        let detail = last_nonempty(&stderr).or_else(|| last_nonempty(&stdout)).unwrap_or_else(|| format!("UnRAR exit code {code}"));
+        return Err(UnrarError::Failed(format!("Direct unpack failed: {detail}")));
+    }
+    finish(source, dest, first, options, code, &stdout, &stderr)
+}
+
+/// Reads UnRAR's output and answers each "Insert disk with <path>" prompt:
+/// `C` once `volume_ready(path)` says yes, `Q` when it says no or on cancel.
+/// Returns the output and, when it quit, why.
+fn answer_prompts(
+    mut out: impl Read,
+    input: &mut impl std::io::Write,
+    volume_ready: impl Fn(&Path) -> Option<bool>,
+    cancel: &AtomicBool,
+) -> (String, Option<String>) {
+    let mut all = Vec::new();
+    let mut line = Vec::new();
+    let mut quit = None;
+    let mut byte = [0u8; 1];
+    while let Ok(1) = out.read(&mut byte) {
+        all.push(byte[0]);
+        line.push(byte[0]);
+        if byte[0] == b'\n' {
+            line.clear();
+            continue;
+        }
+        let text = String::from_utf8_lossy(&line).to_string();
+        if !text.trim_end().ends_with("[Q]uit") {
+            continue;
+        }
+        line.clear();
+        let path = text
+            .split("Insert disk with ")
+            .nth(1)
+            .and_then(|rest| rest.split(" [C]ontinue").next())
+            .map(|p| PathBuf::from(p.trim()));
+        let answer = loop {
+            if cancel.load(Ordering::Relaxed) {
+                quit = Some("Direct unpack cancelled".to_string());
+                break "Q";
+            }
+            match path.as_deref().map(&volume_ready) {
+                Some(Some(true)) => break "C",
+                Some(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                _ => {
+                    let name = path.as_deref().map(|p| p.display().to_string()).unwrap_or_default();
+                    quit = Some(format!("Volume {name} never arrived"));
+                    break "Q";
+                }
+            }
+        };
+        let _ = input.write_all(format!("{answer}\n").as_bytes());
+        let _ = input.flush();
+        if answer == "Q" {
+            break;
+        }
+    }
+    let mut rest = Vec::new();
+    let _ = out.read_to_end(&mut rest);
+    all.extend(rest);
+    (String::from_utf8_lossy(&all).to_string(), quit)
+}
+
+#[cfg(test)]
+mod direct_tests {
+    use super::*;
+
+    fn options() -> UnrarOptions {
+        UnrarOptions {
+            overwrite: true,
+            rename_existing: false,
+            strip_root: false,
+            delete_archives: false,
+            delete_empty_folder: false,
+            auto_rename: false,
+            collection_name: String::new(),
+            password: String::new(),
+            move_patterns: Vec::new(),
+            delete_patterns: Vec::new(),
+            case_insensitive: true,
+            expected_files: Vec::new(),
+        }
+    }
+
+    fn wait(direct: &DirectUnrar, secs: u64) -> Option<Result<String, UnrarError>> {
+        let start = std::time::Instant::now();
+        while start.elapsed() < std::time::Duration::from_secs(secs) {
+            if let Some(r) = direct.poll() {
+                return Some(r);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        None
+    }
+
+    /// Real UnRAR on a 3-volume set whose volumes "arrive" one by one.
+    #[test]
+    fn extracts_volumes_as_they_arrive() {
+        if !unrar_available() {
+            return;
+        }
+        let fixtures = PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures/multi"));
+        for (case, deliver_last) in [("ok", true), ("short", false)] {
+            let root = std::env::temp_dir().join(format!("newsqueue-direct-{case}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            let (source, dest) = (root.join("src"), root.join("out"));
+            fs::create_dir_all(&source).unwrap();
+            let bring = |n: u32| {
+                let name = format!("multi.part{n}.rar");
+                fs::copy(fixtures.join(&name), source.join(&name)).unwrap();
+                source.join(name)
+            };
+            let first = bring(1);
+            let direct = spawn_direct(1, first, source.clone(), dest.clone(), options());
+            // UnRAR is now waiting for part2; nothing has finished.
+            assert!(wait(&direct, 1).is_none());
+            let second = bring(2);
+            direct.ready.lock().unwrap().push(second);
+            assert!(wait(&direct, 1).is_none());
+            if deliver_last {
+                let third = bring(3);
+                direct.ready.lock().unwrap().push(third);
+                let result = wait(&direct, 20).expect("finishes");
+                assert!(result.is_ok(), "{result:?}");
+                assert_eq!(fs::metadata(dest.join("payload.bin")).unwrap().len(), 150_000);
+            } else {
+                // The download ended without part3: give up, do not hang.
+                direct.finished.store(true, Ordering::Relaxed);
+                match wait(&direct, 20).expect("finishes") {
+                    Err(UnrarError::Failed(e)) => assert!(e.contains("never arrived"), "{e}"),
+                    other => panic!("{other:?}"),
+                }
+            }
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn first_volume_names() {
+        assert!(is_first_rar_volume("a.rar"));
+        assert!(is_first_rar_volume("a.part01.rar"));
+        assert!(is_first_rar_volume("A.PART001.RAR"));
+        assert!(!is_first_rar_volume("a.part02.rar"));
+        assert!(!is_first_rar_volume("a.r00"));
+    }
+
+    #[test]
+    fn prompts_wait_for_ready_volumes() {
+        let out = b"Extracting a.rar\nInsert disk with C:\\d\\a.r00 [C]ontinue, [Q]uit Extracting a.r00\nInsert disk with C:\\d\\a.r01 [C]ontinue, [Q]uit ".to_vec();
+        let calls = std::cell::Cell::new(0);
+        let mut answers = Vec::new();
+        let cancel = AtomicBool::new(false);
+        let (text, quit) = answer_prompts(&out[..], &mut answers, |p| {
+            calls.set(calls.get() + 1);
+            match p.file_name().unwrap().to_str().unwrap() {
+                // a.r00 is not ready on the first look, then it is.
+                "a.r00" if calls.get() == 1 => None,
+                "a.r00" => Some(true),
+                _ => Some(false),
+            }
+        }, &cancel);
+        assert_eq!(String::from_utf8(answers).unwrap(), "C\nQ\n");
+        assert!(quit.unwrap().contains("a.r01"));
+        assert!(text.contains("Extracting a.r00"));
+        assert_eq!(calls.get(), 3);
+
+        cancel.store(true, Ordering::Relaxed);
+        let mut answers = Vec::new();
+        let (_, quit) = answer_prompts(&out[..], &mut answers, |_| None, &cancel);
+        assert_eq!(answers, b"Q\n");
+        assert_eq!(quit.as_deref(), Some("Direct unpack cancelled"));
     }
 }
 

@@ -294,7 +294,7 @@ None are started. Categories stay cut (see `REMOVED.md`).
 
 ### High value
 
-1. **On-demand PAR2.** Download the small index `.par2` first and hold back
+1. **Done (2026-11-18): on-demand PAR2.** Download the small index `.par2` first and hold back
    the `.volNN+NN.par2` recovery files; after verify, fetch only as many
    recovery blocks as the damage needs. Saves the 5–15% of each job that is
    usually unused recovery data.
@@ -302,13 +302,15 @@ None are started. Categories stay cut (see `REMOVED.md`).
    type="password">` in the NZB head, else a `{{password}}` suffix in the file
    name (removed from the collection name), is stored on the collection, so
    unrar does not prompt. The log says a password was found, never which.
-3. **7z and ZIP extraction.** `container.rs` already detects both; add an
+3. **Done (2026-11-18): 7z and ZIP extraction.** `container.rs` already detects both; add an
    extractor (vendored `7z.exe` on Windows, `7zip` on Linux) beside UnRAR.
-4. **Abort hopeless jobs and pre-check.** Stop a job once missing articles
+4. **Done (2026-11-18): abort hopeless jobs and pre-check.** Stop a job once missing articles
    exceed the available PAR2 recovery blocks, and optionally `STAT` articles
    before downloading to reject incomplete posts early.
-5. **Direct unpack.** Start UnRAR on a multi-volume set while later volumes
-   are still downloading, so extraction finishes soon after the download.
+5. **Done (2026-11-18): direct unpack** (setting `direct_unpack`, off by
+   default). UnRAR runs with `-vp` on the first finished volume; the worker
+   answers each "Insert disk" prompt once that volume's articles are all
+   written. Missing articles quit it and the normal PAR2 → unrar chain runs.
 
 ### Medium value
 

@@ -7,7 +7,7 @@ use crate::model::*;
 use crate::{download, par2, rss, unrar};
 use chrono::{Datelike, Local, Timelike};
 use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
@@ -79,6 +79,11 @@ pub struct Engine {
     pub active_unrar: Option<unrar::ActiveUnrar>,
     pub active_par2: Option<par2::ActivePar2>,
     pub pending_unrar: VecDeque<u64>,
+    /// Direct unpack: extraction running while its collection downloads.
+    pub active_direct: Option<unrar::DirectUnrar>,
+    /// Collections direct unpack has tried, and whether it extracted them
+    /// (`None` while it still runs).
+    pub direct_result: HashMap<u64, Option<bool>>,
     pub resume_after_unrar: bool,
     /// Demo/screenshot mode: sample data, nothing is written to disk.
     pub demo: bool,
@@ -181,6 +186,8 @@ impl Engine {
             active_unrar: None,
             active_par2: None,
             pending_unrar: VecDeque::new(),
+            active_direct: None,
+            direct_result: HashMap::new(),
             resume_after_unrar: false,
             demo,
             events: Vec::new(),
@@ -943,6 +950,24 @@ impl Engine {
     }
 
     pub fn schedule_after_download(&mut self, id: u64) {
+        match self.direct_result.get(&id).copied() {
+            Some(None) => {
+                // Still extracting: it now has every volume it will get.
+                if let Some(direct) = self.active_direct.as_ref().filter(|d| d.collection_id == id) {
+                    direct.finished.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                return;
+            }
+            Some(Some(true)) => {
+                self.direct_result.remove(&id);
+                self.run_execute_hook(id);
+                return;
+            }
+            Some(Some(false)) => {
+                self.direct_result.remove(&id);
+            }
+            None => {}
+        }
         let check_par2 = self.settings.par2_checking
             && self
                 .queue
@@ -972,6 +997,101 @@ impl Engine {
             return;
         }
         self.run_execute_hook(id);
+    }
+
+    /// Direct unpack: start UnRAR on the first finished RAR volume of the
+    /// collection being downloaded, tell it which volumes are complete, and
+    /// stop it when articles go missing (PAR2 has to repair first then).
+    fn drive_direct(&mut self, snapshot: &download::DownloadSnapshot) {
+        use std::sync::atomic::Ordering;
+        let id = snapshot.id;
+        let ready: Vec<PathBuf> = (0..snapshot.paths.len())
+            .filter(|&i| snapshot.sizes[i] > 0 && snapshot.file_progress[i] >= snapshot.sizes[i])
+            .filter_map(|i| snapshot.paths[i].clone())
+            .collect();
+        if let Some(direct) = self.active_direct.as_ref().filter(|d| d.collection_id == id) {
+            if snapshot.missing > 0 {
+                direct.cancel.store(true, Ordering::Relaxed);
+                return;
+            }
+            if let Ok(mut list) = direct.ready.lock() {
+                *list = ready;
+            }
+            if matches!(snapshot.stage, download::Stage::Completed | download::Stage::Error | download::Stage::Incomplete) {
+                direct.finished.store(true, Ordering::Relaxed);
+            }
+            return;
+        }
+        if !self.settings.direct_unpack
+            || !self.settings.auto_unrar
+            || snapshot.missing > 0
+            || self.active_direct.is_some()
+            || self.active_unrar.is_some()
+            || self.direct_result.contains_key(&id)
+            || !unrar::unrar_available()
+        {
+            return;
+        }
+        let Some(collection) = self.queue.iter().find(|c| c.id == id).filter(|c| c.unrar).cloned() else {
+            return;
+        };
+        let Some(first) = ready.iter().find(|p| {
+            p.file_name().map(|n| unrar::is_first_rar_volume(&n.to_string_lossy())).unwrap_or(false)
+        }) else {
+            return;
+        };
+        let options = unrar::UnrarOptions::from_collection(&self.settings, &collection);
+        let dest = unrar::target_dir(&self.settings, &collection);
+        self.log("Unrar", &format!("Direct unpack started: {} -> {}", collection.subject, dest.display()));
+        let direct = unrar::spawn_direct(id, first.clone(), PathBuf::from(&collection.folder), dest, options);
+        if let Ok(mut list) = direct.ready.lock() {
+            *list = ready.clone();
+        }
+        self.active_direct = Some(direct);
+        self.direct_result.insert(id, None);
+    }
+
+    fn poll_direct(&mut self) {
+        let Some(direct) = self.active_direct.as_ref() else {
+            return;
+        };
+        let id = direct.collection_id;
+        let downloading = self.active_dl.as_ref().map(|a| a.id) == Some(id);
+        let over = direct.finished.load(std::sync::atomic::Ordering::Relaxed);
+        if !downloading && !over {
+            // The download went away without finishing (deleted, stopped).
+            direct.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+        let Some(result) = direct.poll() else {
+            return;
+        };
+        self.active_direct = None;
+        let subject = self.queue.iter().find(|c| c.id == id).map(|c| c.subject.clone()).unwrap_or_default();
+        let ok = match result {
+            Ok(message) => {
+                self.log("Unrar", &format!("Direct unpack: {message}"));
+                true
+            }
+            Err(unrar::UnrarError::PasswordRequired) => {
+                self.log("Unrar", "Direct unpack needs a password; unpacking after the download.");
+                false
+            }
+            Err(unrar::UnrarError::Failed(error)) => {
+                self.log("Unrar", &format!("Direct unpack stopped ({error}); unpacking after the download."));
+                false
+            }
+        };
+        self.direct_result.insert(id, Some(ok));
+        if !downloading && over {
+            // The download finished first and is waiting for us.
+            if ok {
+                self.toast("Unpack complete");
+                self.notify("Unpack complete", &subject);
+            }
+            self.schedule_after_download(id);
+        } else if !downloading {
+            self.direct_result.remove(&id);
+        }
     }
 
     /// Start unpacking a completed collection. Returns true when a worker was
@@ -1114,6 +1234,7 @@ impl Engine {
         let dt = (now - self.last_tick).as_secs_f64().clamp(0.0, 0.5);
         self.last_tick = now;
         self.poll_unrar();
+        self.poll_direct();
         self.poll_par2();
         self.poll_rss();
         if self.rss_timer
@@ -1242,6 +1363,7 @@ impl Engine {
             .as_ref()
             .and_then(|a| a.snapshot.lock().ok().map(|s| s.clone()));
         if let Some(snapshot) = snapshot {
+            self.drive_direct(&snapshot);
             let mut clear = false;
             let mut delta = 0.0;
             let mut completed: Option<(String, u64)> = None;

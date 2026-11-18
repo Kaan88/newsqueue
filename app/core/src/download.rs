@@ -39,6 +39,10 @@ pub struct DownloadSnapshot {
     /// Actual bytes written for every file, so parallel workers can update
     /// the per-file rows without pretending files finish in order.
     pub file_progress: Vec<u64>,
+    /// Where each file is being written, once its name is known.
+    pub paths: Vec<Option<PathBuf>>,
+    /// Decoded size of each file from its yEnc header (0 = not known yet).
+    pub sizes: Vec<u64>,
     /// Number of NNTP connections this job uses.
     pub workers: usize,
     pub speed_bps: f64,
@@ -250,6 +254,8 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         file_bytes: 0,
         file_total: 0,
         file_progress: vec![0; job.files.len()],
+        paths: vec![None; job.files.len()],
+        sizes: vec![0; job.files.len()],
         workers: planned_workers,
         speed_bps: 0.0,
         message: "Connecting".into(),
@@ -431,6 +437,10 @@ fn run_job(
         let name = unique_name(&name, &mut used_names);
         let path = PathBuf::from(&job.folder).join(&name);
         paths[index] = Some(path.clone());
+        if let Ok(mut s) = snap.lock() {
+            s.paths[index] = Some(path.clone());
+            s.sizes[index] = decoded_size.unwrap_or(0);
+        }
         if job.skip_existing
             && decoded_size
                 .map(|size| {

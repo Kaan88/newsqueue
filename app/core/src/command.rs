@@ -284,6 +284,75 @@ mod tests {
     }
 
     #[test]
+    fn direct_unpack_extracts_while_downloading() {
+        use crate::download::tests::{local_server, mock_server_counted, yenc_part};
+        if !crate::unrar::unrar_available() {
+            return;
+        }
+        let root = std::env::temp_dir().join(format!("newsqueue-direct-engine-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        let fixtures = std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/../tests/fixtures/multi"));
+        let names = ["multi.part1.rar", "multi.part2.rar", "multi.part3.rar"];
+        let articles = names
+            .iter()
+            .map(|n| {
+                let data = std::fs::read(fixtures.join(n)).unwrap();
+                (format!("{n}@x"), yenc_part(&data, data.len(), 1))
+            })
+            .collect();
+        let (port, _) = mock_server_counted(articles);
+        let mut s = Settings::default();
+        s.servers = vec![local_server(port, 1)];
+        s.download_dir = root.to_string_lossy().to_string();
+        s.low_free_space_mb = 0;
+        s.direct_unpack = true;
+        s.auto_unrar = true;
+        s.par2_checking = false;
+        let mut e = Engine::new(s, true);
+        e.queue.clear();
+        let mut nzb = nzb_with(&names);
+        for (file, n) in nzb.files.iter_mut().zip(names) {
+            let len = std::fs::metadata(fixtures.join(n)).unwrap().len();
+            file.bytes = len;
+            file.segments[0].bytes = len;
+        }
+        let id = e.add_nzb_from_parsed(nzb, String::new(), false);
+        let i = e.index_of(id).unwrap();
+        e.queue[i].unrar = true;
+        e.connect();
+        let started = std::time::Instant::now();
+        let mut saw_direct = false;
+        while started.elapsed() < std::time::Duration::from_secs(20) {
+            e.tick();
+            saw_direct |= e.active_direct.is_some();
+            if e.active_dl.is_none() && e.active_direct.is_none() && e.active_unrar.is_none() && saw_direct {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(saw_direct, "direct unpack never started");
+        assert!(e.logs.iter().any(|l| l.message.starts_with("Direct unpack: ")), "{:?}", e.logs.iter().map(|l| &l.message).collect::<Vec<_>>());
+        assert!(!e.logs.iter().any(|l| l.message.starts_with("Unpack started")), "no second unpack");
+        let found = walk(&root).into_iter().find(|p| p.ends_with("payload.bin")).expect("payload extracted");
+        assert_eq!(std::fs::metadata(found).unwrap().len(), 150_000);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+        let mut out = Vec::new();
+        for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+            let p = entry.path();
+            if p.is_dir() {
+                out.extend(walk(&p));
+            } else {
+                out.push(p);
+            }
+        }
+        out
+    }
+
+    #[test]
     fn a_download_par2_cannot_save_is_stopped() {
         use crate::download::tests::{local_server, mock_server_counted, yenc_part};
         let root = std::env::temp_dir().join(format!("newsqueue-hopeless-{}", std::process::id()));

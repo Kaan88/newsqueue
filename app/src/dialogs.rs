@@ -586,6 +586,9 @@ fn page_par2(ui: &mut Ui, s: &mut Settings) {
             ui.label("Check articles (STAT) before downloading");
             crate::skin::checkbox_label(ui, &mut s.precheck_articles, "");
             ui.end_row();
+            ui.label("Unpack while downloading (direct unpack)");
+            crate::skin::checkbox_label(ui, &mut s.direct_unpack, "");
+            ui.end_row();
         });
 }
 
