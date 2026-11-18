@@ -17,7 +17,7 @@ variant (setting `ui_theme`: system/light/dark), follows the monitor DPI outside
 labels are not text-selectable. The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
 versioning.
 
-- Current app version: **1.0.4**
+- Current app version: **1.0.5**
 - Current build date: **2026-11-18**
 - Parity target: **AltBinz 0.48.4**
 - Platform: Windows x64
@@ -289,7 +289,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 8. Versioning, packaging and releases
 
-NewsQueue uses independent versions. Current version is **1.0.4** (1.0.2 was the first release that can self-update).
+NewsQueue uses independent versions. Current version is **1.0.5** (1.0.2 was the first release that can self-update).
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
 `v1.0.1`, which adds content-based naming for obfuscated posts. There is no
 `Version?` and a timer (`check_version_minutes`, 0 = never) check GitHub

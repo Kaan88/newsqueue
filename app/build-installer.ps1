@@ -4,7 +4,7 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.4'
+$version = '1.0.5'
 Push-Location $root
 try {
     if (-not $SkipPackage) {
@@ -49,7 +49,7 @@ DisplayLicense=
 FinishMessage=
 TargetName=$target
 FriendlyName=NewsQueue $version Setup
-AppLaunched=cmd.exe /c install.cmd
+AppLaunched=cmd.exe /c .\install.cmd
 PostInstallCmd=<None>
 AdminQuietInstCmd=
 UserQuietInstCmd=

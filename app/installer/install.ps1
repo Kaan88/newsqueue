@@ -4,7 +4,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$version = '1.0.4'
+$version = '1.0.5'
 $silentInstall = $Silent -or ($env:NQ_SILENT -eq '1')
 $packageDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $shell = New-Object -ComObject WScript.Shell

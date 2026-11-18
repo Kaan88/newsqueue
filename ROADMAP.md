@@ -7,7 +7,8 @@ not a source-code or artwork copy.
 ## Current status (2026-11-18)
 
 Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
-first release built on the core `Engine`.
+first release built on the core `Engine`. 1.0.5 adds the Instrument skin
+(light/dark/system, egui 0.37) and runs the engine on its own thread.
 
 **Next:** GUI_PLAN Phase 0 steps 3–5 done 2026-11-18 (`Command` + `Engine::apply`, `EngineHost` timer thread, `EngineHandle` with `Snapshot`); the egui UI still reads the engine directly (switch after the theme redesign lands),
 engine on its own thread; then Phase 1 (web server + egui/WASM front end).
@@ -19,7 +20,7 @@ started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
 builds and passes all 40 tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
-Current app version: **1.0.4** (2026-11-18, engine split; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
+Current app version: **1.0.5** (2026-11-18, Instrument skin + engine thread; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds
 content-based naming for obfuscated posts.

@@ -3,7 +3,7 @@
 ## Project
 
 - Read `CLAUDE.md` for the full architecture, verification and release guide, and `ROADMAP.md` for current work and blockers.
-- `app/` is the whole Rust 2021 project (eframe/egui 0.29): a from-scratch clone of AltBinz, presented as NewsQueue 1.0.4. The parity target is still AltBinz 0.48.4.
+- `app/` is the whole Rust 2021 project (eframe/egui 0.37): a from-scratch clone of AltBinz, presented as NewsQueue 1.0.5. The parity target is still AltBinz 0.48.4.
 - `app/MECHANICS.md` records measured constants, formulas and function addresses from the original Delphi binary; `app/mechanics.json` is the machine-checked list. Keep both in sync with `model.rs`, and only mark a value "estimated" after searching the evidence.
 - `capture/`, `investigation.cany/`, `altbinz_original/` and `reference/` are read-only evidence. Harness files (`craft.json`, `feed.json`, `build-activity.log`, `checks/`) are generated; don't edit them. This directory is not a git repo.
 - Ghidra 12.1.4 is installed at `C:\Users\kaank\AppData\Roaming\craft-anything\engines\ghidra\ghidra_12.1.4_PUBLIC`. Use it when the recorded evidence is insufficient to verify a value or behavior; do not guess mechanics.
@@ -22,7 +22,7 @@ cargo run -- --screenshot shots/now.png
 - `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close any running NewsQueue. It checks the tray icon, speed tooltip, balloon API result, off-screen minimize, taskbar removal, continued tick/autosave, click-to-restore, close-to-tray and tray Exit.
-- `.\build-installer.ps1` runs `package.ps1`, stages in `%TEMP%`, builds `dist\NewsQueue-1.0.4-Setup.exe` with IExpress and writes its SHA256.
+- `.\build-installer.ps1` runs `package.ps1`, stages in `%TEMP%`, builds `dist\NewsQueue-1.0.5-Setup.exe` with IExpress and writes its SHA256.
 - `.\installer-test.ps1` installs the built setup into a temp folder, checks files/registry/shortcuts, launches the installed exe and uninstalls. It refuses to run if any NewsQueue install, shortcut or process exists.
 - `.\shutdown-verify.ps1` arms the safe `Exit` shutdown path in a debug build, minimizes to the tray and checks the 15-second countdown still exits the app.
 - `.\download-while-tray-verify.ps1` runs a local mock NNTP server, minimizes the app, and verifies a download still completes while off-screen and the payload is correct. It backs up and restores the local settings/queue/history/stats files.
