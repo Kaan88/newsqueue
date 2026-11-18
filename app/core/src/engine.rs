@@ -493,7 +493,7 @@ impl Engine {
             files,
             posted_on: nzb.posted_on.clone(),
             delete_archives: false,
-            password: String::new(),
+            password: nzb.password.clone(),
             source,
         };
         let subject = collection.subject.clone();
@@ -502,6 +502,10 @@ impl Engine {
         }
         self.queue.push(collection);
         self.log("Queue", &format!("Added: {subject}"));
+        if !nzb.password.is_empty() {
+            // The password itself never goes to the log.
+            self.log("Queue", &format!("{subject}: archive password taken from the NZB"));
+        }
         self.toast("Added to queue");
         id
     }

@@ -2,6 +2,7 @@
 name = "newsqueue"
 version = "1.0.5"
 edition = "2024"
+default-run = "newsqueue"
 
 [workspace]
 members = [".", "core", "server", "win32", "web"]

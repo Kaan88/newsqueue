@@ -271,7 +271,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 80 unit/integration tests currently pass (43 in core, 33 in desktop, 4 in server).
+- 86 unit/integration tests currently pass (48 in core, 33 in desktop, 5 in server).
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.

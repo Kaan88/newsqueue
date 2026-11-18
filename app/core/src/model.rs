@@ -683,6 +683,9 @@ pub struct ParsedNzb {
     pub posted_on: String,
     pub age_days: f64,
     pub files: Vec<ParsedFile>,
+    /// Archive password from `<meta type="password">` or a `{{password}}`
+    /// suffix in the file name; empty when the NZB carries none.
+    pub password: String,
 }
 #[derive(Default)]
 struct NzbFileDraft {
@@ -711,6 +714,8 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
     let mut cur: Option<NzbFileDraft> = None;
     let mut in_group = false;
     let mut in_segment = false;
+    let mut in_password = false;
+    let mut password = String::new();
     let mut seg_draft: Option<Segment> = None;
     loop {
         match reader.read_event_into(&mut buf) {
@@ -751,6 +756,12 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                         });
                     }
                     b"group" => in_group = true,
+                    b"meta" => {
+                        in_password = e.attributes().flatten().any(|a| {
+                            a.key.as_ref() == b"type"
+                                && a.value.as_ref().eq_ignore_ascii_case(b"password")
+                        });
+                    }
                     b"segment" => {
                         let mut seg = Segment::default();
                         for attr in e.attributes().flatten() {
@@ -786,7 +797,11 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                 }
             }
             Ok(quick_xml::events::Event::Text(e)) => {
-                if in_segment {
+                if in_password {
+                    if password.is_empty() {
+                        password = e.unescape().unwrap_or_default().trim().to_string();
+                    }
+                } else if in_segment {
                     if let Some(seg) = seg_draft.as_mut() {
                         seg.id.push_str(&e.unescape().unwrap_or_default());
                     }
@@ -827,6 +842,7 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                     }
                 }
                 b"group" => in_group = false,
+                b"meta" => in_password = false,
                 _ => {}
             },
             Ok(quick_xml::events::Event::Eof) => break,
@@ -863,6 +879,11 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
         .trim_end_matches(".nzb")
         .trim_end_matches(".NZB")
         .to_string();
+    // "Some.Release{{secret}}.nzb": the name loses the suffix either way.
+    let (name, name_password) = split_name_password(&name);
+    if password.is_empty() {
+        password = name_password;
+    }
     Ok(ParsedNzb {
         name,
         total_bytes,
@@ -872,7 +893,22 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
         posted_on,
         age_days,
         files,
+        password,
     })
+}
+
+/// Splits a trailing `{{password}}` off an NZB name.
+pub fn split_name_password(name: &str) -> (String, String) {
+    if let Some(body) = name.trim_end().strip_suffix("}}") {
+        if let Some(start) = body.rfind("{{") {
+            let password = body[start + 2..].to_string();
+            let rest = body[..start].trim_end().to_string();
+            if !password.is_empty() && !rest.is_empty() {
+                return (rest, password);
+            }
+        }
+    }
+    (name.to_string(), String::new())
 }
 pub fn now_time() -> String {
     Local::now().format("%H:%M:%S").to_string()
@@ -1353,6 +1389,44 @@ mod tests {
         assert_eq!(parsed.files[0].segments.len(), 2);
         assert_eq!(parsed.files[0].segments[1].id, "b@example");
         assert_eq!(parsed.files[0].segments[1].bytes, 2048);
+        assert_eq!(parsed.password, "");
         let _ = std::fs::remove_file(&path);
+    }
+
+    const ONE_FILE: &str = r#"<file subject="&quot;a.rar&quot; yEnc (1/1)" poster="p" date="1700000000">
+<groups><group>alt.binaries.test</group></groups>
+<segments><segment bytes="10" number="1">a@x</segment></segments>
+</file>"#;
+
+    #[test]
+    fn reads_the_password_from_nzb_meta() {
+        let dir = std::env::temp_dir().join(format!("newsqueue-pw-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Release.nzb");
+        let xml = format!(
+            r#"<?xml version="1.0"?><nzb xmlns="http://www.newzbin.com/DTD/2003/nzb">
+<head><meta type="title">Release</meta><meta type="password"> s3cr&amp;t </meta></head>
+{ONE_FILE}</nzb>"#
+        );
+        std::fs::write(&path, xml).unwrap();
+        let parsed = parse_nzb(&path).unwrap();
+        assert_eq!(parsed.password, "s3cr&t");
+        assert_eq!(parsed.name, "Release");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn reads_the_password_from_the_file_name() {
+        let dir = std::env::temp_dir().join(format!("newsqueue-pwname-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&dir);
+        let path = dir.join("Some.Release{{pa ss}}.nzb");
+        std::fs::write(&path, format!("<nzb>{ONE_FILE}</nzb>")).unwrap();
+        let parsed = parse_nzb(&path).unwrap();
+        assert_eq!(parsed.password, "pa ss");
+        assert_eq!(parsed.name, "Some.Release");
+        assert_eq!(split_name_password("x {{}}"), ("x {{}}".to_string(), String::new()));
+        assert_eq!(split_name_password("{{only}}"), ("{{only}}".to_string(), String::new()));
+        assert_eq!(split_name_password("plain"), ("plain".to_string(), String::new()));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

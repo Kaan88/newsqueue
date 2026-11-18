@@ -254,8 +254,10 @@ Cut on 2026-11-18; see `REMOVED.md`.
 
 5. **Downloads are verified per article** by the yEnc `pcrc32` (or `crc32`
    for single-part posts); a mismatch is fetched from another server.
-6. **Mock NNTP read-timeout test** is still missing (failover, 430, CRC and
-   dropped-connection paths are covered).
+6. **Done: mock NNTP read-timeout test** (2026-11-18). A server that goes
+   silent mid-BODY costs one read timeout; the article is fetched again on a
+   new connection. Failover, 430, CRC and dropped-connection paths were
+   already covered.
 7. **Self-update needs public releases.** The check works but the repo is
    private, so GitHub answers 404. Only releases built after 2026-11-18 can
    self-update.
@@ -296,9 +298,10 @@ None are started. Categories stay cut (see `REMOVED.md`).
    the `.volNN+NN.par2` recovery files; after verify, fetch only as many
    recovery blocks as the damage needs. Saves the 5–15% of each job that is
    usually unused recovery data.
-2. **Archive password from the NZB.** Read `<meta type="password">` in the
-   NZB head and the `{{password}}` suffix in the NZB file name; store it on
-   the collection so unrar never prompts for it.
+2. **Done (2026-11-18): archive password from the NZB.** `<meta
+   type="password">` in the NZB head, else a `{{password}}` suffix in the file
+   name (removed from the collection name), is stored on the collection, so
+   unrar does not prompt. The log says a password was found, never which.
 3. **7z and ZIP extraction.** `container.rs` already detects both; add an
    extractor (vendored `7z.exe` on Windows, `7zip` on Linux) beside UnRAR.
 4. **Abort hopeless jobs and pre-check.** Stop a job once missing articles
@@ -329,12 +332,16 @@ None are started. Categories stay cut (see `REMOVED.md`).
 
 ## Suggested next order
 
-1. Add a mock NNTP read-timeout test.
-2. Optional: report files a PAR2 set covers but the NZB does not list as
-   "not in NZB" rather than as a generic repair.
-3. Exercise live second-server failover with a second account.
-4. Optional: code signing, shortcut polish and a full
-   per-setting checklist.
+1. Done 2026-11-18: mock NNTP read-timeout test.
+2. Done 2026-11-18: PAR2 names files the set covers but the NZB never listed
+   ("verified ... not in the NZB") instead of reporting a repair; with repair
+   off, a set whose only missing files are those still verifies.
+3. Exercise live second-server failover with a second account (blocked).
+4. Next not-blocked work: the planned features below in order (on-demand
+   PAR2, 7z/ZIP extraction, hopeless-job abort), then the Inno Setup
+   installer, then the server/web follow-ups (SSE, history/log/settings
+   endpoints, graceful shutdown, Docker).
+5. Optional: code signing, shortcut polish and a full per-setting checklist.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.
 The remaining gaps need external data or are optional polish.
