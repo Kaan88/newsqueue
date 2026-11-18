@@ -72,6 +72,14 @@ Win32 imports.
 
 ## Phase 1: Docker web front end
 
+**Status 2026-11-18:** first server slice in `app/server`: `GET /api/health`
+(open), `GET /api/state` (the `Snapshot`), `POST /api/{pause,resume,connect,
+disconnect,cleanup,speed-limit?tag=}`, `POST /api/nzb?name=&paused=` (raw NZB
+body, validated before queueing) and `POST /api/queue/{id}/{pause|resume|
+delete|up|down|top|bottom|unpack|password}`. Auth is an API key (`X-Api-Key`
+or `?apikey=`); non-loopback binds refuse to start without one. Not done:
+SSE, history/log/settings, `/api/nzb/url`, login/cookie, web UI, Docker.
+
 Server (`newsqueue-server`):
 
 - `tiny_http` (blocking, fits the no-async-runtime rule) on one port,
@@ -142,6 +150,10 @@ windows-rs is too verbose. Not `native-windows-gui` (unmaintained).
 
 - Step 1: the egui app moves to `desktop` and drives the `Engine` handle,
   unchanged, so there is a working app throughout the rewrite.
+- **No dark mode (decided 2026-11-18).** Win32 common controls have no
+  complete dark theme (a test left tabs, status bar, edits and progress bars
+  light or broken); the native app is light-only with the stock Windows look.
+  Mockups from real controls: `mockups/win32/shots/` (`nqmock --capture`).
 - Step 2, main window and queue: toolbar with the measured buttons and
   drawn icons, tab control, queue secondary toolbar, status bar with the
   measured panes. Queue is a virtual ListView (`LVS_REPORT | LVS_OWNERDATA`)

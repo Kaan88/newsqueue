@@ -10,10 +10,9 @@ Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
 first release built on the core `Engine`. 1.0.5 adds the Instrument skin
 (light/dark/system, egui 0.37) and runs the engine on its own thread.
 
-**Next:** GUI_PLAN Phase 0 steps 3–5 done 2026-11-18 (`Command` + `Engine::apply`, `EngineHost` timer thread, `EngineHandle` with `Snapshot`); the egui UI still reads the engine directly (switch after the theme redesign lands),
-engine on its own thread; then Phase 1 (web server + egui/WASM front end).
-Paused here on 2026-11-18 at the user's request.
- Engine split
+**Phase 1 started 2026-11-18:** `app/server` (`newsqueue-server`) serves `/api/health`, `/api/state`, pause/resume/connect/cleanup/speed-limit, `/api/nzb` upload and per-collection queue actions behind an API key; next: SSE events, history/log/settings endpoints, login, the web UI and Docker. GUI_PLAN Phase 0 steps 3–5 done 2026-11-18 (`Command` + `Engine::apply`, `EngineHost` timer thread, `EngineHandle` with `Snapshot`); the egui UI still reads the engine directly (the redesign has landed; switching is optional for the desktop).
+
+Engine split
 started: `app/core` (`newsqueue-core`) holds the platform-neutral modules;
 `Engine` (with `Event`s) is in core and the desktop app runs on it;
 `Command`/`Snapshot`/engine thread from GUI_PLAN Phase 0 are not done yet. Core
@@ -263,6 +262,28 @@ Cut on 2026-11-18; see `REMOVED.md`.
 8. **Minor shortcut polish** and any remaining peripheral settings.
 9. **Per-setting verification checklist**; the current baseline is tests,
    screenshots and focused scripts.
+
+## Installer: Inno Setup 7 (planned)
+
+Replace the IExpress setup with Inno Setup 7 (installed on the build machine
+at `C:\Program Files\Inno Setup 7`, compiler `ISCC.exe`). Not started.
+
+- `app/installer/newsqueue.iss` compiled by `build-installer.ps1`; same output
+  names (`NewsQueue-<version>-Setup.exe` + `.sha256`), same release assets.
+- Per-user, no admin: `PrivilegesRequired=lowest`, default dir
+  `{localappdata}\Programs\NewsQueue`, Start Menu + optional Desktop shortcut,
+  real uninstaller; settings/queue/history beside the exe are never deleted
+  on reinstall or update.
+- Fixed `AppId` (Inno writes `<AppId>_is1` under the Uninstall key, not
+  `NewsQueue`): on first install remove the old IExpress `NewsQueue` entry and
+  shortcuts so Apps & features shows one item.
+- Self-update: `update.rs` runs the setup with `/VERYSILENT
+  /SUPPRESSMSGBOXES /NORESTART` (+ `/DIR=` of the running install); keep the
+  wait-for-PID and relaunch behaviour (`NQ_WAIT_PID`/`NQ_RELAUNCH`, or
+  `CloseApplications` + `[Run]`), so 1.0.2+ copies still update themselves.
+- Rewrite `installer-test.ps1` for the new key/flags; also cover an update
+  over an existing IExpress install.
+- Optional later: signing (`ISSigTool` / code signing).
 
 ## Planned features (future)
 

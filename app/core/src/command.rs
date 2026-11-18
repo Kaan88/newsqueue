@@ -41,6 +41,8 @@ pub enum Command {
     CancelPassword(u64),
     Cleanup,
     RefreshRss,
+    /// Parse an NZB file on disk and queue it (optionally paused).
+    AddNzbFile(String, bool),
 }
 
 /// What [`Engine::apply`] did, for front ends that track a row.
@@ -53,6 +55,10 @@ pub enum Applied {
     Removed,
     /// No collection has that id, or nothing changed.
     Ignored,
+    /// A collection was queued with this id.
+    Added(u64),
+    /// The command failed; the reason is also logged.
+    Failed,
 }
 
 impl Engine {
@@ -78,6 +84,15 @@ impl Engine {
             SetSpeedLimit(tag) => self.set_speed_limit(tag),
             Cleanup => self.cleanup(),
             RefreshRss => self.refresh_rss(),
+            AddNzbFile(path, paused) => {
+                return match parse_nzb(std::path::Path::new(&path)) {
+                    Ok(nzb) => Applied::Added(self.add_nzb_from_parsed(nzb, path, paused)),
+                    Err(error) => {
+                        self.log("Error", &format!("Cannot add {path}: {error}"));
+                        Applied::Failed
+                    }
+                };
+            }
             SetAllExpanded(v) => {
                 for c in &mut self.queue {
                     c.expanded = v;

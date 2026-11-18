@@ -4,8 +4,8 @@ version = "1.0.5"
 edition = "2024"
 
 [workspace]
-members = [".", "core"]
-default-members = [".", "core"]
+members = [".", "core", "server"]
+default-members = [".", "core", "server"]
 
 [dependencies]
 egui = "0.37"

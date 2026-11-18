@@ -1,0 +1,10 @@
+[package]
+name = "newsqueue-server"
+version = "1.0.5"
+edition = "2021"
+description = "NewsQueue headless server: the engine plus a JSON HTTP API (GUI_PLAN Phase 1)."
+
+[dependencies]
+newsqueue-core = { path = "../core" }
+serde_json = "1"
+tiny_http = "0.12"

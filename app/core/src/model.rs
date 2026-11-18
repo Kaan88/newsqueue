@@ -275,6 +275,11 @@ impl Default for Server {
     }
 }
 pub fn app_base() -> PathBuf {
+    // The server (and its Docker image) keeps settings, queue and logs in a
+    // config folder of its own instead of beside the executable.
+    if let Some(dir) = std::env::var_os("NQ_CONFIG").filter(|v| !v.is_empty()) {
+        return PathBuf::from(dir);
+    }
     if let Ok(exe) = std::env::current_exe() {
         if let Some(mut exe_dir) = exe.parent() {
             if exe_dir.file_name().and_then(|s| s.to_str()) == Some("deps") {

@@ -36,8 +36,10 @@ build-output file names and carry no label.
 Everything that is part of the application lives in `app/`. It is a Cargo
 workspace: `app/` is the desktop package (`newsqueue`, egui + Win32) and
 `app/core` is `newsqueue-core` (engine, no UI/Win32; modules `model`,
-`container`, `download`, `unrar`, `par2`, `rss`). Plain `cargo test` in `app/`
-runs both (`default-members`).
+`container`, `download`, `unrar`, `par2`, `rss`), and `app/server` is
+`newsqueue-server` (headless JSON API). Plain `cargo test` in `app/` runs all
+three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
+`--config` to a dev server, or it shares the desktop's `app/` files.
 
 | Path | Purpose |
 |---|---|
@@ -45,6 +47,7 @@ runs both (`default-members`).
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
 | `app/core/src/snapshot.rs` | `Snapshot` (secret-free queue/speed/log view) and `EngineHandle` (send `Command`, read snapshot) for other front ends |
+| `app/server/` | `newsqueue-server`: headless engine + JSON API (`tiny_http`), GUI_PLAN Phase 1 slice; `--config`/`NQ_CONFIG`, `--api-key`/`NQ_API_KEY` |
 | `app/core/src/host.rs` | `EngineHost`: engine timer thread; the UI `checkout()`s it per frame and `checkin()`s after |
 | `app/core/src/model.rs` | Persisted types (`Settings`, `Collection`, `Server`, `QueueFile`, `Segment`), measured constants, formatters, NZB parser, sample data |
 | `app/src/ui.rs` | Main window, tabs, queue table, status bar, PAR2/RSS/Log tabs, queue actions |
@@ -268,7 +271,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 67 unit/integration tests currently pass (43 in core, 24 in desktop).
+- 80 unit/integration tests currently pass (43 in core, 33 in desktop, 4 in server).
 - `download.rs` has a mock NNTP server used for success, missing-article,
   article-cache, 430/CRC server failover, reconnect-on-retry and duplicate-name
   tests.
