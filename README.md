@@ -2,11 +2,42 @@
 
 <img src="app/assets/newsqueue-128.png" width="96" alt="NewsQueue icon">
 
-A from-scratch Rust desktop Usenet downloader with a native Windows UI,
-modelled on the behaviour of AltBinz 0.48.4, plus a headless server with an
-egui web UI. The UI, queue, settings and measurements live in `app/`.
+A Rust Usenet downloader with a native Win32 desktop, a headless server and
+an egui/WASM web UI. The shared engine, queue and settings live in `app/`.
+Originally inspired by AltBinz, NewsQueue now follows its own product direction.
 
-NewsQueue uses its own versioning: the current release is **1.0.8**.
+The current release combines **Windows 1.0.8** with **server/web 1.0.8-web.1**.
+
+## Download and run
+
+- **Windows x64:** use the [1.0.8 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.8).
+  These are the existing, tested native Compact release binaries, unchanged.
+- **Docker / web UI:** use the Linux amd64 image archive and Compose files from
+  the same release. Follow the [Docker Compose guide](app/DOCKER.md) for setup,
+  authentication, persistent folders, updates and source builds.
+
+Quick start after downloading the image, `compose.yaml` and `.env.example`:
+
+```sh
+cp .env.example .env
+# Edit .env and replace NQ_API_KEY with a long random key.
+docker load -i NewsQueue-1.0.8-web.1-linux-amd64.tar.gz
+docker compose up -d --no-build
+```
+
+On PowerShell, replace `cp` with `Copy-Item`. Open **http://localhost:8480/**,
+sign in with your API key, and configure servers in **Tools → Options**.
+The image archive needs no registry account. The default port is loopback-only.
+
+The updated web UI restores **Caustica** alongside **Classic**, with independent
+**System / Light / Dark** preferences. It also fixes asynchronous server saves
+and preserves stored credentials when editing or removing server rows.
+Classic's layout and appearance remain intact. The existing Windows assets
+retain their originally bundled web UI; use the Docker build for the complete
+updated server/web pair.
+
+For the matching source, download `NewsQueue-1.0.8-web.1-source.zip` or check
+out `web-v1.0.8-1`. The original `v1.0.8` tag remains tied to the Windows build.
 
 ## Features
 
@@ -32,6 +63,9 @@ NewsQueue uses its own versioning: the current release is **1.0.8**.
   Programs entry and uninstaller (`app/build-installer.ps1`)
 - Setup pages, server editor, scheduler, real persisted statistics,
   notes, log, PAR2 list and speed limiting
+- Native Compact Windows UI with responsive menus/scrolling and remembered
+  open-file folders; Caustica and Classic web themes with saved preferences
+- Linux container with non-root runtime, persistent volumes and API-key login
 - `--screenshot <file>` for headless UI verification
 
 ## Build and test
@@ -44,6 +78,14 @@ cargo test
 cargo run
 cargo run -- --screenshot shots/now.png
 ```
+
+For all workspace packages, including web theme tests, use
+`cargo test --workspace -- --test-threads=1`. The latest theme/API pass has
+133 passing tests plus hidden browser visual and interaction checks; see
+[the detailed web QA report](app/web/QA_REPORT.md) for coverage and limits.
+Build the web UI on Windows with `app/web/build-web.ps1` (requires the
+`wasm32-unknown-unknown` target and wasm-bindgen CLI 0.2.130), or use Docker's
+multi-stage build on Linux.
 
 Single tests and diagnostics:
 
@@ -132,7 +174,9 @@ collection `Incomplete`, which then flows into the PAR2 check/repair stage.
 ## Documentation
 
 - `AGENTS.md` - commands, layout and gotchas for coding agents
-- `ROADMAP.md` - parity plan, remaining gaps and required test data
+- `ROADMAP.md` - current priorities and verification status
+- `app/DOCKER.md` - Docker Compose installation and operations
+- `app/web/QA_REPORT.md` - theme, layout and functionality verification
 - `app/MECHANICS.md` - measured behaviour and function addresses from the
   original binary
 - `app/mechanics.json` - machine-readable measured values

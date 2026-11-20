@@ -134,6 +134,8 @@ pub struct Shared {
     /// Replies of `GET /api/servers` and `GET /api/rss`.
     pub servers: Option<Vec<serde_json::Value>>,
     pub rss: Option<Vec<String>>,
+    pub servers_saving: bool,
+    pub servers_saved: Option<Result<Vec<serde_json::Value>, String>>,
 }
 
 pub type SharedRef = Arc<Mutex<Shared>>;
@@ -227,13 +229,59 @@ impl Client {
         });
     }
 
+    /// A 202 only acknowledges queuing. Do not replace the editor with a GET
+    /// from before that command was applied (indices also identify passwords).
+    pub fn save_servers(&self, ctx: &egui::Context, expected: Vec<serde_json::Value>) {
+        { let mut shared=lock(&self.shared); shared.servers_saving=true; shared.servers_saved=None; }
+        let client=self.clone(); let ctx=ctx.clone();
+        let request=self.request("POST", "/api/servers", serde_json::to_vec(&expected).unwrap());
+        ehttp::fetch(request, move |result| {
+            match result {
+                Ok(response) if response.ok => client.verify_servers(ctx, expected, 30),
+                _ => client.finish_servers(&ctx, Err("Could not save servers. Your edits are still available; retry Apply.".into())),
+            }
+        });
+    }
+
+    fn finish_servers(&self, ctx: &egui::Context, result: Result<Vec<serde_json::Value>, String>) {
+        let mut shared=lock(&self.shared);
+        shared.servers_saving=false;
+        shared.toasts.push(match &result { Ok(_) => "Servers saved".into(), Err(message) => message.clone() });
+        shared.servers_saved=Some(result);
+        ctx.request_repaint();
+    }
+
+    fn verify_servers(&self, ctx: egui::Context, expected: Vec<serde_json::Value>, retries: u8) {
+        let client=self.clone();
+        ehttp::fetch(self.request("GET", "/api/servers", vec![]), move |result| {
+            let list=result.ok().filter(|r|r.ok).and_then(|r|serde_json::from_slice::<Vec<serde_json::Value>>(&r.bytes).ok());
+            if let Some(list)=list.filter(|list| servers_match(&expected,list)) {
+                client.finish_servers(&ctx,Ok(server_indices(list)));
+            } else if retries == 0 {
+                client.finish_servers(&ctx,Err("Could not confirm the saved servers. Your edits are still available; retry Apply.".into()));
+            } else {
+                let retry=move ||client.verify_servers(ctx,expected,retries-1);
+                #[cfg(target_arch = "wasm32")]
+                {
+                    use wasm_bindgen::JsCast;
+                    let callback=wasm_bindgen::closure::Closure::once_into_js(retry);
+                    if let Some(window)=web_sys::window() {
+                        let _=window.set_timeout_with_callback_and_timeout_and_arguments_0(callback.unchecked_ref(),100);
+                    }
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                std::thread::spawn(move || { std::thread::sleep(std::time::Duration::from_millis(100)); retry(); });
+            }
+        });
+    }
+
     pub fn load_servers(&self, ctx: &egui::Context) {
         let shared = Arc::clone(&self.shared);
         let ctx2 = ctx.clone();
         ehttp::fetch(self.request("GET", "/api/servers", vec![]), move |res| {
             let mut s = lock(&shared);
             match res.ok().filter(|r| r.ok).and_then(|r| serde_json::from_slice::<Vec<serde_json::Value>>(&r.bytes).ok()) {
-                Some(list) => s.servers = Some(list),
+                Some(list) => s.servers = Some(server_indices(list)),
                 None => s.toasts.push("Cannot load the servers".into()),
             }
             ctx2.request_repaint();
@@ -390,4 +438,40 @@ impl Events {
         true
     }
     pub fn close(&self) {}
+}
+
+/// Older servers omitted `index`; their GET order is the original identity.
+fn server_indices(mut list: Vec<serde_json::Value>) -> Vec<serde_json::Value> {
+    for (index,server) in list.iter_mut().enumerate() {
+        if server.get("index").is_none() { server["index"]=index.into(); }
+    }
+    list
+}
+
+/// Match user-editable fields, excluding secret/index/runtime metadata.
+fn servers_match(expected: &[serde_json::Value], actual: &[serde_json::Value]) -> bool {
+    expected.len()==actual.len() && expected.iter().zip(actual).all(|(e,a)| {
+        e.as_object().is_some_and(|fields|fields.iter().all(|(key,value)| {
+            matches!(key.as_str(),"index"|"password"|"password_set"|"used_bytes") || a.get(key)==Some(value)
+        }))
+    })
+}
+#[cfg(test)]
+mod save_tests {
+    use super::*;
+    #[test]
+    fn older_server_replies_get_stable_editor_indices() {
+        let list=server_indices(vec![serde_json::json!({"name":"first"}),serde_json::json!({"name":"second"})]);
+        assert_eq!(list[0]["index"],0);
+        assert_eq!(list[1]["index"],1);
+    }
+    #[test]
+    fn server_save_rejects_stale_lists_and_accepts_reindexed_redacted_results() {
+        let old=serde_json::json!({"index":1,"name":"backup","address":"127.0.0.1","password":"new-secret","password_set":false});
+        let stale=serde_json::json!({"index":0,"name":"old","address":"127.0.0.1","password_set":true});
+        let saved=serde_json::json!({"index":0,"name":"backup","address":"127.0.0.1","password_set":true});
+        assert!(!servers_match(&[old.clone()],&[stale]));
+        assert!(!servers_match(&[old.clone()],&[]));
+        assert!(servers_match(&[old],&[saved]));
+    }
 }

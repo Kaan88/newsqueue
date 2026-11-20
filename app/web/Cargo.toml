@@ -4,6 +4,9 @@ version = "1.0.8"
 edition = "2024"
 description = "NewsQueue web UI: the egui front end compiled to WebAssembly, talking to newsqueue-server."
 
+[features]
+ui-audit = []
+
 [dependencies]
 egui = "0.37"
 eframe = { version = "0.37", default-features = false, features = ["glow", "default_fonts"] }

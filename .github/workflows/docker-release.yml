@@ -1,0 +1,37 @@
+name: Docker release
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Linux amd64 image
+        run: docker build --platform linux/amd64 -t newsqueue:1.0.8-web.1 app
+      - name: Validate Compose and container
+        env:
+          NQ_API_KEY: isolated-container-release-test
+        run: |
+          docker compose -f app/compose.yaml config --quiet
+          python3 app/docker-smoke.py
+      - name: Package image and web build
+        run: |
+          mkdir release-output
+          docker save newsqueue:1.0.8-web.1 | gzip -1 > release-output/NewsQueue-1.0.8-web.1-linux-amd64.tar.gz
+          id=$(docker create newsqueue:1.0.8-web.1)
+          docker cp "$id:/opt/newsqueue/web" release-output/web
+          docker rm "$id"
+          cp app/assets/fonts/IBM-Plex-LICENSE.txt release-output/web/
+          (cd release-output/web && zip -qr ../NewsQueue-1.0.8-web.1-web.zip .)
+          git archive --format=zip --prefix=NewsQueue-1.0.8-web.1/ HEAD > release-output/NewsQueue-1.0.8-web.1-source.zip
+          cp app/compose.yaml app/.env.example app/DOCKER.md release-output/
+          cd release-output
+          sha256sum *.tar.gz *.zip compose.yaml .env.example DOCKER.md > NewsQueue-1.0.8-web.1-SHA256SUMS.txt
+      - name: Attach to existing Windows release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload v1.0.8 release-output/*.tar.gz release-output/*.zip release-output/compose.yaml release-output/.env.example release-output/DOCKER.md release-output/*SHA256SUMS.txt

@@ -48,6 +48,7 @@ pub fn snap(ctx: &egui::Context, r: Rect) -> Rect {
 }
 
 pub fn edge(p: &egui::Painter, r: Rect, kind: Edge) {
+    if theme::is_caustica() { crate::caustica::web_edge(p, r, kind); return; }
     let r = snap(p.ctx(), r);
     // One point, but at least one physical pixel.
     let t = 1.0f32.max(px(p.ctx()));
@@ -90,6 +91,10 @@ pub fn vline(p: &egui::Painter, x: f32, y0: f32, y1: f32) {
 
 /// The dotted keyboard-focus rectangle.
 pub fn focus_rect(p: &egui::Painter, r: Rect) {
+    if theme::is_caustica() {
+        p.rect_stroke(r, 2.0, Stroke::new(1.0, crate::caustica::ACCENT()), egui::StrokeKind::Inside);
+        return;
+    }
     let st = Stroke::new(1.0, TEXT());
     let pts = [r.left_top(), r.right_top(), r.right_bottom(), r.left_bottom(), r.left_top()];
     for w in pts.windows(2) {
@@ -99,6 +104,7 @@ pub fn focus_rect(p: &egui::Painter, r: Rect) {
 
 /// Text drawn embossed, as classic controls show disabled captions.
 pub fn text_disabled(p: &egui::Painter, pos: Pos2, align: Align2, text: &str, font: egui::FontId) {
+    if theme::is_caustica() { p.text(pos, align, text, font, theme::GRAY_TEXT()); return; }
     p.text(pos + vec2(1.0, 1.0), align, text, font.clone(), HILIGHT());
     p.text(pos, align, text, font, SHADOW());
 }
@@ -150,6 +156,7 @@ fn push(ui: &mut Ui, text: &str, icon: Option<Icon>, min_w: f32, default: bool) 
     let tw = text_width(ui, text, theme::font(BODY)) + if icon.is_some() { 22.0 } else { 0.0 };
     let size = vec2((tw + 20.0).max(min_w), 23.0);
     let (rect, resp) = ui.allocate_exact_size(size, Sense::click());
+    crate::audit::item(ui, text, rect);
     let enabled = ui.is_enabled();
     let resp = resp.on_hover_cursor(CursorIcon::Default);
     if ui.is_rect_visible(rect) {
@@ -157,6 +164,10 @@ fn push(ui: &mut Ui, text: &str, icon: Option<Icon>, min_w: f32, default: bool) 
         let pressed = enabled && resp.is_pointer_button_down_on() && resp.hovered();
         let focused = resp.has_focus();
         let mut r = snap(ui.ctx(), rect);
+        if theme::is_caustica() {
+            crate::caustica::button_chrome(ui, r, &resp, false, false);
+            if default || focused { p.rect_stroke(r.shrink(1.0), 3.0, Stroke::new(1.0, crate::caustica::ACCENT()), egui::StrokeKind::Inside); }
+        } else {
         p.rect_filled(r, 0.0, FACE());
         if default || focused {
             edge(p, r, Edge::Pressed);
@@ -164,6 +175,7 @@ fn push(ui: &mut Ui, text: &str, icon: Option<Icon>, min_w: f32, default: bool) 
             r = r.shrink(1.0);
         }
         edge(p, r, if pressed { Edge::Pressed } else { Edge::Raised });
+        }
         let d = if pressed { 1.0 } else { 0.0 };
         let mut x = rect.center().x + d;
         if let Some(icon) = icon {
@@ -191,10 +203,14 @@ pub fn tool_button(ui: &mut Ui, text: &str, icon: Icon, checked: bool, compact: 
     let w = if compact || text.is_empty() { 30.0 } else { (text_width(ui, text, theme::font(theme::SMALL)) + 14.0).max(52.0) };
     let h = if compact || text.is_empty() { 30.0 } else { 46.0 };
     let (rect, resp) = ui.allocate_exact_size(vec2(w, h), Sense::click());
+    crate::audit::item(ui, text, rect);
     let enabled = ui.is_enabled();
     let p = ui.painter();
     let hot = enabled && resp.hovered();
     let down = enabled && resp.is_pointer_button_down_on() && hot;
+    if theme::is_caustica() {
+        crate::caustica::button_chrome(ui, rect, &resp, true, checked);
+    } else {
     if checked {
         p.rect_filled(rect, 0.0, theme::TRACK());
     }
@@ -202,6 +218,7 @@ pub fn tool_button(ui: &mut Ui, text: &str, icon: Icon, checked: bool, compact: 
         edge(p, rect, Edge::SunkenThin);
     } else if hot {
         edge(p, rect, Edge::RaisedThin);
+    }
     }
     let d = if down || checked { 1.0 } else { 0.0 };
     let isz = if compact || text.is_empty() { 20.0 } else { 24.0 };
@@ -234,8 +251,10 @@ pub fn gripper(ui: &mut Ui, height: f32) {
 // ---------------------------------------------------------- check boxes ---
 
 pub fn checkbox(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
+    if theme::is_caustica() { let r=crate::caustica::checkbox_label(ui, on, text); crate::audit::item(ui,text,r.rect); return r; }
     let tw = text_width(ui, text, theme::font(BODY));
     let (rect, mut resp) = ui.allocate_exact_size(vec2(13.0 + 6.0 + tw + 2.0, 19.0), Sense::click());
+    crate::audit::item(ui, text, rect);
     let enabled = ui.is_enabled();
     if resp.clicked() && enabled {
         *on = !*on;
@@ -260,10 +279,12 @@ pub fn checkbox(ui: &mut Ui, on: &mut bool, text: &str) -> Response {
 }
 
 pub fn radio(ui: &mut Ui, selected: bool, text: &str) -> Response {
+    if theme::is_caustica() { let r=crate::caustica::radio(ui, selected, text); crate::audit::item(ui,text,r.rect); return r; }
     let tw = text_width(ui, text, theme::font(BODY));
     let (rect, resp) = ui.allocate_exact_size(vec2(12.0 + 6.0 + tw + 2.0, 19.0), Sense::click());
     let enabled = ui.is_enabled();
     let p = ui.painter();
+    crate::audit::item(ui, text, rect);
     let c = pos2(rect.left() + 6.0, rect.center().y);
     // The sunken ring: dark above-left, light below-right.
     p.circle_filled(c, 6.0, HILIGHT());
@@ -285,6 +306,7 @@ pub fn field(ui: &mut Ui, width: f32, rows: usize, edit: TextEdit<'_>) -> Respon
     let line = 16.0;
     let h = if rows <= 1 { 21.0 } else { rows as f32 * line + 8.0 };
     let (rect, _) = ui.allocate_exact_size(vec2(width, h), Sense::hover());
+    crate::audit::item(ui, "field", rect);
     let enabled = ui.is_enabled();
     ui.painter().rect_filled(rect, 0.0, if enabled { WINDOW() } else { FACE() });
     edge(ui.painter(), rect, Edge::Sunken);
@@ -295,7 +317,7 @@ pub fn field(ui: &mut Ui, width: f32, rows: usize, edit: TextEdit<'_>) -> Respon
         .font(theme::font(BODY))
         .text_color(if enabled { TEXT() } else { GRAY_TEXT() })
         .desired_width(inner.width() - 2.0);
-    if rows <= 1 {
+    let response = if rows <= 1 {
         // A child ui, so the parent's cursor stays after the whole field.
         let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner).layout(egui::Layout::left_to_right(egui::Align::Center)));
         child.add(edit)
@@ -305,7 +327,11 @@ pub fn field(ui: &mut Ui, width: f32, rows: usize, edit: TextEdit<'_>) -> Respon
             area.show(ui, |ui| ui.add_sized([w, inner.height() - 2.0], edit.desired_rows(rows)))
         })
         .inner
+    };
+    if theme::is_caustica() && response.has_focus() {
+        ui.painter().rect_stroke(rect, 3.0, Stroke::new(1.0, crate::caustica::ACCENT()), egui::StrokeKind::Inside);
     }
+    response
 }
 
 /// A spin box: a number field with up/down arrows. Typing is committed on
@@ -313,6 +339,7 @@ pub fn field(ui: &mut Ui, width: f32, rows: usize, edit: TextEdit<'_>) -> Respon
 pub fn spin(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, value: &mut f64, min: f64, max: f64, decimals: usize, width: f32) -> Response {
     let id = ui.scope_id().with(("spin", id_salt));
     let (rect, _) = ui.allocate_exact_size(vec2(width, 21.0), Sense::hover());
+    crate::audit::item(ui, "spin", rect);
     let enabled = ui.is_enabled();
     let p = ui.painter().clone();
     p.rect_filled(rect, 0.0, if enabled { WINDOW() } else { FACE() });
@@ -389,6 +416,7 @@ pub fn spin(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, value:
 /// button; `add` lists the choices with [`list_item`].
 pub fn combo<R>(ui: &mut Ui, id_salt: impl std::hash::Hash, current: &str, width: f32, add: impl FnOnce(&mut Ui) -> R) -> Option<R> {
     let (rect, resp) = ui.allocate_exact_size(vec2(width, 21.0), Sense::click());
+    crate::audit::item(ui, &format!("combo:{current}"), rect);
     let enabled = ui.is_enabled();
     let p = ui.painter();
     p.rect_filled(rect, 0.0, if enabled { WINDOW() } else { FACE() });
@@ -427,6 +455,7 @@ pub fn combo<R>(ui: &mut Ui, id_salt: impl std::hash::Hash, current: &str, width
 /// One choice in a drop-down list: highlighted under the pointer.
 pub fn list_item(ui: &mut Ui, selected: bool, text: &str) -> Response {
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 18.0), Sense::click());
+    crate::audit::item(ui, text, rect);
     let hot = resp.hovered() || (selected && !ui.ctx().is_pointer_over_egui());
     let p = ui.painter();
     if hot {
@@ -499,7 +528,7 @@ fn menu_row(ui: &mut Ui, text: &str, shortcut: &str, enabled: bool, check: Optio
             p.text(pos2(rect.right() - 12.0, rect.center().y), Align2::RIGHT_CENTER, shortcut, theme::font(BODY), color);
         }
     } else if hot {
-        p.text(tpos, Align2::LEFT_CENTER, text, theme::font(BODY), SHADOW().gamma_multiply(1.2));
+        p.text(tpos, Align2::LEFT_CENTER, text, theme::font(BODY), if theme::is_caustica() { GRAY_TEXT() } else { SHADOW().gamma_multiply(1.2) });
     } else {
         text_disabled(p, tpos, Align2::LEFT_CENTER, text, theme::font(BODY));
         if !shortcut.is_empty() {
@@ -514,6 +543,7 @@ fn menu_row(ui: &mut Ui, text: &str, shortcut: &str, enabled: bool, check: Optio
             p.add(Shape::line(vec![c + vec2(-3.5, 0.0), c + vec2(-1.0, 2.5), c + vec2(3.5, -2.5)], Stroke::new(1.8, color)));
         }
     }
+    crate::audit::item(ui,text,rect);
     enabled && resp.clicked()
 }
 
@@ -546,6 +576,7 @@ pub fn menu_bar(ui: &mut Ui, titles: &[&str], mut add: impl FnMut(&mut Ui, usize
         for (i, t) in titles.iter().enumerate() {
             let w = text_width(ui, t, theme::font(BODY)) + 14.0;
             let (rect, resp) = ui.allocate_exact_size(vec2(w, 19.0), Sense::click());
+            crate::audit::item(ui, t, rect);
             rects.push(rect);
             let p = ui.painter();
             if open == Some(i) {
@@ -594,6 +625,7 @@ pub fn menu_bar(ui: &mut Ui, titles: &[&str], mut add: impl FnMut(&mut Ui, usize
 /// A tab strip; the selected tab is raised and joins the page below it.
 /// Returns the page rectangle under the tabs.
 pub fn tab_strip(ui: &mut Ui, selected: &mut usize, titles: &[(&str, Icon)]) -> Rect {
+    if theme::is_caustica() { return caustica_tabs(ui, selected, titles); }
     let h = 22.0;
     let (strip_rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), h), Sense::hover());
     let mut x = strip_rect.left() + 2.0;
@@ -607,6 +639,7 @@ pub fn tab_strip(ui: &mut Ui, selected: &mut usize, titles: &[(&str, Icon)]) -> 
             Rect::from_min_max(pos2(x, strip_rect.top() + 2.0), pos2(x + w, strip_rect.bottom()))
         };
         let resp = ui.interact(r, ui.scope_id().with(("tab", i)), Sense::click());
+        crate::audit::item(ui,t,r);
         if resp.clicked() {
             *selected = i;
         }
@@ -775,13 +808,16 @@ pub fn dialog<R>(ctx: &egui::Context, id: &str, title: &str, width: f32, add: im
             ui.spacing_mut().item_spacing = vec2(6.0, 6.0);
             // Caption.
             let (cap, cap_resp) = ui.allocate_exact_size(vec2(width - 8.0, 18.0), Sense::drag());
-            gradient(ui.painter(), cap, theme::CAPTION_A(), theme::CAPTION_B());
+            if theme::is_caustica() {
+                crate::caustica::band_ground(ui.painter(), cap);
+                ui.painter().rect_filled(Rect::from_min_size(cap.min, vec2(2.0,cap.height())),0.0,crate::caustica::ACCENT());
+            } else { gradient(ui.painter(), cap, theme::CAPTION_A(), theme::CAPTION_B()); }
             ui.painter().with_clip_rect(cap.shrink2(vec2(4.0, 0.0))).text(
                 pos2(cap.left() + 4.0, cap.center().y),
                 Align2::LEFT_CENTER,
                 title,
                 theme::bold(BODY),
-                Color32::WHITE,
+                if theme::is_caustica() { TEXT() } else { Color32::WHITE },
             );
             if cap_resp.dragged() {
                 let o = offset + cap_resp.drag_delta();
@@ -789,6 +825,7 @@ pub fn dialog<R>(ctx: &egui::Context, id: &str, title: &str, width: f32, add: im
             }
             let xr = Rect::from_min_size(pos2(cap.right() - 18.0, cap.top() + 2.0), vec2(16.0, 14.0));
             let x = ui.interact(xr, id.with("close"), Sense::click());
+            crate::audit::item(ui,"Close dialog",xr);
             let down = x.is_pointer_button_down_on() && x.hovered();
             ui.painter().rect_filled(xr, 0.0, FACE());
             edge(ui.painter(), xr, if down { Edge::Pressed } else { Edge::Raised });
@@ -1161,4 +1198,21 @@ mod tests {
         assert!(asked, "the closing click requests a repaint");
         assert!(behind, "the click after the idle frame is not swallowed");
     }
+}
+
+fn caustica_tabs(ui: &mut Ui, selected: &mut usize, titles: &[(&str, Icon)]) -> Rect {
+    let (strip, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+    let mut x = strip.left() + 2.0;
+    for (i, (text, icon)) in titles.iter().enumerate() {
+        let width = text_width(ui, text, theme::font(BODY)) + 34.0;
+        let rect = Rect::from_min_size(pos2(x, strip.top()), vec2(width, strip.height()));
+        let response = ui.interact(rect, ui.scope_id().with(("tab", i)), Sense::click());
+        crate::audit::item(ui,text,rect);
+        if response.clicked() { *selected = i; }
+        let (_, color) = crate::caustica::tab_chrome(ui, rect, &response, *selected == i, true);
+        theme::paint_icon(ui.painter(), Rect::from_min_size(pos2(x + 7.0, rect.center().y - 8.0), vec2(16.0,16.0)), *icon, true);
+        ui.painter().text(pos2(x + 27.0, rect.center().y), Align2::LEFT_CENTER, text, theme::font(BODY), color);
+        x += width;
+    }
+    strip
 }

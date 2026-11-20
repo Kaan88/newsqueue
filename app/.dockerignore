@@ -12,3 +12,5 @@ newsqueue-*.json
 shots
 win32/shots
 .smoke.*
+.env
+.env.*

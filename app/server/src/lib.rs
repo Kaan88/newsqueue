@@ -348,8 +348,12 @@ impl Api {
                     serde_json::Value::Array(
                         s.servers
                             .iter()
-                            .map(|r| {
+                            .enumerate()
+                            .map(|(index, r)| {
                                 let mut v = serde_json::to_value(r).unwrap_or_default();
+                                // SetServers uses this identity to retain the stored
+                                // password and fields the web editor does not expose.
+                                v["index"] = index.into();
                                 v["username"] = r.username.clone().into();
                                 v
                             })
@@ -574,6 +578,29 @@ mod tests {
     }
 
     #[test]
+    fn server_editor_round_trip_keeps_identity_after_removing_a_row() {
+        let (mut host, api) = demo();
+        host.settings.servers = vec![
+            newsqueue_core::model::Server { name:"first".into(), password:"first-secret".into(), ..Default::default() },
+            newsqueue_core::model::Server { name:"second".into(), password:"second-secret".into(), nic:"keep-interface".into(), ..Default::default() },
+        ];
+        host.tick_local();
+        let read = || -> Vec<serde_json::Value> { serde_json::from_slice(&api.route("GET","/api/servers",Some("k3y"),b"").body).unwrap() };
+        let second=read().remove(1);
+        assert_eq!(api.route("POST","/api/servers",Some("k3y"),&serde_json::to_vec(&vec![second]).unwrap()).status,202);
+        host.tick_local();
+        let mut next=read();
+        assert_eq!(next[0]["index"],0);
+        next[0]["name"]="renamed after removal".into();
+        api.route("POST","/api/servers",Some("k3y"),&serde_json::to_vec(&next).unwrap());
+        host.tick_local();
+        assert_eq!(host.settings.servers.len(),1);
+        assert_eq!(host.settings.servers[0].password,"second-secret");
+        assert_eq!(host.settings.servers[0].nic,"keep-interface");
+        assert_eq!(host.settings.servers[0].name,"renamed after removal");
+    }
+
+    #[test]
     fn servers_and_feeds_keep_passwords_private() {
         let (mut host, api) = demo();
         host.settings.servers = vec![newsqueue_core::model::Server {
@@ -592,11 +619,15 @@ mod tests {
         let servers = api.route("GET", "/api/servers", Some("k3y"), b"");
         let v: serde_json::Value = serde_json::from_slice(&servers.body).unwrap();
         assert_eq!(v[0]["username"], "u1");
+        assert_eq!(v[0]["index"], 0);
         assert_eq!(v[0]["password_set"], true);
         assert!(!String::from_utf8_lossy(&servers.body).contains("s3cret"));
         // Rename without a password: the password and unknown fields stay.
-        let body = br#"[{"index":0,"name":"renamed","password":""},{"name":"second","address":"b.example"}]"#;
-        assert_eq!(api.route("POST", "/api/servers", Some("k3y"), body).status, 202);
+        let mut edited = v.as_array().unwrap().clone();
+        edited[0]["name"] = "renamed".into();
+        edited[0]["password"] = "".into();
+        edited.push(serde_json::json!({"name":"second","address":"b.example"}));
+        assert_eq!(api.route("POST", "/api/servers", Some("k3y"), &serde_json::to_vec(&edited).unwrap()).status, 202);
         assert_eq!(api.route("POST", "/api/servers", Some("k3y"), b"{}").status, 400);
         let rss = api.route("GET", "/api/rss", Some("k3y"), b"");
         assert!(String::from_utf8_lossy(&rss.body).contains("key=abc"));

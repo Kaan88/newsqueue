@@ -2,11 +2,13 @@
 //!
 //! Compiled to WebAssembly and served by `newsqueue-server` at `/`. It holds
 //! no engine: it polls `GET /api/state` (the secret-free `Snapshot`) and
-//! sends actions to the JSON API. The look is a classic Windows 2000 desktop
-//! window (`skin.rs` draws the widgets, `theme.rs` the palette and icons).
+//! sends actions to the JSON API. Caustica and Classic share the same layout
+//! and interactions, with independent System/Light/Dark brightness.
 #![allow(dead_code)]
 
 mod skin;
+mod caustica;
+mod audit;
 mod theme;
 mod app;
 mod net;

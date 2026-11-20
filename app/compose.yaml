@@ -1,10 +1,11 @@
 # NewsQueue in Docker. Put NQ_API_KEY=... (and optionally PUID, PGID, TZ)
 # in a .env file beside this one, then: docker compose up -d
-# Open http://<host>:8480/ and sign in with the API key.
+# Open http://localhost:8480/ and sign in with the API key.
 services:
   newsqueue:
     build: .
-    image: newsqueue
+    image: newsqueue:1.0.8-web.1
+    pull_policy: never
     restart: unless-stopped
     ports:
       # Loopback only; publish it wider (or behind a TLS proxy) on purpose.

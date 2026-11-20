@@ -1,4 +1,4 @@
-//! The web app: a classic desktop window in the browser. Menu bar, toolbar,
+//! The web app: Caustica and Classic skins over the same egui interface. Menu bar, toolbar,
 //! tabbed list views (queue, history, PAR2, log, RSS), a status bar and
 //! modal dialogs, over the JSON API with live updates from `/api/events`.
 
@@ -40,7 +40,8 @@ pub struct WebApp {
     dialog: Option<Dialog>,
     add_url: String,
     add_paused: bool,
-    dark: bool,
+    appearance: theme::Theme,
+    brightness: theme::Brightness,
     show_conns: bool,
     /// The collection being dragged and the row it would land on.
     drag: Option<(u64, usize)>,
@@ -146,13 +147,11 @@ fn initial_key() -> String {
 
 impl WebApp {
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        // View > Dark colors wins; until it is used, follow the system.
-        let dark = match stored("nq-theme").as_deref() {
-            Some("dark") => true,
-            Some("light") => false,
-            _ => system_dark(),
-        };
-        theme::install(&cc.egui_ctx, dark);
+        let appearance = theme::Theme::from_saved(stored("nq-appearance").as_deref());
+        // Preserve the old light/dark preference independently of the skin.
+        let brightness = theme::Brightness::from_saved(stored("nq-theme").as_deref());
+        theme::configure(&cc.egui_ctx, appearance, brightness.dark(system_dark()));
+        theme::install(&cc.egui_ctx, brightness.dark(system_dark()));
         let key = initial_key();
         Self {
             client: Client { shared: Arc::default(), key: key.clone() },
@@ -167,7 +166,8 @@ impl WebApp {
             dialog: None,
             add_url: String::new(),
             add_paused: false,
-            dark,
+            appearance,
+            brightness,
             show_conns: stored("nq-conns").as_deref() != Some("0"),
             drag: None,
             toast: None,
@@ -201,12 +201,6 @@ impl WebApp {
         self.post(ctx, &format!("/api/queue/{id}/{action}"));
     }
 
-    fn set_dark(&mut self, ctx: &egui::Context, dark: bool) {
-        self.dark = dark;
-        store("nq-theme", if dark { "dark" } else { "light" });
-        theme::set_dark(ctx, dark);
-    }
-
     fn selected_row<'a>(&self, snap: &'a Snapshot) -> Option<&'a QueueRow> {
         self.selected.and_then(|id| snap.queue.iter().find(|r| r.id == id))
     }
@@ -220,6 +214,7 @@ impl WebApp {
 
 impl eframe::App for WebApp {
     fn logic(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        theme::configure(&ctx, self.appearance, self.brightness.dark(system_dark()));
         let now = ctx.input(|i| i.time);
         let (live, unauthorized, have_snap) = {
             let s = net::lock(&self.client.shared);
@@ -247,6 +242,7 @@ impl eframe::App for WebApp {
     }
 
     fn ui(&mut self, root: &mut Ui, _frame: &mut eframe::Frame) {
+        crate::audit::begin();
         let ctx = root.ctx().clone();
         let now = ctx.input(|i| i.time);
         let (snap, error, unauthorized, toasts) = {
@@ -262,9 +258,12 @@ impl eframe::App for WebApp {
         if unauthorized {
             egui::CentralPanel::default().frame(egui::Frame::NONE.fill(FACE())).show(root, |_| {});
             self.login(&ctx);
+            if theme::is_caustica() { crate::caustica::flush(&ctx); }
+        crate::audit::finish();
             return;
         }
         let snap = snap.unwrap_or_default();
+        crate::audit::state(&snap);
         let narrow = root.available_width() < NARROW;
         if self.dialog.is_none() {
             self.shortcuts(&ctx, &snap);
@@ -274,7 +273,10 @@ impl eframe::App for WebApp {
         egui::Panel::top("toolbar")
             .exact_size(if narrow { 38.0 } else { 54.0 })
             .frame(egui::Frame::NONE.fill(FACE()))
-            .show(root, |ui| self.toolbar(ui, &snap, narrow));
+            .show(root, |ui| {
+                if theme::is_caustica() { crate::caustica::top_bar_ground(ui.painter(), ui.max_rect()); }
+                self.toolbar(ui, &snap, narrow)
+            });
         egui::Panel::bottom("status").exact_size(24.0).frame(egui::Frame::NONE.fill(FACE())).show(root, |ui| {
             let message = self.toast.as_ref().map(|t| (t.0.clone(), false)).or(error.clone().map(|e| (e, true)));
             self.status_bar(ui, &snap, message, error.is_some(), narrow)
@@ -315,6 +317,8 @@ impl eframe::App for WebApp {
             });
         self.drop_hint(&ctx);
         self.dialogs(&ctx, &snap, narrow);
+        if theme::is_caustica() { crate::caustica::flush(&ctx); }
+        crate::audit::finish();
     }
 }
 
@@ -492,9 +496,20 @@ impl WebApp {
                         close = true;
                     }
                     skin::menu_separator(ui);
-                    if skin::menu_check(ui, "Dark colors", self.dark, false) {
-                        self.set_dark(&ctx, !self.dark);
-                        close = true;
+                    for (label, choice) in [("Caustica", theme::Theme::Caustica), ("Classic", theme::Theme::Classic)] {
+                        if skin::menu_check(ui, label, self.appearance == choice, true) {
+                            self.appearance = choice;
+                            store("nq-appearance", choice.key());
+                            ctx.request_repaint(); close = true;
+                        }
+                    }
+                    skin::menu_separator(ui);
+                    for (label, choice) in [("System colors", theme::Brightness::System), ("Light colors", theme::Brightness::Light), ("Dark colors", theme::Brightness::Dark)] {
+                        if skin::menu_check(ui, label, self.brightness == choice, true) {
+                            self.brightness = choice;
+                            store("nq-theme", choice.key());
+                            ctx.request_repaint(); close = true;
+                        }
                     }
                 }
                 3 => {
@@ -850,6 +865,7 @@ impl WebApp {
                 }
                 return;
             }
+            crate::audit::item(ui, &format!("job:{}",c.id), r);
             // A collection row.
             let name_cell = Rect::from_min_size(pos2(lefts[0], r.top()), vec2(cols.widths[0], r.height()));
             if !c.file_rows.is_empty() {
@@ -1550,9 +1566,11 @@ fn chart(p: &egui::Painter, r: Rect, values: &[f64], unit: &str, labels: &[Strin
         let h = (plot.height() * (*v / max) as f32).max(if *v > 0.0 { 1.0 } else { 0.0 });
         let b = Rect::from_min_max(pos2(plot.left() + i as f32 * slot + slot * 0.18, plot.bottom() - h), pos2(plot.left() + (i + 1) as f32 * slot - slot * 0.18, plot.bottom()));
         p.rect_filled(b, 0.0, theme::BAR());
-        // A 3D touch: light left edge, dark right edge.
+        // Preserve Classic's blue bevel; Caustica uses its own accent cleanly.
+        if !theme::is_caustica() {
         p.rect_filled(Rect::from_min_max(b.min, pos2(b.left() + 1.0, b.bottom())), 0.0, Color32::from_rgb(0x6A, 0x84, 0xC8));
         p.rect_filled(Rect::from_min_max(pos2(b.right() - 1.0, b.top()), b.max), 0.0, Color32::from_rgb(0x04, 0x10, 0x30));
+        }
         let step = if n > 12 { 2 } else { 1 };
         if i % step == 0 {
             if let Some(l) = labels.get(i) {

@@ -22,9 +22,10 @@ acceptance gates are in `CONTINUATION_PLAN.md`.
 2. Establish a dated desktop/web capability matrix with observed results and
    named gaps; preserve historical test evidence without treating it as current.
 3. Add focused/integration/UI/release verification scopes and CI.
-4. Restore Caustica as the default web theme, with Classic selectable and
-   independent System/Light/Dark preferences. Compile WASM and inspect both themes
-   in the browser; preserve the current layout and shared interactions.
+4. **Released with server/web 1.0.8-web.1: Caustica web theme**, with Classic selectable and
+   independent System/Light/Dark preferences. Palette, spacing and interactions
+   checked in a hidden browser matrix; 133 workspace tests pass. See
+   `app/web/QA_REPORT.md` for coverage, server-save fixes and remaining limits.
 5. **Applied locally: approved native Compact desktop.** OS chrome and native
    themed controls replace the old styling hooks. Background UI smoke and
    off-screen captures pass; manual keyboard/tray/per-monitor transition checks

@@ -14,6 +14,16 @@ canvas{display:block;width:100%;height:100%;outline:none}
 <body>
 <canvas id="nq"></canvas>
 <div id="loading">Loading NewsQueue...</div>
+<script>
+// Match the saved skin/brightness while WASM and its fonts load.
+try {
+ const classic = localStorage.getItem('nq-appearance') === 'classic';
+ const mode = localStorage.getItem('nq-theme');
+ const dark = mode === 'dark' || (mode !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches);
+ document.body.style.background = classic ? (dark ? '#3c3c3e' : '#d4d0c8') : (dark ? '#222225' : '#f3f3f5');
+ document.getElementById('loading').style.color = dark ? '#e5e5e7' : '#1c1c1f';
+} catch (_) { /* Storage can be unavailable in private or restricted contexts. */ }
+</script>
 <script type="module">
 import init from "./pkg/newsqueue-web.js";
 init().then(() => document.getElementById("loading").remove())

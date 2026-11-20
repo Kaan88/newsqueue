@@ -19,7 +19,7 @@ The user approved the polished native Compact mockup in `app/native-mockups`.
 The production desktop now uses its common-controls v6 styling and OS-managed
 chrome, with existing commands and saved dimensions retained. The web UI must remain egui and retain its
 layout, with Caustica as default and Classic selectable, separately from
-System/Light/Dark brightness. These theme changes are pending, not shipped.
+System/Light/Dark brightness. The server/web 1.0.8-web.1 supplement ships these themes; Windows 1.0.8 assets remain unchanged.
 See `ROADMAP.md` for active blockers and `CONTINUATION_PLAN.md` for gates.
 
 - Current app version: **1.0.8**
@@ -416,7 +416,8 @@ OS-managed frames/captions/menus and visual styles. It does not install the old
 - Keep existing goldens as historical evidence until an intentional baseline
   update. See `app/NATIVE_COMPACT.md` for current verification and limitations.
 - The web UI remains egui/WASM. Its current Classic skin stays separate from
-  native desktop styling; Caustica + Classic theme work remains pending.
+  native desktop styling; Caustica + Classic web themes are implemented locally.
+  See web/QA_REPORT.md for the hidden browser verification and limits.
 - The requested Qt6 version is a separate experiment under `app/qt6-mockup`,
   not a replacement for the Rust engine, production Win32 frontend or egui web.
 

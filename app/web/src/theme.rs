@@ -1,11 +1,46 @@
-﻿//! The classic palette, fonts, egui style and the drawn icons.
-//!
-//! The web UI looks like a Windows 2000 program: a grey 3D face, sunken
-//! white lists, a navy selection and caption, Verdana-like DejaVu Sans. Every
-//! colour is a function with a light and a dark value (`View > Dark colors`).
+//! Independent web skin and brightness preferences, palettes, fonts and icons.
+//! Classic retains its original renderer and DejaVu metrics. Caustica uses the
+//! recovered Instrument recipes and IBM Plex without changing the app layout.
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2};
 use std::sync::atomic::{AtomicBool, Ordering};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Theme { Classic, Caustica }
+impl Theme {
+    pub fn from_saved(value: Option<&str>) -> Self { if value == Some("classic") { Self::Classic } else { Self::Caustica } }
+    pub fn key(self) -> &'static str { match self { Self::Classic => "classic", Self::Caustica => "caustica" } }
+}
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Brightness { System, Light, Dark }
+impl Brightness {
+    pub fn from_saved(value: Option<&str>) -> Self { match value { Some("light") => Self::Light, Some("dark") => Self::Dark, _ => Self::System } }
+    pub fn key(self) -> &'static str { match self { Self::System => "system", Self::Light => "light", Self::Dark => "dark" } }
+    pub fn dark(self, system: bool) -> bool { match self { Self::System => system, Self::Light => false, Self::Dark => true } }
+}
+static CAUSTICA: AtomicBool = AtomicBool::new(false);
+pub fn is_caustica() -> bool { CAUSTICA.load(Ordering::Relaxed) }
+pub fn configure(ctx: &egui::Context, theme: Theme, dark: bool) {
+    let changed = CAUSTICA.swap(theme == Theme::Caustica, Ordering::Relaxed) != (theme == Theme::Caustica);
+    crate::caustica::set_light(!dark);
+    if changed { install(ctx, dark); } else { set_dark(ctx, dark); }
+}
+const CAUSTICA_LIGHT_WARNING: Color32 = rgb(0x98,0x52,0x00);
+fn color(name: &str, light: Color32, dark: Color32) -> Color32 {
+    if !is_caustica() { return pick(light, dark); }
+    use crate::caustica as c;
+    match name {
+        "FACE" => c::PANEL(), "HILIGHT" | "LIGHT" => c::LIGHT_LINE(),
+        "SHADOW" | "DKSHADOW" => c::EDGE(), "WINDOW" => pick(rgb(0xfa,0xfa,0xfc),rgb(0x1a,0x1a,0x1c)),
+        "TEXT" => c::TX(), "GRAY_TEXT" => c::FAINT(), "NOTE_TEXT" => c::DIM(),
+        "SEL" => pick(rgb(0xc6,0xe8,0xed),rgb(0x1d,0x45,0x4c)), "SEL_TEXT" => c::TX(),
+        "CAPTION_A" => pick(rgb(0x16,0x62,0x70),rgb(0x2b,0x2b,0x2f)),
+        "CAPTION_B" => pick(rgb(0x22,0x76,0x82),rgb(0x22,0x22,0x25)),
+        "TRACK" => c::DEEP(), "BAR" | "LINK" => c::ACCENT(),
+        "ORANGE" => pick(CAUSTICA_LIGHT_WARNING, dark),
+        _ => pick(light, dark),
+    }
+}
 
 static DARK: AtomicBool = AtomicBool::new(false);
 
@@ -24,7 +59,7 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color32 {
 
 macro_rules! colors {
     ($($(#[$m:meta])* $name:ident = $light:expr, $dark:expr;)*) => {
-        $( $(#[$m])* #[allow(non_snake_case)] pub fn $name() -> Color32 { pick($light, $dark) } )*
+        $( $(#[$m])* #[allow(non_snake_case)] pub fn $name() -> Color32 { color(stringify!($name), $light, $dark) } )*
     };
 }
 
@@ -64,15 +99,15 @@ pub const BODY: f32 = 12.0;
 pub const SMALL: f32 = 11.0;
 
 pub fn font(size: f32) -> FontId {
-    FontId::proportional(size)
+    if is_caustica() { crate::caustica::sans(size) } else { FontId::proportional(size) }
 }
 
 pub fn bold(size: f32) -> FontId {
-    FontId::new(size, FontFamily::Name("bold".into()))
+    if is_caustica() { crate::caustica::semibold(size) } else { FontId::new(size, FontFamily::Name("bold".into())) }
 }
 
 pub fn mono(size: f32) -> FontId {
-    FontId::monospace(size)
+    if is_caustica() { crate::caustica::mono(size) } else { FontId::monospace(size) }
 }
 
 fn fonts() -> egui::FontDefinitions {
@@ -93,7 +128,9 @@ fn fonts() -> egui::FontDefinitions {
 }
 
 pub fn install(ctx: &egui::Context, dark: bool) {
-    ctx.set_fonts(fonts());
+    let mut definitions = fonts();
+    if is_caustica() { crate::caustica::fonts(&mut definitions); }
+    ctx.set_fonts(definitions);
     DARK.store(dark, Ordering::Relaxed);
     apply(ctx);
 }
@@ -511,6 +548,34 @@ fn paint_color(p: &mut Pen, g: &Grid, icon: Icon) {
         Icon::Link => {
             p.circle_stroke(g.p(5.5, 8.0), 3.5 * g.k, Stroke::new(2.0 * g.k, blue));
             p.circle_stroke(g.p(10.5, 8.0), 3.5 * g.k, Stroke::new(2.0 * g.k, blue));
+        }
+    }
+}
+
+#[cfg(test)]
+mod preference_tests {
+    use super::*;
+    #[test]
+    fn restored_skin_and_legacy_brightness_are_independent() {
+        assert_eq!(Theme::from_saved(None), Theme::Caustica);
+        assert_eq!(Theme::from_saved(Some("classic")), Theme::Classic);
+        assert_eq!(Brightness::from_saved(Some("dark")), Brightness::Dark);
+        assert_eq!(Brightness::from_saved(Some("light")), Brightness::Light);
+        assert_eq!(Brightness::from_saved(None), Brightness::System);
+        assert!(!Brightness::System.dark(false));
+        assert!(Brightness::System.dark(true));
+        assert!(!Brightness::Light.dark(true));
+        assert!(Brightness::Dark.dark(false));
+    }
+    #[test]
+    fn caustica_light_accent_and_warning_text_are_readable() {
+        fn luminance(c: Color32) -> f64 {
+            let v=[c.r(),c.g(),c.b()].map(|v| { let s=v as f64/255.0; if s<=0.04045 {s/12.92} else {((s+0.055)/1.055).powf(2.4)} });
+            v[0]*0.2126+v[1]*0.7152+v[2]*0.0722
+        }
+        for (fg,bg) in [(crate::caustica::LIGHT_ACCENT,rgb(0xf3,0xf3,0xf5)),(CAUSTICA_LIGHT_WARNING,rgb(0xfa,0xfa,0xfc)),(rgb(0x60,0xca,0xd8),rgb(0x22,0x22,0x25))] {
+            let (a,b)=(luminance(fg),luminance(bg));
+            assert!((a.max(b)+0.05)/(a.min(b)+0.05)>=4.5);
         }
     }
 }

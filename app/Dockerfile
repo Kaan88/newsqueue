@@ -19,8 +19,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends libssl-dev pkg-
     && cargo install wasm-bindgen-cli --version 0.2.130 --locked
 WORKDIR /src
 COPY . .
-RUN cargo build --release -p newsqueue-server \
-    && cargo build --release -p newsqueue-web --target wasm32-unknown-unknown \
+RUN cargo build --locked --release -p newsqueue-server \
+    && cargo build --locked --release -p newsqueue-web --target wasm32-unknown-unknown \
     && mkdir -p /out/web/pkg \
     && wasm-bindgen --target web --no-typescript --out-dir /out/web/pkg \
         target/wasm32-unknown-unknown/release/newsqueue-web.wasm \
@@ -31,7 +31,7 @@ FROM debian:trixie-slim
 # unrar lives in non-free; 7zip covers 7z/ZIP; par2 verifies and repairs.
 RUN sed -i 's/^Components: main$/Components: main non-free/' /etc/apt/sources.list.d/debian.sources \
     && apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates libssl3t64 tzdata unrar 7zip par2 \
+    && apt-get install -y --no-install-recommends ca-certificates libssl3t64 tzdata unrar 7zip par2 util-linux \
     && rm -rf /var/lib/apt/lists/*
 # The server finds the web UI in `web` beside its executable.
 COPY --from=build /out/ /opt/newsqueue/

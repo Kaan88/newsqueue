@@ -32,8 +32,12 @@
 .idea/
 .DS_Store
 Thumbs.db
+__pycache__/
 /app/web/dist/
 /app/docker/
+/app/.env
+/app/.env.*
+!/app/.env.example
 
 # screenshots.ps1 -Check output
 app/shots/check/

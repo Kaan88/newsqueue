@@ -124,6 +124,7 @@ pub struct SettingsPage {
     rss_base: Vec<String>,
     asked_servers: bool,
     asked_rss: bool,
+    close_after_servers: bool,
     /// Scheduler painting: the value being painted while dragging.
     paint: Option<bool>,
 }
@@ -143,10 +144,21 @@ impl SettingsPage {
 
     /// Shows the dialog; true when it should close.
     pub fn dialog(&mut self, ctx: &egui::Context, client: &Client, snap: &net::Snapshot, narrow: bool) -> bool {
+        let mut saved_and_close = false;
         // Take what the server sent.
         {
             let mut s = net::lock(&client.shared);
-            if let Some(list) = s.servers.take() {
+            if let Some(result) = s.servers_saved.take() {
+                saved_and_close = self.close_after_servers && result.is_ok();
+                self.close_after_servers = false;
+                if let Ok(list) = result {
+                    self.servers_base = list.clone();
+                    self.server_sel = self.server_sel.min(list.len().saturating_sub(1));
+                    self.servers = Some(list);
+                    s.servers = None;
+                }
+            }
+            if let Some(list) = s.servers.take().filter(|_|!s.servers_saving) {
                 self.servers_base = list.clone();
                 self.server_sel = self.server_sel.min(list.len().saturating_sub(1));
                 self.servers = Some(list);
@@ -156,6 +168,7 @@ impl SettingsPage {
                 self.rss = Some(list);
             }
         }
+        if saved_and_close { return true; }
         if self.draft.is_none() {
             if let Some(map) = snap.settings.as_object().filter(|m| !m.is_empty()) {
                 self.base = map.clone();
@@ -200,22 +213,25 @@ impl SettingsPage {
             }
             skin::dialog_buttons(ui, |ui| {
                 let dirty = self.dirty();
-                if ui.add_enabled_ui(dirty, |ui| skin::button(ui, "Apply")).inner.clicked() {
+                let saving = net::lock(&client.shared).servers_saving;
+                if ui.add_enabled_ui(dirty && !saving, |ui| skin::button(ui, "Apply")).inner.clicked() {
                     self.save(client, ctx);
                 }
                 if skin::button(ui, "Cancel").clicked() {
                     close = true;
                 }
-                if skin::default_button(ui, "OK").clicked() {
+                if ui.add_enabled_ui(!saving, |ui|skin::default_button(ui, "OK")).inner.clicked() {
+                    let servers_dirty = self.servers.as_ref().is_some_and(|s|*s != self.servers_base);
                     self.save(client, ctx);
-                    close = true;
+                    self.close_after_servers = servers_dirty;
+                    close = !servers_dirty;
                 }
                 if dirty {
-                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| skin::note(ui, "Changes are not saved yet."));
+                    ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| skin::note(ui, if saving { "Saving servers..." } else { "Changes are not saved yet." }));
                 }
             });
         });
-        close || x
+        (close || x) && !net::lock(&client.shared).servers_saving
     }
 
     /// The list of pages on the left, like a property sheet's tree.
@@ -226,6 +242,7 @@ impl SettingsPage {
         for (i, name) in PAGES.iter().enumerate() {
             let r = Rect::from_min_size(pos2(rect.left() + 2.0, rect.top() + 3.0 + i as f32 * 22.0), vec2(rect.width() - 4.0, 22.0));
             let resp = ui.interact(r, ui.scope_id().with(("optpage", i)), Sense::click());
+            crate::audit::item(ui, PAGES[i], r);
             let tw = skin::text_width(ui, name, theme::font(BODY));
             let p = ui.painter();
             theme::paint_icon(p, Rect::from_min_size(pos2(r.left() + 4.0, r.center().y - 8.0), vec2(16.0, 16.0)), PAGE_ICONS[i], true);
@@ -244,8 +261,10 @@ impl SettingsPage {
     fn page_ui(&mut self, ui: &mut Ui, client: &Client, ctx: &egui::Context, height: f32, narrow: bool) {
         // A heading band like a property page title.
         let (band, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-        skin::gradient(ui.painter(), band, theme::CAPTION_A(), FACE());
-        ui.painter().text(pos2(band.left() + 6.0, band.center().y), Align2::LEFT_CENTER, PAGES[self.page], theme::bold(BODY), egui::Color32::WHITE);
+        if theme::is_caustica() {
+            crate::caustica::band_ground(ui.painter(), band);
+        } else { skin::gradient(ui.painter(), band, theme::CAPTION_A(), FACE()); }
+        ui.painter().text(pos2(band.left() + 6.0, band.center().y), Align2::LEFT_CENTER, PAGES[self.page], theme::bold(BODY), if theme::is_caustica() { TEXT() } else { egui::Color32::WHITE });
         ui.add_space(2.0);
         let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), height - 30.0), Sense::hover());
         skin::scroll_view(ui, rect, ("options-scroll", self.page), [false, true], false, 20.0, |area, ui| {
@@ -253,7 +272,7 @@ impl SettingsPage {
                 ui.set_width(ui.available_width() - 4.0);
                 ui.spacing_mut().item_spacing = vec2(6.0, 4.0);
                 match self.page {
-                    0 => self.servers_ui(ui, narrow),
+                    0 => { let saving=net::lock(&client.shared).servers_saving; ui.add_enabled_ui(!saving, |ui|self.servers_ui(ui, narrow)); },
                     5 => {
                         self.fields_ui(ui, narrow);
                         skin::group(ui, "Download hours", |ui| self.scheduler_ui(ui));
@@ -280,11 +299,9 @@ impl SettingsPage {
         }
         if let Some(servers) = &self.servers {
             if *servers != self.servers_base {
-                let body = serde_json::to_vec(servers).unwrap_or_default();
-                client.post(ctx, "/api/servers", body, Some("Servers saved".into()));
-                // Re-read them, so indices and "password set" are current.
-                self.servers_base = servers.clone();
-                self.asked_servers = false;
+                if !net::lock(&client.shared).servers_saving {
+                    client.save_servers(ctx,servers.clone());
+                }
             }
         }
         if let Some(rss) = &self.rss {
@@ -541,15 +558,20 @@ impl SettingsPage {
                 }
                 let p = ui.painter();
                 if *bit == b'1' {
-                    p.rect_filled(r, 0.0, theme::GREEN());
+                    p.rect_filled(r, 0.0, if theme::is_caustica() {
+                        theme::pick(egui::Color32::from_rgb(0x52,0x86,0x65),egui::Color32::from_rgb(0x43,0x7b,0x58))
+                    } else { theme::GREEN() });
                 }
                 // Grid lines: every hour darker.
-                let line = match (*bit == b'1', slot % 2 == 0) {
+                let line = if theme::is_caustica() && *bit == b'1' {
+                    if slot % 2 == 0 { theme::pick(egui::Color32::from_rgb(0x2e,0x55,0x3f),egui::Color32::from_rgb(0x24,0x4a,0x34)) }
+                    else { theme::pick(egui::Color32::from_rgb(0x6d,0x9f,0x7c),egui::Color32::from_rgb(0x54,0x8d,0x69)) }
+                } else { match (*bit == b'1', slot % 2 == 0) {
                     (true, true) => egui::Color32::from_rgb(0x00, 0x50, 0x00),
                     (true, false) => egui::Color32::from_rgb(0x20, 0x98, 0x20),
                     (false, true) => theme::SHADOW(),
                     (false, false) => theme::TRACK(),
-                };
+                }};
                 p.line_segment([r.left_top(), r.left_bottom()], egui::Stroke::new(1.0, line));
                 p.line_segment([r.left_bottom(), r.right_bottom()], egui::Stroke::new(1.0, theme::SHADOW()));
             }
