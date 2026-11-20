@@ -5,6 +5,8 @@ edition = "2021"
 description = "NewsQueue engine: NNTP/yEnc downloader, NZB, PAR2, unrar, RSS, settings and queue. No UI."
 
 [dependencies]
+tempfile = "3.27"
+crc32fast = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 quick-xml = "0.36"

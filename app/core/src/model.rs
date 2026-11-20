@@ -269,6 +269,7 @@ pub struct Server {
 }
 
 impl Server {
+    pub fn connection_count(&self) -> u32 { self.connections.clamp(1, MAX_CONNECTIONS_PER_SERVER) }
     /// Whether this server can be used for a post `age_days` old this month.
     pub fn usable_for(&self, age_days: f64, month: &str) -> bool {
         let within_retention = self.max_age == 0 || age_days <= self.max_age as f64;
@@ -639,6 +640,10 @@ impl Settings {
                     s.servers.push(Server::default());
                     changed = true;
                 }
+                for server in &mut s.servers {
+                    let count = server.connection_count();
+                    if server.connections != count { server.connections = count; changed = true; }
+                }
                 if changed {
                     s.save();
                 }
@@ -679,7 +684,7 @@ impl Settings {
 
     pub fn save(&self) {
         if let Ok(text) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(settings_path(), text);
+            let _ = atomic_write(&settings_path(), text.as_bytes());
         }
     }
     pub fn enabled_servers(&self) -> Vec<&Server> {
@@ -689,11 +694,26 @@ impl Settings {
         self.servers
             .iter()
             .filter(|s| s.enabled)
-            .map(|s| s.connections)
+            .map(|s| s.connection_count())
             .sum::<u32>()
             .max(1)
     }
 }
+/// Persist a complete replacement beside the destination, then atomically rename.
+/// An interrupted write leaves the previous settings/queue intact.
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist(path).map_err(|e| e.error)?;
+    #[cfg(unix)]
+    std::fs::File::open(parent)?.sync_all()?;
+    Ok(())
+}
+
 pub fn settings_path() -> PathBuf {
     app_base().join("newsqueue-settings.json")
 }
@@ -713,11 +733,11 @@ pub fn load_queue_state() -> Option<Vec<Collection>> {
     Some(queue)
 }
 
-pub fn save_queue_state(queue: &[Collection]) {
-    if let Ok(text) = serde_json::to_string_pretty(queue) {
-        let _ = std::fs::write(queue_state_path(), text);
-    }
+pub fn save_queue_state_checked(queue: &[Collection]) -> std::io::Result<()> {
+    let bytes = serde_json::to_vec_pretty(queue).map_err(std::io::Error::other)?;
+    atomic_write(&queue_state_path(), &bytes)
 }
+pub fn save_queue_state(queue: &[Collection]) { let _ = save_queue_state_checked(queue); }
 pub fn ensure_dirs(settings: &Settings) {
     for path in [
         &settings.download_dir,
@@ -763,7 +783,7 @@ pub fn file_name_from_subject(subject: &str) -> String {
     }
     let mut s = subject.trim().to_string();
     if s.len() > 90 {
-        s.truncate(90);
+        s = s.chars().take(90).collect();
     }
     s
 }
@@ -810,6 +830,8 @@ struct NzbFileDraft {
     bytes: u64,
     parts: u32,
     segments: Vec<Segment>,
+    numbers: std::collections::HashSet<u32>,
+    ids: std::collections::HashSet<String>,
 }
 fn local_xml_name(name: &[u8]) -> &[u8] {
     name.rsplit(|byte| *byte == b':').next().unwrap_or(name)
@@ -820,6 +842,8 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
     let mut reader = quick_xml::Reader::from_str(&text);
     reader.config_mut().trim_text(true);
     let mut buf = Vec::new();
+    let mut depth = 0usize;
+    let mut saw_root = false;
     let mut files: Vec<ParsedFile> = Vec::new();
     let mut name = path
         .file_stem()
@@ -838,19 +862,23 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
         match reader.read_event_into(&mut buf) {
             Ok(quick_xml::events::Event::Start(e)) => {
                 let tag = local_xml_name(e.name().as_ref()).to_vec();
+                if depth == 0 {
+                    if saw_root || tag != b"nzb" { return Err("Invalid NZB root element".into()); }
+                    saw_root = true;
+                }
+                depth += 1;
                 match tag.as_slice() {
                     b"file" => {
+                        if cur.is_some() { return Err("Nested NZB files are invalid".into()); }
                         let mut subject = String::new();
                         let mut fposter = String::new();
                         let mut fdate = String::new();
-                        for attr in e.attributes().flatten() {
+                        for attr in e.attributes() {
+                            let attr = attr.map_err(|e| format!("Invalid NZB attribute: {e}"))?;
                             let key = attr.key.as_ref();
                             let value = attr
                                 .unescape_value()
-                                .map(|v| v.to_string())
-                                .unwrap_or_else(|_| {
-                                    String::from_utf8_lossy(&attr.value).to_string()
-                                });
+                                .map_err(|e| format!("Invalid NZB attribute: {e}"))?.to_string();
                             match key {
                                 b"subject" => subject = value,
                                 b"poster" => fposter = value,
@@ -881,11 +909,12 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                     }
                     b"segment" => {
                         let mut seg = Segment::default();
-                        for attr in e.attributes().flatten() {
+                        for attr in e.attributes() {
+                            let attr = attr.map_err(|e| format!("Invalid NZB attribute: {e}"))?;
                             let v = String::from_utf8_lossy(&attr.value);
                             match attr.key.as_ref() {
-                                b"bytes" => seg.bytes = v.parse::<u64>().unwrap_or(0),
-                                b"number" => seg.number = v.parse::<u32>().unwrap_or(0),
+                                b"bytes" => seg.bytes = v.parse::<u64>().map_err(|_| "Invalid segment size")?,
+                                b"number" => seg.number = v.parse::<u32>().map_err(|_| "Invalid segment number")?,
                                 _ => {}
                             }
                         }
@@ -896,59 +925,52 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                 }
             }
             Ok(quick_xml::events::Event::Empty(e)) => {
-                if local_xml_name(e.name().as_ref()) == b"segment" {
-                    let mut seg = Segment::default();
-                    for attr in e.attributes().flatten() {
-                        let v = String::from_utf8_lossy(&attr.value);
-                        match attr.key.as_ref() {
-                            b"bytes" => seg.bytes = v.parse::<u64>().unwrap_or(0),
-                            b"number" => seg.number = v.parse::<u32>().unwrap_or(0),
-                            _ => {}
-                        }
-                    }
-                    if let Some(cur) = cur.as_mut() {
-                        cur.bytes += seg.bytes;
-                        cur.parts += 1;
-                        cur.segments.push(seg);
-                    }
+                if matches!(local_xml_name(e.name().as_ref()), b"segment" | b"file") {
+                    return Err("NZB file/segment is empty".into());
                 }
             }
             Ok(quick_xml::events::Event::Text(e)) => {
                 if in_password {
                     if password.is_empty() {
-                        password = e.unescape().unwrap_or_default().trim().to_string();
+                        password = e.unescape().map_err(|e| format!("Invalid NZB text: {e}"))?.trim().to_string();
                     }
                 } else if in_segment {
                     if let Some(seg) = seg_draft.as_mut() {
-                        seg.id.push_str(&e.unescape().unwrap_or_default());
+                        seg.id.push_str(&e.unescape().map_err(|e| format!("Invalid NZB text: {e}"))?);
                     }
                 } else if in_group {
-                    let g = e.unescape().unwrap_or_default().to_string();
+                    let g = e.unescape().map_err(|e| format!("Invalid NZB text: {e}"))?.to_string();
                     if group.is_empty() {
                         group = g;
                     }
                 }
             }
-            Ok(quick_xml::events::Event::End(e)) => match local_xml_name(e.name().as_ref()) {
+            Ok(quick_xml::events::Event::End(e)) => {
+                depth = depth.checked_sub(1).ok_or("Unexpected NZB closing tag")?;
+                match local_xml_name(e.name().as_ref()) {
                 b"segment" => {
                     if let (Some(cur), Some(seg)) = (cur.as_mut(), seg_draft.take()) {
                         let seg = Segment {
-                            number: if seg.number == 0 {
-                                cur.parts + 1
-                            } else {
-                                seg.number
-                            },
+                            number: seg.number,
                             id: seg.id.trim().to_string(),
                             ..seg
                         };
-                        cur.bytes += seg.bytes;
-                        cur.parts += 1;
+                        if seg.number == 0 || seg.bytes == 0 || seg.id.is_empty()
+                            || seg.id.chars().any(|c| c.is_whitespace() || matches!(c, '<' | '>')) {
+                            return Err("Invalid NZB segment number, size or message ID".into());
+                        }
+                        if !cur.numbers.insert(seg.number) || !cur.ids.insert(seg.id.clone()) {
+                            return Err("Duplicate NZB segment number or message ID".into());
+                        }
+                        cur.bytes = cur.bytes.checked_add(seg.bytes).ok_or("NZB file size overflow")?;
+                        cur.parts = cur.parts.checked_add(1).ok_or("Too many NZB segments")?;
                         cur.segments.push(seg);
                     }
                     in_segment = false;
                 }
                 b"file" => {
                     if let Some(draft) = cur.take() {
+                        if draft.segments.is_empty() { return Err("NZB file has no segments".into()); }
                         let name = file_name_from_subject(&draft.subject);
                         files.push(ParsedFile {
                             name,
@@ -961,6 +983,7 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
                 b"group" => in_group = false,
                 b"meta" => in_password = false,
                 _ => {}
+                }
             },
             Ok(quick_xml::events::Event::Eof) => break,
             Err(e) => return Err(format!("Invalid NZB XML: {e}")),
@@ -968,11 +991,12 @@ pub fn parse_nzb(path: &Path) -> Result<ParsedNzb, String> {
         }
         buf.clear();
     }
+    if !saw_root || depth != 0 || cur.is_some() { return Err("Truncated NZB XML".into()); }
     if files.is_empty() {
         return Err("No files found in NZB".into());
     }
-    let total_bytes = files.iter().map(|f| f.bytes).sum::<u64>();
-    let parts = files.iter().map(|f| f.parts).sum::<u32>();
+    let total_bytes = files.iter().try_fold(0u64, |n, f| n.checked_add(f.bytes)).ok_or("NZB size overflow")?;
+    let parts = files.iter().try_fold(0u32, |n, f| n.checked_add(f.parts)).ok_or("Too many NZB parts")?;
     let age_days = if let Ok(secs) = date.parse::<i64>() {
         let then = Utc.timestamp_opt(secs, 0).single();
         if let Some(then) = then {
@@ -1496,6 +1520,30 @@ mod tests {
         let queue = sample_queue(&settings);
         let total_mb = queue_total_bytes(&queue) as f64 / MB;
         assert!((total_mb - 33_833.32).abs() < 0.1, "total was {total_mb}");
+    }
+
+    #[test]
+    fn audit_rejects_malformed_nzb_without_panics() {
+        let root=tempfile::tempdir().unwrap();let path=root.path().join("bad.nzb");
+        for xml in [
+            "<nzb><file><segments><segment bytes='1' number='1'>a</segment></segments></file>",
+            "<nzb><file><segments><segment bytes='x' number='1'>a</segment></segments></file></nzb>",
+            "<nzb><file><segments><segment bytes='1' number='1'>a&#13;&#10;QUIT</segment></segments></file></nzb>",
+            "<nzb><file><segments><segment bytes='1' number='1'>a</segment><segment bytes='1' number='1'>b</segment></segments></file></nzb>",
+            "<nzb><file><segments><segment bytes='18446744073709551615' number='1'>a</segment><segment bytes='1' number='2'>b</segment></segments></file></nzb>",
+            "<nzb><file><segments><segment bytes='1' number='1'/></segments></file></nzb>",
+        ] { std::fs::write(&path,xml).unwrap();assert!(parse_nzb(&path).is_err(),"accepted {xml}"); }
+        assert_eq!(file_name_from_subject(&"ü".repeat(91)).chars().count(),90);
+    }
+
+    #[test]
+    fn audit_atomic_replace_preserves_previous_file_on_failure() {
+        let root=tempfile::tempdir().unwrap();let path=root.path().join("state.json");
+        atomic_write(&path,b"old").unwrap();atomic_write(&path,b"new").unwrap();
+        assert_eq!(std::fs::read(&path).unwrap(),b"new");
+        let directory=root.path().join("dir");std::fs::create_dir(&directory).unwrap();
+        assert!(atomic_write(&directory,b"bad").is_err());assert!(directory.is_dir());
+        assert_eq!(std::fs::read_dir(root.path()).unwrap().count(),2,"failed temp cleaned up");
     }
 
     #[test]

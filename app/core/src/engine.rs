@@ -32,6 +32,7 @@ pub struct Engine {
     pub free_gb: f64,
     pub settings: Settings,
     pub queue: Vec<Collection>,
+    next_collection_id: u64,
     pub par2: Vec<Par2Set>,
     pub rss: Vec<RssItem>,
     pub logs: VecDeque<LogEntry>,
@@ -79,6 +80,7 @@ pub struct Engine {
     pub stats_year: i32,
     pub last_log_day: String,
     pub active_dl: Option<download::ActiveDownload>,
+    pub draining_dl: Option<std::thread::JoinHandle<()>>,
     pub active_unrar: Option<unrar::ActiveUnrar>,
     pub active_par2: Option<par2::ActivePar2>,
     pub pending_unrar: VecDeque<u64>,
@@ -100,9 +102,9 @@ pub struct Engine {
 
 impl Engine {
     pub fn new(settings: Settings, demo: bool) -> Self {
-        ensure_dirs(&settings);
+        if !demo { ensure_dirs(&settings); }
         crate::tools::configure(&settings.unrar_path, &settings.par2_path, &settings.sevenzip_path);
-        prune_old_logs(settings.keep_log_days);
+        if !demo { prune_old_logs(settings.keep_log_days); }
         let queue = if demo {
             sample_queue(&settings)
         } else {
@@ -149,6 +151,7 @@ impl Engine {
             speed_ceiling_mbps: settings.max_speed_mbps,
             auto_speed: settings.max_speed_kbps <= 0.0,
             settings,
+            next_collection_id: queue.iter().map(|c| c.id).max().unwrap_or(0).wrapping_add(1).max(1),
             queue,
             par2: if demo { sample_par2() } else { Vec::new() },
             rss: if demo { sample_rss() } else { Vec::new() },
@@ -194,6 +197,7 @@ impl Engine {
             stats_year,
             last_log_day: String::new(),
             active_dl: None,
+            draining_dl: None,
             active_unrar: None,
             active_par2: None,
             pending_unrar: VecDeque::new(),
@@ -388,10 +392,17 @@ impl Engine {
         self.toast("Connected");
     }
 
+    pub(crate) fn retire_download(&mut self) {
+        if let Some(mut active) = self.active_dl.take() {
+            active.stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            self.draining_dl = active.worker.take();
+        }
+    }
+
     pub fn disconnect(&mut self) {
         self.connected = false;
         self.paused = false;
-        self.active_dl = None;
+        self.retire_download();
         for c in &mut self.queue {
             if c.status == ItemStatus::Downloading {
                 c.status = ItemStatus::Paused;
@@ -528,7 +539,11 @@ impl Engine {
             })
             .collect();
         let held = self.hold_par2_volumes(&mut files);
-        let id = self.queue.iter().map(|collection| collection.id).max().unwrap_or(0) + 1;
+        while self.queue.iter().any(|c| c.id == self.next_collection_id) {
+            self.next_collection_id = self.next_collection_id.wrapping_add(1).max(1);
+        }
+        let id = self.next_collection_id;
+        self.next_collection_id = id.wrapping_add(1).max(1);
         let paused = self.paused || filter_paused;
         let group = if nzb.group.is_empty() {
             "alt.binaries.misc".to_string()
@@ -685,8 +700,11 @@ impl Engine {
             match parse_nzb(&path) {
                 Ok(nzb) => {
                     self.add_nzb_from_parsed(nzb, source, self.settings.auto_import_paused);
-                    if self.settings.delete_nzb_after_import {
-                        let _ = std::fs::remove_file(&path);
+                    if self.settings.delete_nzb_after_import && !self.demo {
+                        match save_queue_state_checked(&self.queue) {
+                            Ok(()) => { let _ = std::fs::remove_file(&path); },
+                            Err(e) => self.log("Error", &format!("NZB retained: cannot persist imported queue: {e}")),
+                        }
                     }
                 }
                 Err(error) => {
@@ -1019,6 +1037,9 @@ impl Engine {
             Some(None) => {
                 // Still extracting: it now has every volume it will get.
                 if let Some(direct) = self.active_direct.as_ref().filter(|d| d.collection_id == id) {
+                    if !self.queue.iter().any(|c| c.id == id && c.status == ItemStatus::Completed) {
+                        direct.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                    }
                     direct.finished.store(true, std::sync::atomic::Ordering::Relaxed);
                 }
                 return;
@@ -1130,18 +1151,21 @@ impl Engine {
         use std::sync::atomic::Ordering;
         let id = snapshot.id;
         let ready: Vec<PathBuf> = (0..snapshot.paths.len())
-            .filter(|&i| snapshot.sizes[i] > 0 && snapshot.file_progress[i] >= snapshot.sizes[i])
+            .filter(|&i| snapshot.file_verified.get(i) == Some(&true))
             .filter_map(|i| snapshot.paths[i].clone())
             .collect();
         if let Some(direct) = self.active_direct.as_ref().filter(|d| d.collection_id == id) {
-            if snapshot.missing > 0 {
+            if snapshot.missing > 0 || matches!(snapshot.stage, download::Stage::Error | download::Stage::Incomplete | download::Stage::Stopped) {
                 direct.cancel.store(true, Ordering::Relaxed);
+                if !matches!(snapshot.stage, download::Stage::Connecting | download::Stage::Downloading) {
+                    direct.finished.store(true, Ordering::Relaxed);
+                }
                 return;
             }
             if let Ok(mut list) = direct.ready.lock() {
                 *list = ready;
             }
-            if matches!(snapshot.stage, download::Stage::Completed | download::Stage::Error | download::Stage::Incomplete) {
+            if snapshot.stage == download::Stage::Completed {
                 direct.finished.store(true, Ordering::Relaxed);
             }
             return;
@@ -1149,6 +1173,7 @@ impl Engine {
         if !self.settings.direct_unpack
             || !self.settings.auto_unrar
             || snapshot.missing > 0
+            || matches!(snapshot.stage, download::Stage::Error | download::Stage::Incomplete | download::Stage::Stopped)
             || self.active_direct.is_some()
             || self.active_unrar.is_some()
             || self.direct_result.contains_key(&id)
@@ -1206,7 +1231,8 @@ impl Engine {
             }
         };
         self.direct_result.insert(id, Some(ok));
-        if !downloading && over {
+        let postprocess_allowed = self.queue.iter().any(|c| c.id == id && matches!(c.status, ItemStatus::Completed | ItemStatus::Incomplete));
+        if !downloading && over && postprocess_allowed {
             // The download finished first and is waiting for us.
             if ok {
                 self.toast("Unpack complete");
@@ -1317,7 +1343,10 @@ impl Engine {
     }
 
     pub fn all_tasks_done(&self) -> bool {
-        self.queue
+        self.active_dl.is_none() && self.draining_dl.is_none()
+            && self.active_direct.is_none() && self.active_unrar.is_none()
+            && self.active_par2.is_none() && self.pending_unrar.is_empty()
+            && self.queue
             .iter()
             .all(|c| matches!(c.status, ItemStatus::Completed | ItemStatus::Error))
     }
@@ -1423,6 +1452,10 @@ impl Engine {
             self.low_space_warned = false;
         }
 
+        if self.draining_dl.as_ref().is_some_and(|h| h.is_finished()) {
+            if let Some(worker) = self.draining_dl.take() { let _ = worker.join(); }
+        }
+
         let can_download = self.connected
             && !self.paused
             && !self.scheduler_hold
@@ -1444,12 +1477,12 @@ impl Engine {
         if let Some(active) = &self.active_dl {
             if !self.queue.iter().any(|c| c.id == active.id) {
                 active.stop.store(true, Ordering::Relaxed);
-                self.active_dl = None;
+                self.retire_download();
             }
         }
 
         let mut speed_this_frame = 0.0;
-        if can_download && self.active_dl.is_none() {
+        if can_download && self.active_dl.is_none() && self.draining_dl.is_none() {
             if let Some(i) = self
                 .queue
                 .iter()
@@ -1615,7 +1648,7 @@ impl Engine {
                 ));
             }
             if clear {
-                self.active_dl = None;
+                self.retire_download();
             }
             if let Some(id) = completed_id {
                 self.schedule_after_download(id);
@@ -1811,7 +1844,7 @@ pub fn load_history() -> Option<Vec<HistoryItem>> {
 
 pub fn save_history(history: &[HistoryItem]) {
     if let Ok(text) = serde_json::to_string_pretty(history) {
-        let _ = std::fs::write(history_path(), text);
+        let _ = atomic_write(&history_path(), text.as_bytes());
     }
 }
 
@@ -1869,7 +1902,7 @@ pub fn load_transfer_stats() -> TransferStats {
 
 pub fn save_transfer_stats(stats: &TransferStats) {
     if let Ok(text) = serde_json::to_string_pretty(stats) {
-        let _ = std::fs::write(stats_path(), text);
+        let _ = atomic_write(&stats_path(), text.as_bytes());
     }
 }
 
@@ -1991,7 +2024,7 @@ pub fn build_threads(
         .unwrap_or_else(|| "Waiting for work".into());
     let mut n: u32 = 1;
     for server in settings.enabled_servers() {
-        for _ in 0..server.connections {
+        for _ in 0..server.connection_count() {
             let (action, desc, status) = if paused {
                 (
                     "Paused",

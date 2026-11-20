@@ -1,6 +1,11 @@
 name: Docker release
 on:
   workflow_dispatch:
+    inputs:
+      publish_assets:
+        description: Attach verified artifacts to the release
+        type: boolean
+        default: false
 permissions:
   contents: write
 jobs:
@@ -29,7 +34,20 @@ jobs:
           cp app/compose.yaml app/env.example app/DOCKER.md release-output/
           cd release-output
           sha256sum *.tar.gz *.zip compose.yaml env.example DOCKER.md > NewsQueue-1.0.9-SHA256SUMS.txt
+      - name: Retain candidate artifacts for audit
+        uses: actions/upload-artifact@v4
+        with:
+          name: newsqueue-1.0.9-linux-candidate
+          path: |
+            release-output/*.tar.gz
+            release-output/*.zip
+            release-output/*.txt
+            release-output/compose.yaml
+            release-output/env.example
+            release-output/DOCKER.md
+          retention-days: 7
       - name: Attach Linux and web artifacts to release
+        if: ${{ inputs.publish_assets }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

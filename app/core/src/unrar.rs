@@ -332,7 +332,7 @@ fn run_direct(
             .map(|r| r.iter().any(|p| p.file_name().map(|n| n.to_string_lossy().to_ascii_lowercase()) == name))
             .unwrap_or(false);
         let over = finished.load(Ordering::Relaxed);
-        if listed || (over && path.is_file()) {
+        if listed {
             Some(true)
         } else if over {
             Some(false)
@@ -355,6 +355,14 @@ fn run_direct(
     if code != 0 && code != 1 {
         let detail = last_nonempty(&stderr).or_else(|| last_nonempty(&stdout)).unwrap_or_else(|| format!("UnRAR exit code {code}"));
         return Err(UnrarError::Failed(format!("Direct unpack failed: {detail}")));
+    }
+    // Extraction may finish before the downloader's integrity pass. Never
+    // delete/move sources or publish success until that pass explicitly succeeds.
+    while !finished.load(Ordering::Relaxed) && !cancel.load(Ordering::Relaxed) {
+        std::thread::sleep(std::time::Duration::from_millis(25));
+    }
+    if cancel.load(Ordering::Relaxed) {
+        return Err(UnrarError::Failed("Download did not pass integrity verification".into()));
     }
     finish(source, dest, first, options, code, &stdout, &stderr)
 }
@@ -448,6 +456,23 @@ mod direct_tests {
         None
     }
 
+    #[test]
+    fn audit_direct_cleanup_waits_for_verified_completion() {
+        if find_unrar_exe().is_none() { return; }
+        for cancel in [false,true] {
+            let root=tempfile::tempdir().unwrap();let source=root.path().join("src");let dest=root.path().join("out");
+            fs::create_dir(&source).unwrap();let archive=source.join("single.rar");
+            fs::copy(Path::new(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/single.rar"),&archive).unwrap();
+            let mut opts=options();opts.delete_archives=true;
+            let direct=spawn_direct(7,archive.clone(),source,dest,opts);
+            assert!(wait(&direct,1).is_none());assert!(archive.exists(),"source retained before verification");
+            if cancel { direct.cancel.store(true,Ordering::Relaxed); }
+            else { direct.finished.store(true,Ordering::Relaxed); }
+            let result=wait(&direct,10).unwrap();assert_eq!(result.is_ok(),!cancel);
+            assert_eq!(archive.exists(),cancel,"cancelled/unverified download retains archive");
+        }
+    }
+
     /// Real UnRAR on a 3-volume set whose volumes "arrive" one by one.
     #[test]
     fn extracts_volumes_as_they_arrive() {
@@ -475,6 +500,8 @@ mod direct_tests {
             if deliver_last {
                 let third = bring(3);
                 direct.ready.lock().unwrap().push(third);
+                assert!(wait(&direct, 1).is_none(), "must wait for verified download completion");
+                direct.finished.store(true, Ordering::Relaxed);
                 let result = wait(&direct, 20).expect("finishes");
                 assert!(result.is_ok(), "{result:?}");
                 assert_eq!(fs::metadata(dest.join("payload.bin")).unwrap().len(), 150_000);

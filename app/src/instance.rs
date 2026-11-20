@@ -10,6 +10,14 @@ thread_local! {
     static PENDING: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
+/// Read the startup flag without migration writes before owning the profile.
+pub fn enabled(base: &Path) -> bool {
+    std::fs::read(base.join("newsqueue-settings.json")).ok()
+        .and_then(|bytes| serde_json::from_slice::<serde_json::Value>(&bytes).ok())
+        .and_then(|v| v.get("single_instance").and_then(|v| v.as_bool()))
+        .unwrap_or(true)
+}
+
 pub fn lock(base: &Path) -> io::Result<File> {
     std::fs::create_dir_all(base)?;
     OpenOptions::new().read(true).write(true).create(true).truncate(false)

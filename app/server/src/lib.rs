@@ -373,7 +373,13 @@ impl Api {
                 }),
             ),
             ("POST", ["api", "servers"]) => match serde_json::from_slice::<Vec<serde_json::Value>>(body) {
-                Ok(list) if list.iter().all(|v| v.is_object()) => send(Command::SetServers(list)),
+                Ok(list) if list.iter().all(|v| v.is_object()) => {
+                    if list.iter().any(|v| v.get("connections").is_some_and(|n|
+                        n.as_u64().is_none_or(|n| !(1..=newsqueue_core::model::MAX_CONNECTIONS_PER_SERVER as u64).contains(&n)))) {
+                        return error(400, "connections must be 1..200");
+                    }
+                    send(Command::SetServers(list))
+                },
                 _ => error(400, "send a JSON array of server objects"),
             },
             ("GET", ["api", "rss"]) => json(200, self.handle.read(|s| serde_json::json!(s.rss_urls))),

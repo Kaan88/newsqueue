@@ -131,6 +131,8 @@ pub const TAB_NAMES: [&str; 4] = ["Download queue", "PAR2", "Log", "RSS"];
 
 #[derive(Default)]
 pub struct Ui {
+    /// Real engine/controls without visible windows, for isolated throughput QA.
+    background_audit: bool,
     pub main: HWND,
     tb: HWND,
     tab: HWND,
@@ -278,16 +280,17 @@ fn main() {
             _ => {}
         }
     }
+    let background_audit = args.iter().any(|arg| arg == "--ui-background");
     let scroll_smoke = args.iter().any(|arg| arg == "--ui-scroll-smoke");
     let ui_smoke = args.iter().any(|arg| arg == "--ui-smoke");
     let audit = args.windows(2).find(|a| a[0] == "--ui-audit").map(|a| a[1].clone());
     let demo = screenshot.is_some() || ui_smoke || scroll_smoke || audit.is_some();
-    let settings = Settings::load();
-    let _instance_lock = if !demo && settings.single_instance {
+    let _instance_lock = if !demo && instance::enabled(&app_base()) {
         match instance::lock(&app_base()) {
             Ok(guard) => Some(guard),
             Err(error) => {
                 if error.raw_os_error() != Some(32) || !instance::forward(&app_base(), &nzbs) {
+                    if background_audit { eprintln!("Cannot acquire isolated instance"); return; }
                     unsafe { let _ = MessageBoxW(None,
                         w!("NewsQueue could not open this configuration. Another instance may be starting or not responding. Please try again shortly."),
                         w!("NewsQueue"), MB_OK | MB_ICONERROR); }
@@ -313,7 +316,7 @@ fn main() {
     init_fonts();
     form::register_classes();
 
-    let mut host = if demo { EngineHost::new(demo_engine()) } else { EngineHost::new(Engine::new(settings, false)) };
+    let mut host = if demo { EngineHost::new(demo_engine()) } else { EngineHost::new(Engine::new(Settings::load(), false)) };
     if !demo {
         host.log("Main", "Native Win32 front end.");
         host.start(TICK_INTERVAL);
@@ -327,6 +330,7 @@ fn main() {
         u.snap = handle.snapshot();
         u.handle = Some(handle);
         u.demo = demo;
+        u.background_audit = background_audit;
         u.shutdown_mode = shutdown::ShutdownMode::Real;
         u.update = dialogs::UpdateState::new();
     });
@@ -345,7 +349,7 @@ fn main() {
         nzbs.into_iter().for_each(|p| add_nzb(p, false));
         let (on, bind, key) = with_engine(|e| (e.settings.web_access, e.settings.web_access_bind.clone(), e.settings.web_access_key.clone()));
         start_web_access(on, &bind, &key);
-        tray::spawn();
+        if !background_audit { tray::spawn(); }
     }
 
     let main = create_main();
@@ -370,7 +374,7 @@ fn main() {
         std::process::exit(take_screenshot(main, &path));
     }
     unsafe {
-        let _ = ShowWindow(main, SW_SHOW);
+        if !background_audit { let _ = ShowWindow(main, SW_SHOW); }
         let mut msg = MSG::default();
         while GetMessageW(&mut msg, None, 0, 0).as_bool() {
             if pre_translate(&msg) || form::is_dialog_message(&msg) {
@@ -1406,8 +1410,10 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
     match m {
         WM_COPYDATA => instance::receive(h, lp),
         instance::OPEN_PENDING => {
-            let _ = ShowWindow(h, if IsIconic(h).as_bool() { SW_RESTORE } else { SW_SHOW });
-            let _ = SetForegroundWindow(h);
+            if !ui(|u| u.background_audit) {
+                let _ = ShowWindow(h, if IsIconic(h).as_bool() { SW_RESTORE } else { SW_SHOW });
+                let _ = SetForegroundWindow(h);
+            }
             for path in instance::take_pending() { add_nzb(path, false); }
             LRESULT(0)
         }
@@ -2222,6 +2228,10 @@ fn copy_text(owner: HWND, text: &str) {
 /// Engine events, the updater and the shutdown countdown (every 250 ms).
 fn tick(h: HWND) {
     if ui(|u| u.demo) {
+        return;
+    }
+    if ui(|u| u.background_audit) {
+        with_engine(|e| { e.take_events(); });
         return;
     }
     dialogs::poll_update();

@@ -150,7 +150,8 @@ impl Engine {
                         }
                     }
                     match serde_json::from_value::<Server>(value) {
-                        Ok(s) => servers.push(s),
+                        Ok(s) if (1..=MAX_CONNECTIONS_PER_SERVER).contains(&s.connections) => servers.push(s),
+                        Ok(_) => { self.log("Error", "Servers not changed: connections must be 1..200"); return Applied::Failed; },
                         Err(e) => {
                             self.log("Error", &format!("Servers not changed: {e}"));
                             return Applied::Failed;
@@ -213,6 +214,12 @@ impl Engine {
             Pause(id, pause) => return self.pause_collection(id, pause),
             Delete(id) => {
                 let Some(i) = self.index_of(id) else { return Applied::Ignored };
+                if self.active_dl.as_ref().is_some_and(|active| active.id == id) {
+                    self.retire_download();
+                }
+                if let Some(direct) = self.active_direct.as_ref().filter(|d| d.collection_id == id) {
+                    direct.cancel.store(true, std::sync::atomic::Ordering::Relaxed);
+                }
                 let c = self.queue.remove(i);
                 self.log("Queue", &format!("Deleted: {}", c.subject));
                 return Applied::Removed;
@@ -361,6 +368,19 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn audit_deleted_ids_are_not_reused_and_connections_are_bounded() {
+        let mut e=Engine::new(Settings::default(),true);e.queue.clear();
+        let first=e.add_nzb_from_parsed(nzb_with(&["a.rar"]),String::new(),false);
+        e.apply(Command::Delete(first));
+        let second=e.add_nzb_from_parsed(nzb_with(&["b.rar"]),String::new(),false);
+        assert!(second>first);
+        for count in [0u32,201,u32::MAX] {
+            assert_eq!(e.apply(Command::SetServers(vec![serde_json::json!({"connections":count})])),Applied::Failed);
+        }
+        let s=Server{connections:u32::MAX,..Default::default()};assert_eq!(s.connection_count(),200);
+    }
 
     #[test]
     fn custom_speed_limit_is_decimal_global_and_switches_modes() {

@@ -1396,11 +1396,13 @@ name = "newsqueue-core"
 version = "1.0.9"
 dependencies = [
  "chrono",
+ "crc32fast",
  "fs2",
  "native-tls",
  "quick-xml",
  "serde",
  "serde_json",
+ "tempfile",
  "ureq",
 ]
 

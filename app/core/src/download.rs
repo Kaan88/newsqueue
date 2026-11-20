@@ -5,6 +5,10 @@
 //! progress through a small shared snapshot so the UI thread never blocks
 //! on the network.
 
+mod integrity;
+
+const MAX_ARTICLE_BYTES: usize = 64 * 1024 * 1024;
+
 use crate::container;
 use crate::model::*;
 use std::collections::{HashMap, HashSet, VecDeque};
@@ -39,6 +43,8 @@ pub struct DownloadSnapshot {
     /// Actual bytes written for every file, so parallel workers can update
     /// the per-file rows without pretending files finish in order.
     pub file_progress: Vec<u64>,
+    /// Set only after all ranges and advertised checksums verify on disk.
+    pub file_verified: Vec<bool>,
     /// Where each file is being written, once its name is known.
     pub paths: Vec<Option<PathBuf>>,
     /// Decoded size of each file from its yEnc header (0 = not known yet).
@@ -55,6 +61,7 @@ pub struct DownloadSnapshot {
 }
 
 pub struct ActiveDownload {
+    pub worker: Option<thread::JoinHandle<()>>,
     pub throttle_bps: Arc<AtomicU64>,
     pub id: u64,
     pub snapshot: Arc<Mutex<DownloadSnapshot>>,
@@ -136,14 +143,15 @@ pub fn job_for_collection(
 struct Task {
     /// Indexes of servers that already answered 430 for this article.
     tried: Vec<usize>,
+    transport_error: Option<String>,
     file_index: usize,
     path: PathBuf,
     offset: u64,
     id: String,
     progress: PathBuf,
-    /// The first article of a file is fetched during the name lookup pass, so
-    /// the worker pool can reuse it instead of downloading it twice.
-    prefetched: Option<(Option<u64>, Vec<u8>)>,
+    expected_size: Option<u64>,
+    multipart: bool,
+
 }
 
 struct SpeedMeter {
@@ -257,6 +265,7 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         file_bytes: 0,
         file_total: 0,
         file_progress: vec![0; job.files.len()],
+        file_verified: vec![false; job.files.len()],
         paths: vec![None; job.files.len()],
         sizes: vec![0; job.files.len()],
         server_bytes: vec![0; servers.len()],
@@ -273,7 +282,7 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
     let snap = snapshot.clone();
     let pause2 = pause.clone();
     let stop2 = stop.clone();
-    thread::spawn(move || {
+    let worker = thread::spawn(move || {
         let result = run_job(&job, &servers, &throttle2, &pause2, &stop2, &snap);
         if let Err(e) = result {
             if let Ok(mut s) = snap.lock() {
@@ -286,6 +295,7 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         }
     });
     ActiveDownload {
+        worker: Some(worker),
         throttle_bps: throttle,
         id,
         snapshot,
@@ -317,7 +327,7 @@ fn run_job(
     }
     fs::create_dir_all(&job.folder).map_err(|e| format!("Cannot create folder: {e}"))?;
     if job.precheck {
-        precheck(job, servers, snap)?;
+        precheck(job, servers, snap, stop, pause)?;
     }
     snapshot_set(snap, |s| {
         s.stage = Stage::Connecting;
@@ -347,6 +357,8 @@ fn run_job(
     let mut expected_sizes: Vec<Option<u64>> = vec![None; job.files.len()];
     let mut used_names: HashSet<String> = HashSet::new();
     let mut done_bytes: u64 = 0;
+    let lookup_started = Instant::now();
+    for f in job.files.iter().filter(|f| f.skip) { reserve_name(&safe_file_name(&f.name, "skipped.bin"), &mut used_names); }
 
     for (index, file) in job.files.iter().enumerate() {
         while pause.load(Ordering::Relaxed) {
@@ -379,6 +391,7 @@ fn run_job(
         let fallback = format!("file{:02}.bin", index + 1);
         let base = safe_file_name(&file.name, &fallback);
         let cached = cache.lock().ok().and_then(|mut cache| cache.get(&segments[0].id));
+        let mut lookup_server = None;
         let body = match cached {
             Some(body) => Some(body),
             None => match lookup_body(
@@ -389,8 +402,10 @@ fn run_job(
                 job.retry_count,
                 job.retry_delay,
                 stop,
+                segments.len() > 1,
             ) {
-                Ok(Some(body)) => {
+                Ok(Some((body, server_index))) => {
+                    lookup_server = Some(server_index);
                     if let Ok(mut cache) = cache.lock() {
                         cache.insert(segments[0].id.clone(), body.clone());
                     }
@@ -407,20 +422,17 @@ fn run_job(
         // record it as missing (PAR2 can repair it) and fall back to the NZB
         // name. Its slot is left as a hole in the file.
         let first_missing = body.is_none();
-        if first_missing {
-            snapshot_set(snap, |s| {
-                s.missing += 1;
-                s.message = format!("{} article(s) missing", s.missing);
-            });
-        }
-        let (yenc_name, first_begin, first_data) = match body.as_deref().map(decode_yenc) {
+        let (yenc_name, first_begin, first_data, first_crc) = match body.as_deref().map(decode_yenc) {
             Some(Ok(decoded)) => decoded,
             Some(Err(e)) => {
                 quit_all(&mut lookups);
                 return Err(e);
             }
-            None => (String::new(), None, Vec::new()),
+            None => (String::new(), None, Vec::new(), None),
         };
+        if let Some(server_index) = lookup_server {
+            snapshot_set(snap, |s| s.server_bytes[server_index] += first_data.len() as u64);
+        }
         let decoded_size = body.as_deref().and_then(yenc_size);
         expected_sizes[index] = decoded_size;
         let mut name = if yenc_name.is_empty() {
@@ -448,62 +460,27 @@ fn run_job(
             s.paths[index] = Some(path.clone());
             s.sizes[index] = decoded_size.unwrap_or(0);
         }
-        if job.skip_existing
-            && decoded_size
-                .map(|size| {
-                    fs::metadata(&path)
-                        .map(|metadata| metadata.len() >= size)
-                        .unwrap_or(false)
-                })
-                .unwrap_or(false)
-        {
-            skipped[index] = true;
-            let _ = fs::remove_file(progress_path_for(&path));
-            done_bytes = done_bytes.saturating_add(file.bytes);
-            snapshot_set(snap, |s| {
-                s.bytes = done_bytes;
-                if let Some(p) = s.file_progress.get_mut(index) {
-                    *p = file.bytes;
-                }
-            });
-            continue;
-        }
-        // A previous interrupted attempt can leave a shorter file behind.
-        // Keep the bytes only when a sidecar proves which articles were written;
-        // otherwise start from scratch so old and new data are never mixed.
         let progress_path = progress_path_for(&path);
-        let completed_ids: HashSet<String> = if progress_path.exists() {
-            fs::read_to_string(&progress_path)
-                .map(|text| {
-                    text.lines()
-                        .map(str::trim)
-                        .filter(|line| !line.is_empty())
-                        .map(ToOwned::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default()
-        } else {
-            HashSet::new()
-        };
-        let resuming = !completed_ids.is_empty()
-            && fs::metadata(&path).map(|meta| meta.len() > 0).unwrap_or(false);
+        let verified_path = integrity::verified_path(&path);
+        let mut records = integrity::read(&path, &progress_path, &segments);
+        if !progress_path.exists() && job.skip_existing {
+            records = integrity::read(&path, &verified_path, &segments);
+        }
+        let completed_ids: HashSet<String> = records.keys().cloned().collect();
+        if first_missing && !completed_ids.contains(&segments[0].id) { mark_missing(snap, 1); }
+        let resuming = !completed_ids.is_empty();
         if resuming {
-            let resumed_bytes: u64 = segments
-                .iter()
-                .filter(|segment| completed_ids.contains(&segment.id))
-                .map(|segment| segment.bytes)
-                .sum();
+            let resumed_bytes = records.values().map(|r| r.len).sum::<u64>();
             done_bytes = done_bytes.saturating_add(resumed_bytes);
             snapshot_set(snap, |snapshot| {
                 snapshot.bytes = done_bytes;
-                if let Some(progress) = snapshot.file_progress.get_mut(index) {
-                    *progress = resumed_bytes;
-                }
+                if let Some(progress) = snapshot.file_progress.get_mut(index) { *progress = resumed_bytes; }
             });
         }
-        if !resuming {
-            let _ = fs::remove_file(&progress_path);
-        }
+        // Rewrite only verified records, discarding torn, stale or legacy lines.
+        atomic_write(&progress_path, &integrity::encode(&records))
+            .map_err(|e| format!("Cannot prepare resume metadata: {e}"))?;
+        let _ = fs::remove_file(verified_path);
         let mut options = fs::OpenOptions::new();
         options.create(true).write(true);
         if !resuming {
@@ -515,56 +492,46 @@ fn run_job(
         }
         let mut offset = 0u64;
         for (seg_index, segment) in segments.iter().enumerate() {
-            let prefetched = if seg_index == 0 {
-                Some((first_begin, first_data.clone()))
-            } else {
-                None
-            };
             if seg_index == 0 && first_missing {
                 offset = offset.saturating_add(segment.bytes);
                 continue;
             }
             if !completed_ids.contains(&segment.id) {
-                tasks.push_back(Task {
+                let task = Task {
                     tried: Vec::new(),
+                    transport_error: None,
                     file_index: index,
                     path: path.clone(),
                     offset,
                     id: segment.id.clone(),
                     progress: progress_path.clone(),
-                    prefetched,
-                });
+                    expected_size: decoded_size,
+                    multipart: segments.len() > 1,
+                };
+                if seg_index == 0 {
+                    if stop.load(Ordering::Relaxed) { return Err("Stopped".into()); }
+                    if task.multipart && first_begin.is_none() { return Err(format!("{SIZE_MISMATCH}: multipart article has no range")); }
+                    let mut files = HashMap::new();
+                    let offset = first_begin.map(|b| b - 1).unwrap_or(0);
+                    write_article(&mut files, &task, offset, &first_data)?;
+                    integrity::append(&task, offset, &first_data, first_crc)?;
+                    files.values().next().unwrap().sync_data().map_err(|e| format!("Cannot flush downloaded file: {e}"))?;
+                    done_bytes = done_bytes.saturating_add(first_data.len() as u64);
+                    snapshot_set(snap, |s| {
+                        s.bytes = done_bytes;
+                        s.file_progress[index] += first_data.len() as u64;
+                        s.speed_bps = done_bytes as f64 / lookup_started.elapsed().as_secs_f64().max(0.001);
+                    });
+                    if segments.len() == 1 { verify_file(index, &path, file, snap)?; }
+                    throttle_wait(first_data.len() as f64, throttle_bps, 1, stop, pause);
+                } else { tasks.push_back(task); }
             }
             offset = offset.saturating_add(segment.bytes);
-        }
-        if completed_ids.len() >= segments.len() {
-            let _ = fs::remove_file(&progress_path);
         }
     }
     quit_all(&mut lookups);
 
-    if tasks.is_empty() {
-        let stage = if stop.load(Ordering::Relaxed) {
-            Stage::Stopped
-        } else {
-            Stage::Completed
-        };
-        snapshot_set(snap, |s| {
-            s.stage = stage;
-            s.bytes = total;
-            s.total = total;
-            s.file_index = job.files.len();
-            s.file_bytes = 0;
-            s.speed_bps = 0.0;
-            s.message = if stage == Stage::Completed {
-                "Download complete".into()
-            } else {
-                "Stopped".into()
-            };
-        });
-        return Ok(());
-    }
-
+    if !tasks.is_empty() {
     // Each server gets the number of connections it is configured for,
     // interleaved so a job with few articles still uses every server.
     let mut assignment: Vec<usize> = Vec::new();
@@ -580,8 +547,9 @@ fn run_job(
             }
         }
     }
-    assignment.truncate(tasks.len().max(1));
+    assignment.truncate(tasks.len().max(servers.len()));
     let worker_count = assignment.len().max(1);
+    let job_files = Arc::new(job.files.clone());
     snapshot_set(snap, |s| {
         s.stage = Stage::Downloading;
         s.bytes = done_bytes;
@@ -597,6 +565,7 @@ fn run_job(
         tasks,
         in_flight: 0,
         live,
+        failed: vec![None; servers.len()],
     }));
     let errors = Arc::new(Mutex::new(Vec::<String>::new()));
     let connect_errors = Arc::new(Mutex::new(Vec::<String>::new()));
@@ -622,9 +591,11 @@ fn run_job(
         let cache = cache.clone();
         let proxy = proxy.clone();
         let throttle = throttle_bps.clone();
+        let job_files = job_files.clone();
         handles.push(thread::spawn(move || {
             let context = WorkerContext {
                 server_index,
+                files: &job_files,
                 tasks: &tasks,
                 pause: &pause,
                 stop: &stop,
@@ -687,6 +658,8 @@ fn run_job(
         return Err(message);
     }
 
+    } // Worker pool; even an empty pool must pass final integrity checks.
+
     let missing = snap.lock().map(|snapshot| snapshot.missing).unwrap_or(0);
     if missing > 0 {
         snapshot_set(snap, |s| {
@@ -731,6 +704,24 @@ fn run_job(
         return Ok(());
     }
 
+    // A size match alone cannot detect holes, overlapping parts or disk damage.
+    for (index, path) in paths.iter().enumerate() {
+        let Some(path) = path else { continue; };
+        if skipped[index] { continue; }
+        let verified = snap.lock().map(|s| s.file_verified[index]).unwrap_or(false);
+        if !verified && !verify_file(index, path, &job.files[index], snap)? {
+            snapshot_set(snap, |s| {
+                s.stage = Stage::Incomplete;
+                s.speed_bps = 0.0;
+                s.message = "Downloaded ranges failed integrity verification; PAR2 repair required".into();
+            });
+            return Ok(());
+        }
+    }
+
+    for path in paths.iter().flatten() {
+        let _ = fs::remove_file(progress_path_for(path));
+    }
     snapshot_set(snap, |s| {
         s.stage = Stage::Completed;
         s.bytes = total;
@@ -740,10 +731,17 @@ fn run_job(
         s.speed_bps = 0.0;
         s.message = "Download complete".into();
     });
-    for path in paths.iter().flatten() {
-        let _ = fs::remove_file(progress_path_for(path));
-    }
     Ok(())
+}
+
+fn verify_file(index: usize, path: &Path, file: &DownloadFile, snap: &Mutex<DownloadSnapshot>) -> Result<bool, String> {
+    let records = integrity::read(path, &progress_path_for(path), &file.segments);
+    let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+    if !integrity::covers(&records, file.segments.len(), size) { return Ok(false); }
+    atomic_write(&integrity::verified_path(path), &integrity::encode(&records))
+        .map_err(|e| format!("Cannot save download verification: {e}"))?;
+    snapshot_set(snap, |s| s.file_verified[index] = true);
+    Ok(true)
 }
 
 /// Articles waiting for a connection, shared by every worker of a job.
@@ -753,15 +751,29 @@ struct TaskQueue {
     in_flight: usize,
     /// Workers still alive, per server index.
     live: Vec<usize>,
+    failed: Vec<Option<String>>,
 }
 
 impl TaskQueue {
+    fn exhaustion_error(&self, task: &Task) -> Option<String> {
+        task.transport_error.clone().or_else(|| self.failed.iter().enumerate()
+            .find(|(i, error)| error.is_some() && !task.tried.contains(i))
+            .and_then(|(_, error)| error.clone()))
+    }
+
     /// True when a server that has not tried `task` still has a worker.
     fn can_retry(&self, task: &Task) -> bool {
         self.live
             .iter()
             .enumerate()
             .any(|(index, live)| *live > 0 && !task.tried.contains(&index))
+    }
+}
+
+fn retry_wait(seconds: u32, stop: &AtomicBool) {
+    let until = Instant::now() + Duration::from_secs(seconds.max(1) as u64);
+    while !stop.load(Ordering::Relaxed) && Instant::now() < until {
+        thread::sleep((until - Instant::now().min(until)).min(Duration::from_millis(25)));
     }
 }
 
@@ -778,6 +790,7 @@ fn throttle_wait(mut bytes: f64, limit: &AtomicU64, workers: usize, stop: &Atomi
 }
 
 struct WorkerContext<'a> {
+    files: &'a [DownloadFile],
     server_index: usize,
     tasks: &'a Mutex<TaskQueue>,
     pause: &'a AtomicBool,
@@ -803,7 +816,7 @@ enum Next {
 
 /// Asks the servers (in order) for every article with STAT. Fails the job
 /// when more are missing everywhere than `max_missing` allows.
-fn precheck(job: &DownloadJob, servers: &[Server], snap: &Mutex<DownloadSnapshot>) -> Result<(), String> {
+fn precheck(job: &DownloadJob, servers: &[Server], snap: &Mutex<DownloadSnapshot>, stop: &AtomicBool, pause: &AtomicBool) -> Result<(), String> {
     let ids: Vec<&str> = job
         .files
         .iter()
@@ -812,18 +825,22 @@ fn precheck(job: &DownloadJob, servers: &[Server], snap: &Mutex<DownloadSnapshot
         .collect();
     snapshot_set(snap, |s| s.message = format!("Pre-check: {} articles", ids.len()));
     let mut unknown: Vec<&str> = ids.clone();
+    let mut inconclusive = false;
     for server in servers {
         if unknown.is_empty() {
             break;
         }
-        let Ok(mut nntp) = Nntp::connect(server, &job.proxy) else { continue };
+        if stop.load(Ordering::Relaxed) { return Err("Stopped".into()); }
+        let Ok(mut nntp) = Nntp::connect(server, &job.proxy) else { inconclusive = true; continue };
         let mut still = Vec::new();
         for id in unknown {
+            while pause.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) { thread::sleep(Duration::from_millis(25)); }
+            if stop.load(Ordering::Relaxed) { return Err("Stopped".into()); }
             match nntp.stat(id) {
                 Ok(true) => {}
                 Ok(false) => still.push(id),
                 // Some servers have no STAT: do not judge by this one.
-                Err(_) => still.push(id),
+                Err(_) => { inconclusive = true; still.push(id); },
             }
         }
         let _ = nntp.quit();
@@ -833,7 +850,7 @@ fn precheck(job: &DownloadJob, servers: &[Server], snap: &Mutex<DownloadSnapshot
     snapshot_set(snap, |s| {
         s.message = format!("Pre-check: {} of {} articles available", ids.len() - missing, ids.len())
     });
-    if missing > 0 && job.max_missing.map(|m| missing > m).unwrap_or(false) {
+    if !inconclusive && missing > 0 && job.max_missing.map(|m| missing > m).unwrap_or(false) {
         return Err(format!(
             "Pre-check: {missing} of {} articles are missing, more than the PAR2 set can repair",
             ids.len()
@@ -865,17 +882,18 @@ fn next_task(ctx: &WorkerContext) -> Next {
             return Next::Task(Box::new(task));
         }
     }
-    let before = queue.tasks.len();
+    let mut missing = 0;
+    let mut transport_error = None;
     let pending: Vec<Task> = queue.tasks.drain(..).collect();
     for task in pending {
-        if queue.can_retry(&task) {
-            queue.tasks.push_back(task);
-        }
+        if queue.can_retry(&task) { queue.tasks.push_back(task); }
+        else if let Some(error) = queue.exhaustion_error(&task) { transport_error = Some(error); }
+        else { missing += 1; }
     }
-    let dropped = before - queue.tasks.len();
     let done = queue.tasks.is_empty() && queue.in_flight == 0;
     drop(queue);
-    mark_missing(ctx.snap, dropped);
+    mark_missing(ctx.snap, missing);
+    if let Some(error) = transport_error { record_error(ctx.errors, ctx.stop, error); }
     if done {
         Next::Done
     } else {
@@ -886,17 +904,18 @@ fn next_task(ctx: &WorkerContext) -> Next {
 /// Releases a taken task. `retry` hands a 430 article back for another server.
 fn finish_task(ctx: &WorkerContext, retry: Option<Task>) {
     let mut missing = 0;
+    let mut transport_error = None;
     if let Ok(mut queue) = ctx.tasks.lock() {
         queue.in_flight = queue.in_flight.saturating_sub(1);
         if let Some(task) = retry {
             if queue.can_retry(&task) {
                 queue.tasks.push_back(task);
-            } else {
-                missing = 1;
-            }
+            } else if let Some(error) = queue.exhaustion_error(&task) { transport_error = Some(error); }
+            else { missing = 1; }
         }
     }
     mark_missing(ctx.snap, missing);
+    if let Some(error) = transport_error { record_error(ctx.errors, ctx.stop, error); }
 }
 
 fn download_worker(server: &Server, ctx: &WorkerContext) {
@@ -908,14 +927,13 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             Err(e) => {
                 if connect_attempt < ctx.retry_count && !ctx.stop.load(Ordering::Relaxed) {
                     connect_attempt += 1;
-                    thread::sleep(Duration::from_secs(ctx.retry_delay.max(1) as u64));
+                    retry_wait(ctx.retry_delay, ctx.stop);
                     continue;
                 }
                 // One failed connection should not kill the whole job; the
                 // remaining workers can still finish the queue.
-                if let Ok(mut list) = ctx.connect_errors.lock() {
-                    list.push(e);
-                }
+                if let Ok(mut queue) = ctx.tasks.lock() { queue.failed[ctx.server_index] = Some(e.clone()); }
+                if let Ok(mut list) = ctx.connect_errors.lock() { list.push(e); }
                 return;
             }
         }
@@ -950,9 +968,8 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                 .ok()
                 .and_then(|mut cache| cache.get(&task.id));
             let attempt = if let Some(body) = cached {
-                decode_yenc(&body).map(|(_, begin, data)| (begin, data))
-            } else if let Some(value) = task.prefetched.take() {
-                Ok(value)
+                decode_for_task(&body, &task)
+
             } else {
                 // A connection that failed is dropped and replaced before the
                 // article is asked for again, so retries never reuse a dead
@@ -965,7 +982,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                     Ok(mut connection) => match connection.body(&task.id) {
                         Ok(body) => {
                             nntp = Some(connection);
-                            let decoded = decode_yenc(&body);
+                            let decoded = decode_for_task(&body, &task);
                             // Only a body that decoded cleanly is cached, so a
                             // corrupt copy is never served to another server's
                             // retry.
@@ -974,7 +991,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                                     cache.insert(task.id.clone(), body);
                                 }
                             }
-                            decoded.map(|(_, begin, data)| (begin, data))
+                            decoded
                         }
                         Err(error) => {
                             if unavailable(&error) {
@@ -994,12 +1011,12 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                         && !ctx.stop.load(Ordering::Relaxed) =>
                 {
                     attempts += 1;
-                    thread::sleep(Duration::from_secs(ctx.retry_delay.max(1) as u64));
+                    retry_wait(ctx.retry_delay, ctx.stop);
                 }
                 Err(error) => break Err(error),
             }
         };
-        let (begin, data) = match decoded {
+        let (begin, data, file_crc) = match decoded {
             Ok(value) => value,
             Err(e) => {
                 if unavailable(&e) {
@@ -1009,11 +1026,13 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                     finish_task(ctx, Some(task));
                     continue;
                 }
-                finish_task(ctx, None);
-                record_error(ctx.errors, ctx.stop, e);
-                break;
+                task.tried.push(ctx.server_index);
+                task.transport_error = Some(e);
+                finish_task(ctx, Some(task));
+                continue;
             }
         };
+        if ctx.stop.load(Ordering::Relaxed) { finish_task(ctx, None); break; }
         let offset = begin
             .map(|value| value.saturating_sub(1))
             .unwrap_or(task.offset);
@@ -1023,12 +1042,10 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             record_error(ctx.errors, ctx.stop, e);
             break;
         }
-        if let Ok(mut progress) = fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&task.progress)
-        {
-            let _ = writeln!(progress, "{}", task.id);
+        if let Err(e) = integrity::append(&task, offset, &data, file_crc) {
+            finish_task(ctx, None);
+            record_error(ctx.errors, ctx.stop, e);
+            break;
         }
         finish_task(ctx, None);
         let chunk = data.len() as u64;
@@ -1063,6 +1080,18 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             }
         }
 
+        let ready = ctx.snap.lock().map(|s| {
+            task.expected_size.is_some_and(|size| s.file_progress[task.file_index] >= size)
+        }).unwrap_or(false);
+        if ready {
+            if let Some(file) = files.get(&task.file_index) {
+                if let Err(e) = file.sync_data() { record_error(ctx.errors, ctx.stop, format!("Cannot flush downloaded file: {e}")); break; }
+            }
+            if let Err(e) = verify_file(task.file_index, &task.path, &ctx.files[task.file_index], ctx.snap) {
+                record_error(ctx.errors, ctx.stop, e); break;
+            }
+        }
+
         throttle_wait(chunk as f64, ctx.throttle_bps, ctx.worker_count, ctx.stop, ctx.pause);
 
     }
@@ -1070,7 +1099,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         let _ = nntp.quit();
     }
     for file in files.values_mut() {
-        let _ = file.flush();
+        if let Err(e) = file.sync_data() { record_error(ctx.errors, ctx.stop, format!("Cannot flush downloaded file: {e}")); }
     }
 }
 
@@ -1085,7 +1114,8 @@ fn lookup_body(
     retry_count: u32,
     retry_delay: u32,
     stop: &AtomicBool,
-) -> Result<Option<Vec<u8>>, String> {
+    multipart: bool,
+) -> Result<Option<(Vec<u8>, usize)>, String> {
     let mut not_found = false;
     let mut last_error = None;
     for (index, server) in servers.iter().enumerate() {
@@ -1109,13 +1139,14 @@ fn lookup_body(
                 }
                 // A body whose checksum or size fails counts like a 430 so
                 // the next server is asked for a good copy.
-                body.and_then(|body| match decode_yenc(&body) {
-                    Err(error) if unavailable(&error) => Err(error),
-                    _ => Ok(body),
+                body.and_then(|body| {
+                    let (_, begin, _, _) = decode_yenc(&body)?;
+                    if multipart && begin.is_none() { return Err(format!("{SIZE_MISMATCH}: multipart article has no range")); }
+                    Ok(body)
                 })
             });
             match result {
-                Ok(body) => return Ok(Some(body)),
+                Ok(body) => return Ok(Some((body, index))),
                 Err(error) if unavailable(&error) => {
                     not_found = true;
                     break;
@@ -1126,14 +1157,14 @@ fn lookup_body(
                         break;
                     }
                     attempts += 1;
-                    thread::sleep(Duration::from_secs(retry_delay.max(1) as u64));
+                    retry_wait(retry_delay, stop);
                 }
             }
         }
     }
     match (not_found, last_error) {
-        (true, _) => Ok(None),
-        (false, Some(error)) => Err(error),
+        (_, Some(error)) => Err(error),
+        (true, None) => Ok(None),
         (false, None) => Err("No enabled NNTP server configured".into()),
     }
 }
@@ -1153,6 +1184,8 @@ fn write_article(
     data: &[u8],
 ) -> Result<(), String> {
     if !files.contains_key(&task.file_index) {
+        // Keep at most one output handle per worker, independent of job size.
+        files.clear();
         let file = fs::OpenOptions::new()
             .create(true)
             .write(true)
@@ -1477,13 +1510,11 @@ impl Nntp {
 
     fn read_line(&mut self) -> Result<String, String> {
         let mut line = Vec::new();
-        let n = self
-            .reader
+        let n = (&mut self.reader).take(65537)
             .read_until(b'\n', &mut line)
             .map_err(|e| format!("Cannot read from server: {e}"))?;
-        if n == 0 {
-            return Err("Server closed the connection".into());
-        }
+        if n == 0 { return Err("Server closed the connection".into()); }
+        if n > 65536 { return Err("Server response line too large".into()); }
         while matches!(line.last(), Some(&b'\n') | Some(&b'\r')) {
             line.pop();
         }
@@ -1491,6 +1522,7 @@ impl Nntp {
     }
 
     fn body(&mut self, id: &str) -> Result<Vec<u8>, String> {
+        validate_message_id(id)?;
         let response = self.command(&format!("BODY <{id}>"))?;
         if response.starts_with("430") {
             return Err(format!("{ARTICLE_NOT_FOUND}: {id}"));
@@ -1501,13 +1533,11 @@ impl Nntp {
         let mut out = Vec::new();
         loop {
             let mut line = Vec::new();
-            let n = self
-                .reader
+            let n = (&mut self.reader).take((MAX_ARTICLE_BYTES - out.len() + 1) as u64)
                 .read_until(b'\n', &mut line)
                 .map_err(|e| format!("Cannot read article: {e}"))?;
-            if n == 0 {
-                return Err("Server closed the connection during an article".into());
-            }
+            if n == 0 { return Err("Server closed the connection during an article".into()); }
+            if out.len() + n > MAX_ARTICLE_BYTES { return Err("Article exceeds the 64 MiB safety limit".into()); }
             while matches!(line.last(), Some(&b'\n') | Some(&b'\r')) {
                 line.pop();
             }
@@ -1525,6 +1555,7 @@ impl Nntp {
 
     /// True when the server has the article (`223`), false on `430`/`423`.
     fn stat(&mut self, id: &str) -> Result<bool, String> {
+        validate_message_id(id)?;
         let response = self.command(&format!("STAT <{id}>"))?;
         match reply_code(&response).as_str() {
             "223" => Ok(true),
@@ -1537,6 +1568,12 @@ impl Nntp {
         let _ = self.send("QUIT");
         Ok(())
     }
+}
+
+fn validate_message_id(id: &str) -> Result<(), String> {
+    if id.is_empty() || id.len() > 998 || id.chars().any(|c| c.is_whitespace() || c.is_control() || matches!(c, '<' | '>')) {
+        Err("Invalid article message ID".into())
+    } else { Ok(()) }
 }
 
 fn reply_code(reply: &str) -> String {
@@ -1614,8 +1651,15 @@ fn safe_file_name(name: &str, fallback: &str) -> String {
 
 /// Returns `name`, or `stem (n).ext` when an earlier file of the job already
 /// took it. Windows paths are case-insensitive, so the check is too.
+fn reserve_name(name: &str, used: &mut HashSet<String>) -> bool {
+    let keys = [name.to_lowercase(), format!("{}.nqpart", name.to_lowercase()), format!("{}.nqverified", name.to_lowercase())];
+    if keys.iter().any(|key| used.contains(key)) { return false; }
+    used.extend(keys);
+    true
+}
+
 fn unique_name(name: &str, used: &mut HashSet<String>) -> String {
-    if used.insert(name.to_lowercase()) {
+    if reserve_name(name, used) {
         return name.to_string();
     }
     let path = Path::new(name);
@@ -1630,7 +1674,7 @@ fn unique_name(name: &str, used: &mut HashSet<String>) -> String {
     let mut counter = 2;
     loop {
         let candidate = format!("{stem} ({counter}){extension}");
-        if used.insert(candidate.to_lowercase()) {
+        if reserve_name(&candidate, used) {
             return candidate;
         }
         counter += 1;
@@ -1689,22 +1733,20 @@ fn yenc_size(body: &[u8]) -> Option<u64> {
     None
 }
 
-fn ypart_begin(line: &[u8]) -> Option<u64> {
-    let text = String::from_utf8_lossy(line);
-    for token in text.split_whitespace() {
-        if let Some(value) = token.strip_prefix("begin=") {
-            return value.parse::<u64>().ok();
-        }
-    }
-    None
+fn yenc_field<'a>(line: &'a str, key: &str) -> Option<&'a str> {
+    line.split(" name=").next().unwrap_or(line).split_whitespace()
+        .find_map(|token| token.strip_prefix(key))
 }
 
 /// Returns the yEnc name, the 1-based begin offset from `=ypart` when the
 /// article carries one, and the decoded bytes.
-fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
+fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>, Option<u32>), String> {
     let mut name = String::new();
     let mut begin = None;
     let mut started = false;
+    let mut total = None;
+    let mut multipart = false;
+    let mut part_end = None;
     let mut yend = None;
     // Line breaks inside a yEnc body are not part of the data, so join the
     // encoded lines first. An escape sequence may be split across two lines.
@@ -1717,6 +1759,10 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
         if !started {
             if line.starts_with(b"=ybegin") {
                 name = ybegin_name(line);
+                let header = String::from_utf8_lossy(line);
+                total = Some(yenc_field(&header, "size=").and_then(|v| v.parse::<u64>().ok())
+                    .ok_or_else(|| format!("{SIZE_MISMATCH}: invalid or missing file size"))?);
+                multipart = yenc_field(&header, "part=").is_some();
                 started = true;
             }
             continue;
@@ -1726,15 +1772,18 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
             break;
         }
         if line.starts_with(b"=ypart") {
-            if let Some(value) = ypart_begin(line) {
-                begin = Some(value);
-            }
+            if begin.is_some() || !encoded.is_empty() { return Err(format!("{INVALID_ARTICLE}: misplaced part header")); }
+            let header = String::from_utf8_lossy(line);
+            begin = Some(yenc_field(&header, "begin=").and_then(|v| v.parse::<u64>().ok())
+                .ok_or_else(|| format!("{INVALID_ARTICLE}: invalid part begin"))?);
+            part_end = Some(yenc_field(&header, "end=").and_then(|v| v.parse::<u64>().ok())
+                .ok_or_else(|| format!("{INVALID_ARTICLE}: invalid part end"))?);
             continue;
         }
         encoded.extend_from_slice(line);
     }
     if !started {
-        return Err("Article did not contain a yEnc body".into());
+        return Err(format!("{INVALID_ARTICLE}: no yEnc body"));
     }
     let mut out = Vec::with_capacity(encoded.len());
     let mut i = 0;
@@ -1742,7 +1791,7 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
         let c = encoded[i];
         if c == b'=' {
             if i + 1 >= encoded.len() {
-                return Err("Broken yEnc escape sequence".into());
+                return Err(format!("{INVALID_ARTICLE}: broken escape sequence"));
             }
             // The encoder adds the 42 offset first and only then the 64 escape
             // offset, so an escaped byte needs both subtracted: 227 encodes to
@@ -1754,45 +1803,40 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
             i += 1;
         }
     }
-    // `pcrc32` covers this part; `crc32` alone (single-part posts) covers the
-    // whole file, which is then this article. A multi-part `crc32` is the
-    // whole-file value and cannot be checked here.
-    if let Some(trailer) = yend {
-        // Unlike =ybegin's whole-file size, =yend's size is the number of
-        // decoded bytes in this article, including for multipart posts.
-        if let Some(value) = trailer
-            .split_whitespace()
-            .find_map(|token| token.strip_prefix("size="))
-        {
-            let expected = value
-                .parse::<u64>()
-                .map_err(|_| format!("{SIZE_MISMATCH}: invalid trailer size"))?;
-            if expected != out.len() as u64 {
-                return Err(format!(
-                    "{SIZE_MISMATCH}: expected {expected}, got {}",
-                    out.len()
-                ));
-            }
-        }
-        let field = |key: &str| {
-            trailer
-                .split_whitespace()
-                .find_map(|token| token.strip_prefix(key))
-                .and_then(|value| u32::from_str_radix(value.trim(), 16).ok())
-        };
-        let expected = field("pcrc32=").or_else(|| if begin.is_none() { field("crc32=") } else { None });
-        if let Some(expected) = expected {
-            let actual = crc32(&out);
-            if actual != expected {
-                return Err(format!(
-                    "{CRC_MISMATCH}: expected {expected:08x}, got {actual:08x}"
-                ));
+    let trailer = yend.ok_or_else(|| format!("{INVALID_ARTICLE}: missing yEnc trailer"))?;
+    let expected = yenc_field(&trailer, "size=").and_then(|v| v.parse::<u64>().ok())
+        .ok_or_else(|| format!("{SIZE_MISMATCH}: invalid or missing trailer size"))?;
+    if expected != out.len() as u64 { return Err(format!("{SIZE_MISMATCH}: expected {expected}, got {}", out.len())); }
+    let size = total.unwrap_or(0);
+    match (begin, part_end) {
+        (Some(b), Some(e)) if b > 0 && e >= b && e <= size && e - b + 1 == expected => {},
+        (None, None) if !multipart && expected == size => {},
+        _ => return Err(format!("{SIZE_MISMATCH}: invalid part range or file size")),
+    }
+    // Reject malformed checksum fields instead of silently ignoring them.
+    for key in ["pcrc32=", "crc32="] {
+        if let Some(raw) = yenc_field(&trailer, key) {
+            let crc = u32::from_str_radix(raw, 16).ok().filter(|_| !raw.is_empty() && raw.len() <= 8 && raw.bytes().all(|b| b.is_ascii_hexdigit()))
+                .ok_or_else(|| format!("{CRC_MISMATCH}: invalid checksum"))?;
+            if (key == "pcrc32=" || begin.is_none()) && crc32(&out) != crc {
+                return Err(format!("{CRC_MISMATCH}: expected {crc:08x}, got {:08x}", crc32(&out)));
             }
         }
     }
-    Ok((name, begin, out))
+    let file_crc = yenc_field(&trailer, "crc32=").and_then(|v| u32::from_str_radix(v, 16).ok());
+    Ok((name, begin, out, file_crc))
 }
 
+fn decode_for_task(body: &[u8], task: &Task) -> Result<(Option<u64>, Vec<u8>, Option<u32>), String> {
+    let (_, begin, data, crc) = decode_yenc(body)?;
+    if (task.multipart && begin.is_none())
+        || task.expected_size.is_some_and(|size| yenc_size(body) != Some(size)) {
+        return Err(format!("{SIZE_MISMATCH}: inconsistent multipart header"));
+    }
+    Ok((begin, data, crc))
+}
+
+const INVALID_ARTICLE: &str = "Invalid yEnc article";
 const ARTICLE_NOT_FOUND: &str = "Article not found";
 const CRC_MISMATCH: &str = "Article CRC mismatch";
 const SIZE_MISMATCH: &str = "Article size mismatch";
@@ -1800,38 +1844,14 @@ const SIZE_MISMATCH: &str = "Article size mismatch";
 /// True for errors where another server may still have a good copy: a 430,
 /// or a body whose yEnc checksum or decoded size does not match.
 fn unavailable(error: &str) -> bool {
-    error.starts_with(ARTICLE_NOT_FOUND)
+    error.starts_with(INVALID_ARTICLE)
+        || error.starts_with(ARTICLE_NOT_FOUND)
         || error.starts_with(CRC_MISMATCH)
         || error.starts_with(SIZE_MISMATCH)
 }
 
 /// CRC-32 (IEEE 802.3, the polynomial yEnc uses).
-fn crc32(data: &[u8]) -> u32 {
-    const TABLE: [u32; 256] = {
-        let mut table = [0u32; 256];
-        let mut index = 0;
-        while index < 256 {
-            let mut value = index as u32;
-            let mut bit = 0;
-            while bit < 8 {
-                value = if value & 1 != 0 {
-                    0xEDB8_8320 ^ (value >> 1)
-                } else {
-                    value >> 1
-                };
-                bit += 1;
-            }
-            table[index] = value;
-            index += 1;
-        }
-        table
-    };
-    let mut crc = 0xFFFF_FFFFu32;
-    for byte in data {
-        crc = TABLE[((crc ^ u32::from(*byte)) & 0xff) as usize] ^ (crc >> 8);
-    }
-    !crc
-}
+fn crc32(data: &[u8]) -> u32 { crc32fast::hash(data) }
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -1854,13 +1874,125 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn audit_rejects_truncated_and_malformed_yenc() {
+        for body in [
+            "=ybegin size=1 name=a.bin\n*\n",
+            "=ybegin size=1 name=a.bin\n*\n=yend size=1 crc32=garbage\n",
+            "=ybegin part=1 size=1 name=a.bin\n=ypart begin=0 end=0\n*\n=yend size=1\n",
+            "=ybegin part=1 size=1 name=a.bin\n=ypart begin=1 end=2\n*\n=yend size=1\n",
+        ] { assert!(decode_yenc(body.as_bytes()).is_err(), "accepted {body:?}"); }
+    }
+
+    #[test]
+    fn audit_all_articles_missing_is_incomplete() {
+        let root = temp_root("audit-all-missing");
+        let port = mock_server(vec![]);
+        let job = mock_job(&root, vec![Segment { number: 1, bytes: 5, id: "absent".into() }], 5);
+        let active = spawn(job, vec![local_server(port, 1)], 0.0);
+        assert_eq!(wait_for(&active).stage, Stage::Incomplete);
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_full_length_partial_file_is_not_skipped() {
+        let root = temp_root("audit-full-partial");
+        fs::write(root.join("mock.bin"), b"XXXXXFGHIJ").unwrap();
+        fs::write(progress_path_for(&root.join("mock.bin")), "p2\n").unwrap();
+        let port = mock_server(vec![("p1".into(), yenc_part(b"ABCDE", 10, 1)), ("p2".into(), yenc_part(b"FGHIJ", 10, 6))]);
+        let mut job = two_part_job(&root); job.skip_existing = true;
+        let active = spawn(job, vec![local_server(port, 2)], 0.0);
+        assert_eq!(wait_for(&active).stage, Stage::Completed);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_checks_whole_file_crc_and_rejects_overlap() {
+        for overlap in [false, true] {
+            let root = temp_root(if overlap { "audit-overlap" } else { "audit-whole-crc" });
+            let mut last = yenc_part(b"FGHIJ", 10, if overlap { 1 } else { 6 });
+            if !overlap {
+                last = String::from_utf8(last).unwrap().replace("=yend size=5", "=yend size=5 crc32=00000001").into_bytes();
+            }
+            let port = mock_server(vec![("p1".into(), yenc_part(b"ABCDE", 10, 1)), ("p2".into(), last)]);
+            let active = spawn(two_part_job(&root), vec![local_server(port, 2)], 0.0);
+            assert_eq!(wait_for(&active).stage, Stage::Incomplete);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn audit_disk_damage_and_missing_payload_are_redownloaded() {
+        for missing in [false, true] {
+            let root = temp_root(if missing { "audit-orphan-receipt" } else { "audit-disk-damage" });
+            let path = root.join("mock.bin");
+            if !missing { fs::write(&path, b"ABCDEXXXXX").unwrap(); }
+            let records = [
+                integrity::Record { id:"p1".into(), offset:0, len:5, crc:crc32(b"ABCDE"), file_crc:None },
+                integrity::Record { id:"p2".into(), offset:5, len:5, crc:crc32(b"FGHIJ"), file_crc:None },
+            ].into_iter().map(|r| (r.id.clone(),r)).collect();
+            fs::write(progress_path_for(&path), integrity::encode(&records)).unwrap();
+            let (port,count) = mock_server_counted(vec![("p1".into(), yenc_part(b"ABCDE",10,1)), ("p2".into(), yenc_part(b"FGHIJ",10,6))]);
+            let active = spawn(two_part_job(&root), vec![local_server(port,2)],0.0);
+            assert_eq!(wait_for(&active).stage,Stage::Completed);
+            assert_eq!(fs::read(path).unwrap(),b"ABCDEFGHIJ");
+            assert_eq!(count.load(Ordering::Relaxed),2);
+            let _ = fs::remove_dir_all(root);
+        }
+    }
+
+    #[test]
+    fn audit_verified_resume_survives_missing_first_article() {
+        let root = temp_root("audit-resume-first-missing");
+        let path = root.join("mock.bin"); fs::write(&path,b"ABCDEFGHIJ").unwrap();
+        let records = [
+            integrity::Record { id:"p1".into(),offset:0,len:5,crc:crc32(b"ABCDE"),file_crc:None },
+            integrity::Record { id:"p2".into(),offset:5,len:5,crc:crc32(b"FGHIJ"),file_crc:None },
+        ].into_iter().map(|r|(r.id.clone(),r)).collect();
+        fs::write(progress_path_for(&path),integrity::encode(&records)).unwrap();
+        let port=mock_server(vec![]);
+        let active=spawn(two_part_job(&root),vec![local_server(port,1)],0.0);
+        assert_eq!(wait_for(&active).stage,Stage::Completed);
+        assert_eq!(fs::read(path).unwrap(),b"ABCDEFGHIJ");
+        let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_first_part_context_uses_backup_and_one_pending_part_can_fail_over() {
+        let root=temp_root("audit-context-failover");
+        let primary=mock_server(vec![("p1".into(),yenc_body(b"ABCDEFGHIJ"))]);
+        let backup=mock_server(vec![("p1".into(),yenc_part(b"ABCDE",10,1)),("p2".into(),yenc_part(b"FGHIJ",10,6))]);
+        let active=spawn(two_part_job(&root),vec![local_server(primary,1),local_server(backup,1)],0.0);
+        assert_eq!(wait_for(&active).stage,Stage::Completed);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(),b"ABCDEFGHIJ");
+        let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_duplicate_receipt_cannot_bypass_whole_file_crc() {
+        let root=temp_root("audit-duplicate-receipt");let path=root.join("mock.bin");fs::write(&path,b"ABCDE").unwrap();
+        let record=integrity::Record{id:"p1".into(),offset:0,len:5,crc:crc32(b"ABCDE"),file_crc:Some(1)};
+        let line=serde_json::to_string(&record).unwrap();fs::write(progress_path_for(&path),format!("{line}\n{line}\n")).unwrap();
+        assert!(integrity::read(&path,&progress_path_for(&path),&[Segment{number:1,bytes:5,id:"p1".into()}]).is_empty());
+        let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_metadata_names_and_message_ids_are_safe() {
+        let mut used=HashSet::new();assert_eq!(unique_name("a.bin",&mut used),"a.bin");
+        assert_ne!(unique_name("a.bin.nqpart",&mut used),"a.bin.nqpart");
+        assert_ne!(unique_name("a.bin.nqverified",&mut used),"a.bin.nqverified");
+        for bad in ["", "a\r\nQUIT", "<a>", "a b"] { assert!(validate_message_id(bad).is_err()); }
+    }
+
+    #[test]
     fn decodes_yenc_escapes() {
         // yEnc adds the 42 offset to every byte, and then another 64 prefix plus
         // '=' when that result would be NUL, LF, CR or '='. So 19 -> '=' -> "=}",
         // 214 -> 0x00 -> "=@", 227 -> 0x0D -> "=M", 224 -> 0x0A -> "=J", and
         // 0 -> '*'.
         let body = b"=ybegin line=128 size=5 name=test.bin\n=}=@=M=J*\n=yend size=5\n";
-        let (name, begin, data) = decode_yenc(body).unwrap();
+        let (name, begin, data, _) = decode_yenc(body).unwrap();
         assert_eq!(name, "test.bin");
         assert_eq!(begin, None);
         assert_eq!(data, vec![19, 214, 227, 224, 0]);
@@ -1869,7 +2001,7 @@ pub(crate) mod tests {
     #[test]
     fn reads_the_yenc_part_offset() {
         let body = b"=ybegin part=2 total=3 line=128 size=9 name=test.bin\n=ypart begin=4 end=6\n*+,\n=yend size=3\n";
-        let (_, begin, data) = decode_yenc(body).unwrap();
+        let (_, begin, data, _) = decode_yenc(body).unwrap();
         assert_eq!(begin, Some(4));
         assert_eq!(data, vec![0, 1, 2]);
     }
@@ -2434,6 +2566,19 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn audit_crc_accepts_omitted_leading_zeroes_only() {
+        let payload=(0u32..10000).find_map(|n| { let bytes=n.to_le_bytes();(crc32(&bytes)<0x1000_0000).then_some(bytes) }).unwrap();
+        let part=yenc_part_crc(&payload,payload.len(),1,&payload);
+        let crc=crc32(&payload);
+        let shortened=String::from_utf8(part).unwrap().replace(&format!("{crc:08x}"),&format!("{crc:x}"));
+        assert_eq!(decode_yenc(shortened.as_bytes()).unwrap().2,payload);
+        for bad in ["+1234567","000000000","xyz",""] {
+            let body=shortened.replace(&format!("pcrc32={crc:x}"),&format!("pcrc32={bad}"));
+            assert!(decode_yenc(body.as_bytes()).is_err(),"accepted {bad}");
+        }
+    }
+
+    #[test]
     fn decode_checks_the_part_crc() {
         let good = yenc_part_crc(b"ABCDE", 10, 1, b"ABCDE");
         assert_eq!(decode_yenc(&good).unwrap().2, b"ABCDE");
@@ -2459,12 +2604,12 @@ pub(crate) mod tests {
         assert!(decode_yenc(malformed)
             .unwrap_err()
             .starts_with(SIZE_MISMATCH));
-        // Older posts may omit the size or the entire trailer.
+        // Missing size/trailer cannot establish that an article is complete.
         for body in [
             &b"=ybegin name=a.bin\n*\n=yend\n"[..],
             &b"=ybegin name=a.bin\n*\n"[..],
         ] {
-            assert_eq!(decode_yenc(body).unwrap().2, vec![0]);
+            assert!(decode_yenc(body).is_err());
         }
     }
 
@@ -2687,7 +2832,7 @@ pub(crate) mod tests {
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         let data = b"ABCDEFGHIJ";
-        let port = mock_server(vec![("seg1".into(), yenc_body(data))]);
+        let port = mock_server(vec![("seg1".into(), yenc_part(data, data.len() * 2, 1))]);
         let mut server = Server::default();
         server.address = "127.0.0.1".into();
         server.port = port;
