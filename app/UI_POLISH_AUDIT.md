@@ -257,4 +257,3 @@ runs. There was no observed frontend throughput bottleneck. The initial CLI CPU
 improvement was not uniform across final GUI/server runs; do not generalize it
 into a guaranteed CPU reduction. Tests use isolated output folders, with no
 production queue changes or visible UI interaction.
-
