@@ -7,6 +7,7 @@ pub(super) struct Record {
     pub id: String,
     pub offset: u64,
     pub len: u64,
+    pub total_size: u64,
     pub crc: u32,
     #[serde(default)]
     pub file_crc: Option<u32>,
@@ -35,9 +36,12 @@ pub(super) fn read(path: &Path, metadata: &Path, segments: &[Segment]) -> HashMa
     let mut end = 0;
     let mut contiguous = true;
     let mut advertised = None;
+    let mut total_size = None;
     for record in candidates {
         if !ids.contains(record.id.as_str()) || record.len > MAX_ARTICLE_BYTES as u64
-            || record.offset.checked_add(record.len).is_none_or(|end| end > size) { continue; }
+            || record.offset.checked_add(record.len).is_none_or(|end| end > size || end > record.total_size) { continue; }
+        if total_size.is_some_and(|total| total != record.total_size) { return HashMap::new(); }
+        total_size = Some(record.total_size);
         bytes.resize(record.len as usize, 0);
         if file.seek(SeekFrom::Start(record.offset)).is_ok()
             && file.read_exact(&mut bytes).is_ok() && crc32(&bytes) == record.crc {
@@ -80,7 +84,8 @@ pub(super) fn encode(records: &HashMap<String, Record>) -> Vec<u8> {
 }
 
 pub(super) fn append(task: &Task, offset: u64, data: &[u8], file_crc: Option<u32>) -> Result<(), String> {
-    let record = Record { id: task.id.clone(), offset, len: data.len() as u64, crc: crc32(data), file_crc };
+    let total_size = task.expected_size.ok_or("Cannot save resume metadata without advertised file size")?;
+    let record = Record { id: task.id.clone(), offset, len: data.len() as u64, total_size, crc: crc32(data), file_crc };
     let mut line = serde_json::to_vec(&record).map_err(|e| e.to_string())?;
     line.push(b'\n');
     fs::OpenOptions::new().create(true).append(true).open(&task.progress)

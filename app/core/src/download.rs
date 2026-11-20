@@ -433,7 +433,7 @@ fn run_job(
         if let Some(server_index) = lookup_server {
             snapshot_set(snap, |s| s.server_bytes[server_index] += first_data.len() as u64);
         }
-        let decoded_size = body.as_deref().and_then(yenc_size);
+        let mut decoded_size = body.as_deref().and_then(yenc_size);
         expected_sizes[index] = decoded_size;
         let mut name = if yenc_name.is_empty() {
             base
@@ -466,6 +466,10 @@ fn run_job(
         if !progress_path.exists() && job.skip_existing {
             records = integrity::read(&path, &verified_path, &segments);
         }
+        if decoded_size.is_some_and(|size| records.values().any(|r| r.total_size != size)) { records.clear(); }
+        decoded_size = decoded_size.or_else(|| records.values().next().map(|r| r.total_size));
+        expected_sizes[index] = decoded_size;
+        snapshot_set(snap, |s| s.sizes[index] = decoded_size.unwrap_or(0));
         let completed_ids: HashSet<String> = records.keys().cloned().collect();
         if first_missing && !completed_ids.contains(&segments[0].id) { mark_missing(snap, 1); }
         let resuming = !completed_ids.is_empty();
@@ -737,7 +741,8 @@ fn run_job(
 fn verify_file(index: usize, path: &Path, file: &DownloadFile, snap: &Mutex<DownloadSnapshot>) -> Result<bool, String> {
     let records = integrity::read(path, &progress_path_for(path), &file.segments);
     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
-    if !integrity::covers(&records, file.segments.len(), size) { return Ok(false); }
+    let expected = records.values().next().map(|r| r.total_size);
+    if expected != Some(size) || !integrity::covers(&records, file.segments.len(), size) { return Ok(false); }
     atomic_write(&integrity::verified_path(path), &integrity::encode(&records))
         .map_err(|e| format!("Cannot save download verification: {e}"))?;
     snapshot_set(snap, |s| s.file_verified[index] = true);
@@ -1016,7 +1021,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                 Err(error) => break Err(error),
             }
         };
-        let (begin, data, file_crc) = match decoded {
+        let (begin, data, file_crc, total_size) = match decoded {
             Ok(value) => value,
             Err(e) => {
                 if unavailable(&e) {
@@ -1033,6 +1038,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             }
         };
         if ctx.stop.load(Ordering::Relaxed) { finish_task(ctx, None); break; }
+        task.expected_size = Some(total_size);
         let offset = begin
             .map(|value| value.saturating_sub(1))
             .unwrap_or(task.offset);
@@ -1827,13 +1833,13 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>, Option<u32>
     Ok((name, begin, out, file_crc))
 }
 
-fn decode_for_task(body: &[u8], task: &Task) -> Result<(Option<u64>, Vec<u8>, Option<u32>), String> {
+fn decode_for_task(body: &[u8], task: &Task) -> Result<(Option<u64>, Vec<u8>, Option<u32>, u64), String> {
     let (_, begin, data, crc) = decode_yenc(body)?;
     if (task.multipart && begin.is_none())
         || task.expected_size.is_some_and(|size| yenc_size(body) != Some(size)) {
         return Err(format!("{SIZE_MISMATCH}: inconsistent multipart header"));
     }
-    Ok((begin, data, crc))
+    Ok((begin, data, crc, yenc_size(body).ok_or("Missing advertised file size")?))
 }
 
 const INVALID_ARTICLE: &str = "Invalid yEnc article";
@@ -1928,8 +1934,8 @@ pub(crate) mod tests {
             let path = root.join("mock.bin");
             if !missing { fs::write(&path, b"ABCDEXXXXX").unwrap(); }
             let records = [
-                integrity::Record { id:"p1".into(), offset:0, len:5, crc:crc32(b"ABCDE"), file_crc:None },
-                integrity::Record { id:"p2".into(), offset:5, len:5, crc:crc32(b"FGHIJ"), file_crc:None },
+                integrity::Record { id:"p1".into(), offset:0, len:5, total_size:10, crc:crc32(b"ABCDE"), file_crc:None },
+                integrity::Record { id:"p2".into(), offset:5, len:5, total_size:10, crc:crc32(b"FGHIJ"), file_crc:None },
             ].into_iter().map(|r| (r.id.clone(),r)).collect();
             fs::write(progress_path_for(&path), integrity::encode(&records)).unwrap();
             let (port,count) = mock_server_counted(vec![("p1".into(), yenc_part(b"ABCDE",10,1)), ("p2".into(), yenc_part(b"FGHIJ",10,6))]);
@@ -1946,14 +1952,25 @@ pub(crate) mod tests {
         let root = temp_root("audit-resume-first-missing");
         let path = root.join("mock.bin"); fs::write(&path,b"ABCDEFGHIJ").unwrap();
         let records = [
-            integrity::Record { id:"p1".into(),offset:0,len:5,crc:crc32(b"ABCDE"),file_crc:None },
-            integrity::Record { id:"p2".into(),offset:5,len:5,crc:crc32(b"FGHIJ"),file_crc:None },
+            integrity::Record { id:"p1".into(),offset:0,len:5,total_size:10,crc:crc32(b"ABCDE"),file_crc:None },
+            integrity::Record { id:"p2".into(),offset:5,len:5,total_size:10,crc:crc32(b"FGHIJ"),file_crc:None },
         ].into_iter().map(|r|(r.id.clone(),r)).collect();
         fs::write(progress_path_for(&path),integrity::encode(&records)).unwrap();
         let port=mock_server(vec![]);
         let active=spawn(two_part_job(&root),vec![local_server(port,1)],0.0);
         assert_eq!(wait_for(&active).stage,Stage::Completed);
         assert_eq!(fs::read(path).unwrap(),b"ABCDEFGHIJ");
+        let _=fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn audit_resumed_file_cannot_hide_missing_tail_when_first_article_is_gone() {
+        let root=temp_root("audit-resume-missing-tail");let path=root.join("mock.bin");fs::write(&path,b"ABCDE").unwrap();
+        let first=integrity::Record{id:"p1".into(),offset:0,len:5,total_size:15,crc:crc32(b"ABCDE"),file_crc:None};
+        fs::write(progress_path_for(&path),format!("{}\n",serde_json::to_string(&first).unwrap())).unwrap();
+        let port=mock_server(vec![("p2".into(),yenc_part(b"FGHIJ",15,6))]);
+        let active=spawn(two_part_job(&root),vec![local_server(port,1)],0.0);
+        assert_eq!(wait_for(&active).stage,Stage::Incomplete);
         let _=fs::remove_dir_all(root);
     }
 
@@ -1971,7 +1988,7 @@ pub(crate) mod tests {
     #[test]
     fn audit_duplicate_receipt_cannot_bypass_whole_file_crc() {
         let root=temp_root("audit-duplicate-receipt");let path=root.join("mock.bin");fs::write(&path,b"ABCDE").unwrap();
-        let record=integrity::Record{id:"p1".into(),offset:0,len:5,crc:crc32(b"ABCDE"),file_crc:Some(1)};
+        let record=integrity::Record{id:"p1".into(),offset:0,len:5,total_size:5,crc:crc32(b"ABCDE"),file_crc:Some(1)};
         let line=serde_json::to_string(&record).unwrap();fs::write(progress_path_for(&path),format!("{line}\n{line}\n")).unwrap();
         assert!(integrity::read(&path,&progress_path_for(&path),&[Segment{number:1,bytes:5,id:"p1".into()}]).is_empty());
         let _=fs::remove_dir_all(root);
