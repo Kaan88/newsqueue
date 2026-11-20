@@ -12,17 +12,17 @@ these files into a new directory:
 
 - `NewsQueue-1.0.8-web.1-linux-amd64.tar.gz`
 - `compose.yaml`
-- `.env.example`
+- `env.example`
 - `NewsQueue-1.0.8-web.1-SHA256SUMS.txt`
 
 On Linux/macOS, copy the environment template and generate a key:
 
 ```sh
-cp .env.example .env
+cp env.example .env
 openssl rand -hex 32
 ```
 
-On Windows PowerShell, use `Copy-Item .env.example .env`; generate a key with:
+On Windows PowerShell, use `Copy-Item env.example .env`; generate a key with:
 
 ```powershell
 $bytes = New-Object byte[] 32
@@ -97,14 +97,14 @@ links for `v1.0.8` still describe the original Windows release commit.
 
 ```sh
 cd NewsQueue-1.0.8-web.1/app
-cp .env.example .env
+cp env.example .env
 # Edit .env as above.
 docker compose build
 docker compose up -d
 ```
 
 Alternatively clone the repository and check out the immutable
-`web-v1.0.8-1` tag. The multi-stage Dockerfile compiles Rust and egui/WASM;
+`web-v1.0.8-1-release` tag. The multi-stage Dockerfile compiles Rust and egui/WASM;
 Rust is not needed on the host. Other Linux architectures require a source
 build and have not been validated for this release.
 

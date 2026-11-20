@@ -16,10 +16,10 @@ The current release combines **Windows 1.0.8** with **server/web 1.0.8-web.1**.
   the same release. Follow the [Docker Compose guide](app/DOCKER.md) for setup,
   authentication, persistent folders, updates and source builds.
 
-Quick start after downloading the image, `compose.yaml` and `.env.example`:
+Quick start after downloading the image, `compose.yaml` and `env.example`:
 
 ```sh
-cp .env.example .env
+cp env.example .env
 # Edit .env and replace NQ_API_KEY with a long random key.
 docker load -i NewsQueue-1.0.8-web.1-linux-amd64.tar.gz
 docker compose up -d --no-build
@@ -37,7 +37,7 @@ retain their originally bundled web UI; use the Docker build for the complete
 updated server/web pair.
 
 For the matching source, download `NewsQueue-1.0.8-web.1-source.zip` or check
-out `web-v1.0.8-1`. The original `v1.0.8` tag remains tied to the Windows build.
+out `web-v1.0.8-1-release`. The original `v1.0.8` tag remains tied to the Windows build.
 
 ## Features
 
