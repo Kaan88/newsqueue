@@ -1100,8 +1100,8 @@ fn lookup_body(
                 if reusable {
                     connections[index] = Some(connection);
                 }
-                // A body whose checksum fails counts like a 430 so the next
-                // server is asked for a good copy.
+                // A body whose checksum or size fails counts like a 430 so
+                // the next server is asked for a good copy.
                 body.and_then(|body| match decode_yenc(&body) {
                     Err(error) if unavailable(&error) => Err(error),
                     _ => Ok(body),
@@ -1751,6 +1751,22 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
     // whole file, which is then this article. A multi-part `crc32` is the
     // whole-file value and cannot be checked here.
     if let Some(trailer) = yend {
+        // Unlike =ybegin's whole-file size, =yend's size is the number of
+        // decoded bytes in this article, including for multipart posts.
+        if let Some(value) = trailer
+            .split_whitespace()
+            .find_map(|token| token.strip_prefix("size="))
+        {
+            let expected = value
+                .parse::<u64>()
+                .map_err(|_| format!("{SIZE_MISMATCH}: invalid trailer size"))?;
+            if expected != out.len() as u64 {
+                return Err(format!(
+                    "{SIZE_MISMATCH}: expected {expected}, got {}",
+                    out.len()
+                ));
+            }
+        }
         let field = |key: &str| {
             trailer
                 .split_whitespace()
@@ -1772,11 +1788,14 @@ fn decode_yenc(body: &[u8]) -> Result<(String, Option<u64>, Vec<u8>), String> {
 
 const ARTICLE_NOT_FOUND: &str = "Article not found";
 const CRC_MISMATCH: &str = "Article CRC mismatch";
+const SIZE_MISMATCH: &str = "Article size mismatch";
 
 /// True for errors where another server may still have a good copy: a 430,
-/// or a body whose yEnc checksum does not match.
+/// or a body whose yEnc checksum or decoded size does not match.
 fn unavailable(error: &str) -> bool {
-    error.starts_with(ARTICLE_NOT_FOUND) || error.starts_with(CRC_MISMATCH)
+    error.starts_with(ARTICLE_NOT_FOUND)
+        || error.starts_with(CRC_MISMATCH)
+        || error.starts_with(SIZE_MISMATCH)
 }
 
 /// CRC-32 (IEEE 802.3, the polynomial yEnc uses).
@@ -1858,7 +1877,7 @@ pub(crate) mod tests {
                 out.push(encoded);
             }
         }
-        out.extend_from_slice(b"\n=yend size=10\n");
+        out.extend_from_slice(format!("\n=yend size={}\n", data.len()).as_bytes());
         out
     }
 
@@ -2403,6 +2422,62 @@ pub(crate) mod tests {
         assert_eq!(decode_yenc(single).unwrap().2, vec![0]);
         let wrong = b"=ybegin line=128 size=1 name=a.bin\n*\n=yend size=1 crc32=00000001\n";
         assert!(decode_yenc(wrong).is_err());
+    }
+
+    #[test]
+    fn decode_checks_trailer_size_per_article() {
+        let part = yenc_part(b"ABCDE", 10, 1);
+        assert_eq!(decode_yenc(&part).unwrap().2, b"ABCDE");
+        let short = b"=ybegin line=128 size=5 name=a.bin\nklmn\n=yend size=5\n";
+        let error = decode_yenc(short).unwrap_err();
+        assert!(error.starts_with(SIZE_MISMATCH), "{error}");
+        assert!(unavailable(&error));
+        let malformed = b"=ybegin line=128 size=1 name=a.bin\n*\n=yend size=nope\n";
+        assert!(decode_yenc(malformed)
+            .unwrap_err()
+            .starts_with(SIZE_MISMATCH));
+        // Older posts may omit the size or the entire trailer.
+        for body in [
+            &b"=ybegin name=a.bin\n*\n=yend\n"[..],
+            &b"=ybegin name=a.bin\n*\n"[..],
+        ] {
+            assert_eq!(decode_yenc(body).unwrap().2, vec![0]);
+        }
+    }
+
+    #[test]
+    fn a_size_mismatch_is_fetched_from_the_next_server() {
+        let root = temp_root("size-failover");
+        // Name lookup fetches p1 from servers in order, so it must encounter
+        // this truncated primary copy before trying the backup.
+        let bad = concat!(
+            "=ybegin part=1 line=128 size=10 name=mock.bin\n",
+            "=ypart begin=1 end=5\nklmn\n=yend size=5\n"
+        )
+        .as_bytes()
+        .to_vec();
+        let (primary, primary_count) = mock_server_counted(vec![
+            ("p1".into(), bad),
+            ("p2".into(), yenc_part(b"FGHIJ", 10, 6)),
+        ]);
+        let (backup, backup_count) = mock_server_counted(vec![
+            ("p1".into(), yenc_part(b"ABCDE", 10, 1)),
+            ("p2".into(), yenc_part(b"FGHIJ", 10, 6)),
+        ]);
+        let mut job = two_part_job(&root);
+        job.cache_mb = 1;
+        let active = spawn(
+            job,
+            vec![local_server(primary, 1), local_server(backup, 1)],
+            0.0,
+        );
+        let snapshot = wait_for(&active);
+        assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+        assert_eq!(snapshot.missing, 0);
+        assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"ABCDEFGHIJ");
+        assert!(primary_count.load(Ordering::Relaxed) >= 1);
+        assert!(backup_count.load(Ordering::Relaxed) >= 1);
+        let _ = fs::remove_dir_all(root);
     }
 
     #[test]

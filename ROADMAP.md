@@ -85,8 +85,11 @@ NZB downloaded by IDM is fine. Confirmed and fixed.
   524,288,000 bytes, `part6` 376,364,335 bytes, `ALL MATCH`). `UnRAR t` over the
   set reports `All OK`, exit 0. Before the fix the same NZB produced archives
   that unpacked to garbage.
-- **Still to do.** Add a checksum-on-complete or `=yend size` cross-check so a
-  decode bug cannot pass on length alone again.
+- **Follow-up (2026-11-20).** The v1.0.7 code checks a supplied per-part CRC
+  or single-part CRC. The local takeover branch also checks a supplied
+  `=yend size` against the decoded article length, including multipart posts.
+  Either mismatch triggers the existing server failover path. The size check
+  catches truncation even when the trailer omits a CRC.
 
 
 ### Added: archives without extensions (obfuscated posts, 2026-11-04)
@@ -265,8 +268,8 @@ Cut on 2026-11-18; see `REMOVED.md`.
 
 ### Not blocked
 
-5. **Downloads are verified per article** by the yEnc `pcrc32` (or `crc32`
-   for single-part posts); a mismatch is fetched from another server.
+5. **Done on the takeover branch: yEnc trailer size check.** The decoder
+   checks any declared `=yend size` alongside the existing CRC checks.
 6. **Done: mock NNTP read-timeout test** (2026-11-18). A server that goes
    silent mid-BODY costs one read timeout; the article is fetched again on a
    new connection. Failover, 430, CRC and dropped-connection paths were
@@ -371,7 +374,9 @@ None are started. Categories stay cut (see `REMOVED.md`).
 5. Done 2026-11-18: releases 1.0.6 and 1.0.7 (menu crash fix). Still to try: a real 1.0.5 → 1.0.6
    (IExpress → Inno) self-update round trip.
    `installer-test.ps1` passes against the native desktop build (2026-11-18),
-   using a test-named installer variant beside a real install.
+   using a test-named installer variant beside a real install. The v1.0.7
+   run timed out once and passed on retry. See `HANDOFF.md` for the next
+   diagnostic step.
 6. Optional: code signing and shortcut polish.
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.

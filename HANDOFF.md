@@ -1,4 +1,36 @@
-# Handoff — 2026-11-18
+# NewsQueue handoff
+
+## Takeover — 2026-11-20
+
+- The working checkout is `C:\Users\kaank\Desktop\news`. The path in the
+  Claude session (`Desktop\newsqueue`) no longer exists. The fresh clone had
+  one clean worktree, with `main`, `origin/main`, and `v1.0.7` all at `6575968`.
+  Follow-up work is on the local `codex/newsqueue-takeover` branch.
+- Claude's last NewsQueue implementation session finished the v1.0.7 release.
+  The newer session in the same Claude project discussed a separate repo. The
+  design and release notes below are historical. Use `ROADMAP.md` and the
+  completed status lines in `GUI_PLAN.md` for the current plan.
+- The decoder now validates `=yend size` when present, using the decoded
+  length of that article. A malformed or mismatched size follows the existing
+  failover path. Posts that omit the size retain their previous behavior.
+- Verified on Windows from `app/`: `cargo test --locked --offline -p
+  newsqueue-core download::tests` passed all 23 focused tests, and `cargo
+  test --locked --offline --workspace` passed all 116 tests (23 desktop,
+  80 core, 12 server, 1 web). `cargo run --locked --offline -- --screenshot
+  shots/check/takeover-now.png` produced a 1301×920 sample capture at 96 DPI.
+  `download-while-tray-verify.ps1` passed in the desktop session under Windows
+  PowerShell 5.1 with the exact `ABCDEFGHIJ` mock payload and a clean tray exit.
+  The initial sandboxed run could locate the window but could not hide it.
+- The v1.0.7 installer check timed out on its first run and passed on retry.
+  `Wait-Setup` in `app/installer-test.ps1` polls process-name patterns across
+  the machine, so its timeout alone cannot identify the process it waited for.
+  If it recurs, record the Setup log and process IDs before diagnosing the
+  legacy wizard path. A real installed 1.0.5 self-update round trip also
+  remains open. Use an isolated Windows environment to run it.
+- Live failover still needs a second Usenet server. Live damaged-PAR2
+  validation needs a suitable fixture. Code signing is optional.
+
+## Release record — 2026-11-18
 
 **v1.0.7 (2026-11-18)** fixes a 1.0.6 crash whenever a menu opened.
 **Released as v1.0.6 (2026-11-18)**: everything below plus the native Win32
