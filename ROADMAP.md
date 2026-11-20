@@ -18,6 +18,13 @@ cursors outside fields. Caustica uses Inter 14 px; native Windows font and label
 Check for updates is inside desktop About. Temp-directory documentation now
 states accurately that download/resume files go directly into job folders.
 
+The pre-release engine audit added checksummed resume/completion receipts,
+whole-file CRC and range verification, malformed NZB rejection, atomic state
+replacement, provider failover fixes, a cancellation ownership barrier and
+verified direct-unpack cleanup. An independent Astra review and targeted Ghidra
+comparison informed the changes. Real-account TLS/plain measurements compare
+identical downloaded payloads; see `app/UI_POLISH_AUDIT.md` for exact evidence.
+
 ## Active priorities (2026-11-20)
 
 Keep the shared Rust engine, server/Docker deployment, native Win32 desktop and

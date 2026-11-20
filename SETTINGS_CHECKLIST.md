@@ -102,3 +102,5 @@ after adding a setting: it needs a field, a default, a control and behaviour.
 | `sevenzip_path` | Setup: Unpack | core/src/engine.rs, core/src/tools.rs, src/setup.rs, web/src/settings.rs |
 
 - `single_instance` — Desktop only, default `true`; Setup → User interface → **Allow only one instance**. A per-configuration exclusive lock prevents a second engine; launches forward absolute NZB paths and restore the existing window. Applies on next launch. Diagnostics bypass the lock.
+
+- `skip_existing` — existing payloads are skipped only after their `.nqverified` receipt revalidates ranges, size and available whole-file CRC. Length alone is not completion evidence. Legacy ID-only resume metadata triggers safe redownload.

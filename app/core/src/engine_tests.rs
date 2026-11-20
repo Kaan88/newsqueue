@@ -375,3 +375,31 @@ fn completed_collection_can_be_unpacked() {
     );
     let _ = std::fs::remove_dir_all(root);
 }
+
+
+#[test]
+fn audit_draining_worker_blocks_new_download_and_shutdown() {
+    use crate::download::tests::{local_server, mock_server_counted, yenc_part};
+    use std::sync::atomic::Ordering;
+    let root=tempfile::tempdir().unwrap();
+    let (port,count)=mock_server_counted(vec![("a".into(),yenc_part(b"abc",3,1))]);
+    let mut settings=Settings::default();settings.download_dir=root.path().to_string_lossy().into();
+    settings.servers=vec![local_server(port,1)];settings.low_free_space_mb=0;settings.par2_checking=false;settings.auto_unrar=false;
+    let mut e=Engine::new(settings,true);e.queue.clear();
+    let mut c=sample_queue(&e.settings).remove(0);c.id=99;c.status=ItemStatus::Queued;c.folder=root.path().join("job").to_string_lossy().into();
+    c.files=vec![QueueFile{name:"a.bin".into(),bytes:3,parts:1,segments:vec![Segment{number:1,bytes:3,id:"a".into()}],downloaded:0.0,held:false,done:false}];
+    c.total_bytes=3;e.queue.push(c);
+    let (release,wait)=std::sync::mpsc::channel();
+    e.draining_dl=Some(std::thread::spawn(move||{let _=wait.recv();}));
+    e.connect();
+    for _ in 0..5 { e.tick();assert!(e.active_dl.is_none());assert!(!e.all_tasks_done()); }
+    assert_eq!(count.load(Ordering::Relaxed),0,"replacement cannot fetch before old worker exits");
+    release.send(()).unwrap();
+    for _ in 0..200 {
+        e.tick();
+        if e.all_tasks_done() { break; }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    }
+    assert!(e.all_tasks_done());assert_eq!(e.queue[0].status,ItemStatus::Completed);
+    assert_eq!(std::fs::read(root.path().join("job/a.bin")).unwrap(),b"abc");
+}

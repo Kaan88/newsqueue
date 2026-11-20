@@ -146,7 +146,7 @@ stays as it is).
 - A job opens the configured number of connections for each enabled server.
 - Workers share a thread-safe task queue and update a `Mutex<DownloadSnapshot>`.
 - The UI polls the snapshot; there is no async runtime.
-- Resume state is stored in `<file>.nqpart` sidecars listing completed article IDs.
+- Resume state is stored in `<file>.nqpart` sidecars with verified article ranges, advertised size and CRCs.
 - Missing `430` articles increment `missing`, do not kill the job, and mark the
   collection `Incomplete` so PAR2 can repair it.
 - `Stage::Incomplete` is distinct from `Error` and `Completed`.
@@ -335,8 +335,7 @@ requested. `app/PICKER_SMOKE.md` records the completed picker interaction run.
 
 NewsQueue uses independent versions. Current version is **1.0.9** (1.0.2 was the first release that can self-update).
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
-`v1.0.1`, which adds content-based naming for obfuscated posts. There is no
-`Version?` and a timer (`check_version_minutes`, 0 = never) check GitHub
+`v1.0.1`, which adds content-based naming for obfuscated posts. About → Check for updates and a timer (`check_version_minutes`, 0 = never) check GitHub
 releases; with `auto_update` the app installs a newer setup silently when idle.
 Only releases built with the current `install.ps1` (NQ_WAIT_PID/NQ_RELAUNCH)
 can self-update. The repo must be publicly readable for the check to work.

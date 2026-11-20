@@ -63,6 +63,17 @@ stay in each job's download folder. The Docker `/incomplete` mount is retained f
 compatibility. Custom speed caps are session controls, like percentage caps; the
 existing startup-speed setting still determines the limit after a restart.
 
+Download integrity has also been hardened: article sizes/ranges and CRCs are
+checked, advertised whole-file CRCs are verified when supplied, and resumed bytes
+are rechecked against saved range checksums. `.nqverified` receipts let completed
+files be checked before skipping them. Older ID-only `.nqpart` records cannot
+prove disk integrity, so their articles are downloaded again. Missing/corrupt
+articles remain incomplete and enter the configured PAR2 path.
+
+Queue/settings/history/statistics saves now replace files atomically. Cancelled
+workers finish before a replacement download can write to the same output, and
+direct-unpack cleanup waits for verified download completion.
+
 ## Features
 
 - Download queue with groups/files, pause/resume, move, rename, delete, export

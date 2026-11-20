@@ -167,3 +167,94 @@ regression test. Desktop input/focus and tray interaction are not automated
 against the user's live desktop; verification uses offscreen native windows and
 headless browsers. The installer check uses its isolated test identity and
 hidden mode, which skips the visible legacy wizard/relaunch check.
+
+### Engine audit and independent re-review (2026-11-20)
+
+Release was held at the user's request for an engine robustness/performance
+review. The initial tests reproduced truncated yEnc acceptance, all-missing jobs
+reported complete, and full-length partial files incorrectly skipped. Fixes add:
+
+- Strict yEnc trailer sizes, inclusive part ranges and valid CRC text; 1–8 hex
+  digits remain compatible with real posts that omit leading zeroes.
+- Advertised whole-file CRC checking, contiguous verified ranges through the
+  declared file size, and checksummed resume/complete receipts (`.nqpart` and
+  `.nqverified`). Disk changes, orphaned/duplicate/legacy receipts and missing
+  first articles cannot establish false completion.
+- Reserved payload/metadata names, bounded NNTP response/article reads,
+  malformed/overflowing NZB rejection and message-ID validation.
+- All-provider failover with one pending article, transport/missing distinction,
+  inconclusive STAT handling and interruptible retry waits.
+- Coordinator ownership until cancellation drains, non-reused collection IDs,
+  immediate active-delete retirement, and queue-drained shutdown worker gates.
+- Verified volume readiness and deferred direct-unpack cleanup, atomic durable
+  state replacement, and queue persistence before deleting auto-imported NZBs.
+- Hardware-accelerated CRC via crc32fast, immediate first-part writes instead of
+  retaining every first payload until preparation ends, bounded output handles,
+  and sequential reused-buffer resume verification.
+
+Astra independently reviewed the implementation and ran the 11 focused downloader
+integrity tests, including its discovered missing-tail resume scenario. All
+passed after correction; no remaining blocker was identified in the reviewed
+resume/CRC interaction. This is targeted review, not a proof of absence of bugs.
+
+Ghidra analysis of a workspace copy of the original AltBinz 0.48.4 cache confirms
+size/range validation in local assembly worker `0x866c64` at
+`0x8674fd–0x86763f`, following decoder call `0x867445`; CRC comparison is at
+`0x867644–0x8676fd`. The original also retains previous queue index generations.
+No evidence was established for re-hashing resumed payloads or exhaustive NNTP
+provider failover. Generated evidence remains under
+`app/target/ghidra-integrity-audit`; original evidence was not modified or run.
+
+### Real-server performance evidence (initial measurements)
+
+User-authorized Easynews tests use one complete 500 MiB file from a supplied NZB,
+20 connections, isolated output/config folders, no unpacking and no UI activation.
+Credentials and NZBs are not source/release artifacts. Every successful case below
+produced the same SHA-256 payload. Intel Core i7-14700KF, Windows; CPU seconds are
+process CPU time (not percent of the entire 28-thread machine).
+
+| Case | TLS MB/s | Plain MB/s | TLS / plain CPU seconds | First payload |
+|---|---:|---:|---:|---|
+| Pre-audit CLI baseline | 45.4 | 54.9 | 3.81 / 3.63 | ~1.5 s / ~1.5 s |
+| Audited CLI | 40.2 | 47.5 | 1.94 / 2.25 | ~1.5 s / ~1.0 s |
+| Actual native Win32 controls + engine, hidden | 46.3 | 50.7 | 2.53 / 2.52 | 1.05 s / 0.84 s |
+
+Throughput varied across sequential live-network runs; these are not a controlled
+claim of a throughput increase. The audited CLI used less CPU while additionally
+verifying disk contents. Native API response p95 was 17.9 ms TLS / 13.7 ms plain.
+`--ui-background` is the isolated native QA mode: it creates real controls and
+runs their refresh loop but suppresses visible windows, tray and event dialogs.
+Visible-window painting/interaction is not covered by this performance test.
+### Final release verification
+
+The final runtime commit passed **156 workspace tests** (30 native, 98 core,
+14 server, 14 web). Hidden native audit: 516 captures across 96/120/144/192 DPI,
+zero layout warnings. Native control/scroll/divider smoke passed at 96/192 DPI.
+Production WASM rendered with authenticated API access, bundled font licenses,
+no audit hooks and no JavaScript errors. The silent isolated installer check
+passed install, update, launch/screenshot, uninstall and user-data preservation.
+The Linux image passed the CI Compose/container smoke check.
+
+Final-runtime live-server measurements (same 500 MiB file, 20 connections):
+
+| Frontend / host | TLS MB/s | Plain MB/s | TLS / plain CPU seconds | First payload TLS / plain |
+|---|---:|---:|---:|---:|
+| Hidden native Win32 / Windows i7-14700KF | 46.1 | 47.4 | 3.88 / 3.39 | 1.10 / 0.83 s |
+| Headless server + web / same Windows PC | 41.7 | 48.1 | 4.00 / 3.95 | 0.99 / 0.80 s |
+| Docker + web / Linux Intel N100 | 56.8 | 51.5 | 6.35 / 5.19 | 1.00 / 0.73 s |
+
+All six final runs completed and produced SHA-256
+`c663d350e925c53a812d71e93d8255a2e54798a69d3c6cdc791d4b3d83d2e0d3`.
+The web browser ran headlessly on Windows during both server comparisons.
+Docker API response p95 was 17.9/17.2 ms; browser CPU time was 1.47/1.00 s.
+Docker cgroup peak memory includes filesystem page cache (611/1129 MiB across
+successive downloads), so it is not comparable to process RSS. Windows native
+peak RSS was 38.0/33.7 MiB and headless server RSS 32.8/24.5 MiB.
+
+These measurements establish comparable download performance and identical
+payloads, not exact throughput equality across different hardware or live-network
+runs. There was no observed frontend throughput bottleneck. The initial CLI CPU
+improvement was not uniform across final GUI/server runs; do not generalize it
+into a guaranteed CPU reduction. Tests use isolated output folders, with no
+production queue changes or visible UI interaction.
+
