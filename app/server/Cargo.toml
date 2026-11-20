@@ -1,6 +1,6 @@
 [package]
 name = "newsqueue-server"
-version = "1.0.7"
+version = "1.0.8"
 edition = "2021"
 description = "NewsQueue headless server: the engine plus a JSON HTTP API (GUI_PLAN Phase 1)."
 

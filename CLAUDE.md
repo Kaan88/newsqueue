@@ -7,25 +7,25 @@ before changing code. `AGENTS.md` contains the short day-to-day command list;
 
 ## 1. What this software is
 
-NewsQueue is a Windows-only, from-scratch Rust clone of AltBinz 0.48.4 with a
-native Win32 desktop UI. It is a private-use desktop Usenet downloader, not a
-source-code or artwork copy of the original. **AltBinz parity is no longer a
-requirement (2026-11-18):** prefer a sensible app with useful settings over
-measured AltBinz behaviour; the measurements remain as reference. The desktop
-has a classic, Windows 2000-style look: comctl32 v6 controls with visual
-styles turned off (`SetThemeAppProperties(0)`), the Windows 2000 colours for
-this process only (`classic.rs`), a menu bar, light only, per-monitor DPI v2;
-`--screenshot` renders at 96 DPI. The web UI (`app/web`) is egui compiled to
-WebAssembly and drawn as a classic Windows 2000 window too (`web/src/skin.rs`
-widgets, `web/src/theme.rs` palette and drawn icons, bundled DejaVu Sans
-fonts, light and dark colours); **the web UI must stay egui, never
-hand-written HTML.** The parity target is AltBinz 0.48.4; NewsQueue itself uses its own
-versioning.
+NewsQueue is a private-use Usenet downloader with a shared Rust engine, native
+Win32 desktop, Rust server/Docker deployment and egui/WASM web UI. It began as
+a from-scratch AltBinz 0.48.4 clone, not a source-code or artwork copy.
+**AltBinz parity is no longer a requirement.** Measurements remain reference
+evidence and must not be invented or silently changed.
 
-- Current app version: **1.0.7**
-- Current build date: **2026-11-18**
-- Parity target: **AltBinz 0.48.4**
-- Platform: Windows x64
+Product direction (2026-11-20): reliability before appearance. The desktop NZB
+picker failure is fixed locally and verified with isolated imports; keep its regression checks passing before release or a broad restyle.
+The user approved the polished native Compact mockup in `app/native-mockups`.
+The production desktop now uses its common-controls v6 styling and OS-managed
+chrome, with existing commands and saved dimensions retained. The web UI must remain egui and retain its
+layout, with Caustica as default and Classic selectable, separately from
+System/Light/Dark brightness. These theme changes are pending, not shipped.
+See `ROADMAP.md` for active blockers and `CONTINUATION_PLAN.md` for gates.
+
+- Current app version: **1.0.8**
+- Current build date: **2026-11-20**
+- Historical reference: **AltBinz 0.48.4**
+- Platforms: Windows x64 desktop; headless server on Windows/Linux
 - UI: native Win32 (`windows` 0.61), light only; web UI egui 0.37 (WASM)
 - Network: std threads, blocking sockets, no async runtime
 - Out of scope: global/Newznab search (removed 2026-11-18; the toolbar has no
@@ -56,7 +56,7 @@ first three (`default-members`). `NQ_CONFIG` overrides `app_base()`; always pass
 | `app/src/setup.rs` | Modeless Setup: 15 pages from the `FIELDS` table bound to `Settings` JSON, server list + editor, scheduler grid |
 | `app/src/pick.rs` | File/folder pickers (`IFileOpenDialog`/`IFileSaveDialog`) |
 | `app/src/cli.rs` | `--download-test`, `--par2-test`, `--unrar-test`, `--rss-test`, `--rss-download-test`, `--update-test` |
-| `app/src/classic.rs` | Windows 2000 colours for this process (import-table redirect of `GetSysColor`/`GetSysColorBrush`/`FillRect`, menu face) and repainted frames, captions, caption buttons, menu bar, scroll bars, push/spin buttons and client edges (CBT hook, DWM non-client rendering off; `DrawEdge`/`DrawFrameControl` recoloured) |
+| `app/src/classic.rs` | Legacy styling evidence, test-only; no import-table patches or caption emulation in production |
 | `app/src/util.rs` | DPI scaling, fonts, window creation, icons/image lists, `PrintWindow` capture for screenshots |
 | `app/core/src/engine.rs` | `Engine`: queue, settings, history, stats, logs, speed/scheduler timers, download/PAR2/unrar/RSS workers, auto-import, execute hooks, `Engine::tick`; reports to the UI through `Event`s (`take_events`) |
 | `app/core/src/command.rs` | `Command` enum + `Engine::apply`: id-addressed queue edits for every front end |
@@ -99,6 +99,7 @@ Normal runs persist to `app/`:
 - `newsqueue-queue.json`
 - `newsqueue-history.json`
 - `newsqueue-stats.json`
+- `newsqueue-picker-folders.json` (last successful open folder per picker)
 - `log/`
 - `download/`, `nzb/`, `temp/`, `unrar/`
 
@@ -108,7 +109,7 @@ copy credentials or feed/index URLs into source, docs, logs, commits or replies.
 `app/download`, `app/log`, `app/nzb` and `app/temp` are runtime output, not source.
 `*.nqpart` files are resume sidecars. Keep them until a download finishes.
 
-Sample/demo data is used only by `--screenshot` mode. Normal runs must not show
+Sample/demo data is used only by `--screenshot` and `--ui-smoke` modes. Normal runs must not show
 sample queue entries, fake statistics or seeded logs.
 
 `app_base()` returns the project `app/` directory for debug/release binaries
@@ -189,7 +190,7 @@ The engine runs on its own thread, so the window can be hidden normally:
 minimize-to-tray and close-to-tray call `ShowWindow(SW_HIDE)` (which also drops
 the taskbar button) and the tray restores with `SW_SHOW`/`SW_RESTORE`. The tray
 thread owns the icon and message loop and finds the main window by its exact
-title (`NewsQueue 1.0.7`). It uses:
+title (`NewsQueue 1.0.8`). It uses:
 - `Shell_NotifyIconW` for the icon, tooltip and balloons.
 - `WM_TIMER` for the speed tooltip.
 - A shared exit flag for tray Exit (the main window then closes normally).
@@ -291,7 +292,11 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 7. Tests and verification
 
-- 113 unit/integration tests currently pass (78 in core, 23 in desktop, 12 in server);
+Keep test launches hidden/off-screen without desktop focus or control, per the
+user preference in `AGENTS.md`. Run interactive checks only when explicitly
+requested. `app/PICKER_SMOKE.md` records the completed picker interaction run.
+
+- Historical verification (2026-11-18): 113 unit/integration tests passed (78 in core, 23 in desktop, 12 in server);
   `cargo test -p newsqueue-web` runs the web UI's egui test natively (1).
 - `SETTINGS_CHECKLIST.md` lists every `Settings` field, its Setup page and
   the code that reads it; regenerate/extend it when adding a setting.
@@ -328,7 +333,7 @@ you intend to format; do not claim the check passed unless it was run.
 
 ## 8. Versioning, packaging and releases
 
-NewsQueue uses independent versions. Current version is **1.0.7** (1.0.2 was the first release that can self-update).
+NewsQueue uses independent versions. Current version is **1.0.8** (1.0.2 was the first release that can self-update).
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
 `v1.0.1`, which adds content-based naming for obfuscated posts. There is no
 `Version?` and a timer (`check_version_minutes`, 0 = never) check GitHub
@@ -384,78 +389,36 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 
 ## 9. Visual/UI conventions
 
-- Classic look: comctl32 v6 controls (manifest `app/newsqueue.manifest`,
-  embedded by `build.rs` with `app.rc`) with visual styles off
-  (`SetThemeAppProperties(0)` in `main()`), so controls, frames, scroll bars
-  and the menu bar draw 3D bevels from the system colours; theme APIs
-  (`OpenThemeData`) return null, so custom draw must not rely on them.
-  `classic::install` redirects `GetSysColor`, `GetSysColorBrush` and
-  `FillRect` (for `COLOR_x + 1` brushes) in the import tables of this exe and
-  the loaded modules to the Windows 2000 "Windows Standard" scheme (face
-  D4D0C8, selection 0A246A), then makes comctl32 re-read its cached colours.
-  This is process-local: never call `SetSysColors`. user32 draws frames,
-  caption buttons and window scroll bars with the system colours, so
-  `classic.rs` paints them again: `classic::hook_captions` (a thread
-  `WH_CBT` hook) turns DWM's non-client rendering off
-  (`DWMWA_NCRENDERING_POLICY`) for every top-level window with a caption
-  and subclasses it; `caption_proc` paints the Windows 2000 frame, gradient
-  caption (navy to light blue, grey when inactive, bold white title) and
-  raised caption buttons with Marlett glyphs, and tracks button presses
-  itself (`track_caption_button`). The menu bar's top-level items are
-  owner-drawn (`face_menus`): black text even when inactive, thin
-  raised/sunken edges instead of the flat blue highlight; they keep their
-  strings for Alt+letter. ListView/ListBox/Edit/ComboLBox controls are
-  subclassed from the same hook and their scroll bars repainted
-  (dithered track, raised thumb and arrows) after non-client paints and
-  after `SetScrollInfo`/`SetScrollPos`/`ShowScrollBar`/`EnableScrollBar`,
-  which are redirected in the import tables. Push buttons and up-down
-  arrows are painted in full (`button_proc`, `spin_proc`: raised face,
-  black frame on the default button, pushed state, embossed when
-  disabled); windows with `WS_EX_CLIENTEDGE` get a 2 px sunken edge
-  (`edge_proc`). `DrawEdge` and `DrawFrameControl` (check boxes, radio
-  buttons, group boxes, combo buttons) are redirected too: the original
-  draws into a DIB and its system colours are swapped for the classic
-  ones (`recolor`). `classic::FORCE_ACTIVE` paints
-  captions active in screenshot mode. Segoe UI, light only (no
-  dark mode). Per-monitor DPI v2; sizes are written at 96 DPI and scaled with
-  `util::s()`. The main window has a menu bar (File, Queue, View, Tools,
-  Help; `menu_bar`/`update_menu` in `main.rs`) besides the toolbars; Ctrl+O
-  imports an NZB, Ctrl+S opens Setup.
-- Main toolbar: 32 px icons with text, buttons at least 55x53 and autosized for
-  longer labels; queue toolbar 16 px icon-only with tooltips; status bar with
-  nine panes (limit, speed, sparkline, remaining, ETA, total, free, state,
-  toast).
-- Queue: owner-data ListView; collections with an expand glyph and indented
-  file rows; a classic sunken progress bar custom-drawn in the Status column
-  (`classic_progress`: highlight colour, orange paused, red error; finished
-  rows show gray text); the downloading collection in bold.
-  Columns follow `column_visible`/`column_widths` (Columns dialog).
-- Dialogs use the `form.rs` helpers on the face colour (`COLOR_BTNFACE`).
-  Dialogs have no `WS_CLIPCHILDREN`: group boxes rely on the parent painting
-  behind them. Dark gray notes (`form::note`, 505050, not the disabled
-  gray) explain settings; `form::set_default` frames a default button
-  that is not OK. Keep Setup labels
-  short enough for the 214 px label column.
-- Keep icons drawn, not copied from the original artwork.
-- Screenshot mode (`--screenshot`) shows sample data
-  (`newsqueue_core::engine::showcase_engine`, also used by
-  `newsqueue-server --demo`, which then does not tick) with `C:\NewsQueue`
-  paths, a sample server at `news.example.net`, demo connections and speed
-  history. `NQ_DEMO_TAB` (par2/log/rss), `NQ_DEMO_DIALOG` (see
-  `dialogs::demo`) and `NQ_DEMO_SETUP_PAGE` (0-14) pick what is captured.
-- The web UI (egui) is a classic desktop window: menu bar, toolbar with a
-  gripper, tabs (Download queue, History, PAR2, Log, RSS), sunken list views
-  with resizable headers (`skin::Columns`, widths kept in localStorage),
-  classic scroll bars (`skin::scroll_view`: arrows that repeat, a track
-  that pages, a raised thumb; egui's own bars are hidden), status bar panes
-  and modal dialogs with a gradient caption
-  (`skin::dialog`; buttons right to left, Cancel added before OK). Options is
-  a modal property sheet (`settings.rs`). Use the `skin.rs` widgets, never
-  stock egui ones; colours are functions with a light and a dark value
-  (View > Dark colors; until that is used, the browser's
-  `prefers-color-scheme`). Below 720 points wide it switches to a phone
-  layout.
-  Try it with `.claude/launch.json` `web-demo` (`newsqueue-server --demo`).
+The approved desktop reference is the polished **Compact** Win32 mockup in
+`app/native-mockups`. Production uses actual common controls v6, system fonts,
+OS-managed frames/captions/menus and visual styles. It does not install the old
+`classic.rs` process-wide import patches or caption/control subclasses.
+
+- Main toolbar: 30 px drawn icons, 55x46 minimum/autosized text buttons;
+  secondary toolbar: 16 px icons, 23x22 buttons. Preserve commands/tooltips.
+- Tab pages paint a continuous system button-face background, including filter
+  labels and command strips. Edits retain native white surfaces and borders.
+- Queue and auxiliary tables use native gridlines, headers, selection and
+  scrollbars. Queue progress uses the OS progress theme (green/amber/error),
+  with plain text for completed and zero-progress states. Keep row selection,
+  expansion, engine actions and saved column/panel dimensions functional.
+- Setup retains its 15 real pages and settings bindings. Dialogs use `form.rs`
+  and native buttons, checkboxes, combos, inputs and non-client chrome.
+- Existing saved queue column widths and connection-panel height are respected;
+  the mockup's demonstration data/dimensions do not overwrite user settings.
+- `--screenshot` renders sample data off-screen with an unshown owner (no taskbar
+  entry or activation). It starts neither the engine thread nor tray. Use
+  `NQ_DEMO_TAB`, `NQ_DEMO_DIALOG`, `NQ_DEMO_SETUP_PAGE` to choose the target;
+  `NQ_DPI` can force layout scales for captures, defaulting to 96.
+- `--ui-smoke` runs production window/control/command checks against the sample
+  engine, off-screen, and exits. It does not inject input, connect or persist.
+  Suppress the debug console with `Start-Process -WindowStyle Hidden`.
+- Keep existing goldens as historical evidence until an intentional baseline
+  update. See `app/NATIVE_COMPACT.md` for current verification and limitations.
+- The web UI remains egui/WASM. Its current Classic skin stays separate from
+  native desktop styling; Caustica + Classic theme work remains pending.
+- The requested Qt6 version is a separate experiment under `app/qt6-mockup`,
+  not a replacement for the Rust engine, production Win32 frontend or egui web.
 
 ## 10. Known gotchas
 
@@ -510,39 +473,12 @@ Upload the built files exactly as named on disk (`NewsQueue-<version>.zip`,
 
 ## 11. Current roadmap state and blockers
 
-Done: downloader, PAR2 core chain, unrar options and password prompt, RSS,
-real statistics/history, version check/self-update,
-tray, shutdown, portable packaging and installer.
-Also done 2026-11-18: on-demand PAR2, 7z/ZIP, hopeless-job abort + STAT
-pre-check, direct unpack, duplicate check, retry from history, webhook/ntfy
-notifications, per-server quota/retention, pattern-based move, the server
-API follow-ups (SSE, settings/history/log, NZB by URL, login cookie, Ctrl+C
-save, Docker files), the Inno Setup 7 installer and the settings checklist.
-GUI_PLAN is done (2026-11-18): the egui web UI, the native Win32 desktop
-(Phase 2) and Web access from the desktop.
-
-Not done / pending:
-
-- Optional code signing and shortcut polish.
-- Not tried here: a real self-update round trip from an installed 1.0.5 copy
-  to an Inno setup. The Docker image is built and checked on a separate Debian
-  Docker host with `app/docker-smoke.sh` (passed 2026-11-18 on the native-desktop
-  commit).
-
-Blocked on user-supplied data:
-
-- A currently available release with a valid PAR2 set for live repair validation.
-- A second Usenet server account for live failover.
-
-Live check on 2026-11-18 (single server, after the CRC and failover changes):
-`Love.Under.the.Mistletoe` (1.21 GB, 5 files) downloaded with 0 missing articles
-and PAR2 verified it clean. `Civilization.IV` (1.63 GB, 40 files, `.rar`/`.rNN`)
-downloaded with 0 missing articles; PAR2 reported damage and repaired it, then
-UnRAR extracted `rld-civ4.iso` (1.45 GB) without errors. The "repair" was not
-damage: a verify-only run on a fresh download shows all 2270 RAR/SFV data
-blocks intact and only `reloaded.nfo` missing. The NZB's 40 files do not include
-that NFO, but the PAR2 set covers it, so PAR2 rebuilt it from one recovery
-block. The downloader output was byte-exact.
+`ROADMAP.md` is the active source of priorities and blockers. Historical release
+and test evidence is retained there and in `GUI_PLAN.md`; it does not establish
+that current desktop or web interactions pass. The local NZB picker fix and its
+verification are recorded in `app/PICKER_SMOKE.md`; broader capability and
+release gates remain. Do not publish or install over the user's app as part of
+diagnostic work.
 
 ## 12. Where to start for common changes
 
@@ -560,7 +496,10 @@ block. The downloader output was byte-exact.
 - Screenshot/UI change: update `main.rs`/`dialogs.rs`/`setup.rs`, run
   `screenshots.ps1`, inspect `shots/golden/` for regressions.
 
-Before finishing any task: run the relevant focused test(s), then `cargo test`,
-then `cargo run -- --screenshot shots/now.png`. For tray/installer/post-processing
-changes, also run the corresponding script. Report exact evidence rather than
-claiming success.
+Verification should match the change: focused tests for affected behavior;
+workspace tests and native build for integration, plus a real WASM build for
+web/shared API changes; isolated interactions and inspected screenshots for UI
+changes. Release checks include packaging, installer, applicable tray/download/
+shutdown scripts and Docker smoke on the Linux host. Do not rebuild installers
+or overwrite goldens for routine iteration. Documentation-only edits need a
+diff/content review, not application tests. Report exact evidence and gaps.

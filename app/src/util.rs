@@ -43,6 +43,16 @@ macro_rules! sty {
     ($($x:expr),* $(,)?) => { 0u32 $(| $crate::util::U::u($x))* };
 }
 
+/// Render a test window entirely outside the virtual desktop without activation.
+pub fn show_offscreen(window: HWND) {
+    unsafe {
+        let x = GetSystemMetrics(SM_XVIRTUALSCREEN) - 8192;
+        let y = GetSystemMetrics(SM_YVIRTUALSCREEN) - 8192;
+        let _ = SetWindowPos(window, None, x, y, 0, 0,
+            SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    }
+}
+
 pub fn s(v: i32) -> i32 {
     ((v as i64 * DPI.load(Relaxed) as i64 + 48) / 96) as i32
 }

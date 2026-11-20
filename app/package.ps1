@@ -1,12 +1,16 @@
 # Build a self-contained portable NewsQueue folder under app/dist/.
 $ErrorActionPreference = "Stop"
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.7'
+$version = '1.0.8'
 Push-Location $root
 try {
-    cargo build --release
+    cargo build --release --locked --offline
+    if ($LASTEXITCODE -ne 0) { throw "Release build failed: $LASTEXITCODE" }
     $dist = Join-Path $root "dist\NewsQueue-$version"
-    Remove-Item $dist -Recurse -Force -ErrorAction SilentlyContinue
+    $dist = [IO.Path]::GetFullPath($dist)
+    $expected = [IO.Path]::GetFullPath((Join-Path $root "dist")) + [IO.Path]::DirectorySeparatorChar
+    if (-not $dist.StartsWith($expected, [StringComparison]::OrdinalIgnoreCase)) { throw "Invalid package path: $dist" }
+    Remove-Item -LiteralPath $dist -Recurse -Force -ErrorAction SilentlyContinue
     New-Item -ItemType Directory -Force $dist | Out-Null
     Copy-Item "target\release\newsqueue.exe" $dist
     Copy-Item "tools" (Join-Path $dist "tools") -Recurse

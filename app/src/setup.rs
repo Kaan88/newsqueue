@@ -355,9 +355,9 @@ fn field(p: HWND, id: i32, fl: &F, value: &Value, y: i32) -> i32 {
             y + 24
         }
         K::Note => {
-            let lines = 1 + fl.label.len() as i32 / 80;
-            form::note(p, fl.label, lx, y + 6, PANEL_W - 10, 16 * lines);
-            y + 12 + 16 * lines
+            let height = form::text_height(fl.label, PANEL_W-10);
+            form::note(p, fl.label, lx, y + 6, PANEL_W - 10, height);
+            y + 12 + height
         }
         K::Text | K::Password => {
             form::label(p, fl.label, lx, y, cx - 6);
@@ -697,7 +697,7 @@ fn scheduler_page(p: HWND, y: i32) {
     form::note(p, "Each row is a day and each cell half an hour. Green slots allow downloading; click or drag to change them.", 0, y + 4, PANEL_W - 10, 32);
     register_grid();
     let h = 7 * CELL_H + 26;
-    mk("NQSchedGrid", "", form::CHILD, 0, 0, y + 42, GRID_LEFT + CELL_W * SCHEDULE_SLOTS as i32 + 4, h, p, ID_GRID);
+    form::reg(p, ID_GRID, mk("NQSchedGrid", "", form::CHILD, 0, 0, y + 42, GRID_LEFT + CELL_W * SCHEDULE_SLOTS as i32 + 4, h, p, ID_GRID));
     let gy = y + 42 + h + 10;
     form::button(p, ID_GRID_ALL, "Allow all", 0, gy, 90);
     form::button(p, ID_GRID_NONE, "Block all", 96, gy, 90);

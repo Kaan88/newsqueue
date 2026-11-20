@@ -7,6 +7,8 @@
 /app/newsqueue-queue.json
 /app/newsqueue-history.json
 /app/newsqueue-stats.json
+/app/newsqueue-picker-folders.json
+/app/newsqueue-picker-folders.json.tmp
 /app/download/
 /app/log/
 /app/nzb/

@@ -1,8 +1,17 @@
 # GUI plan: Windows desktop and Docker web
 
-Status: **done (2026-11-18)**. All three phases are implemented; the
-sections below keep the plan with a status line each. This replaced the
-earlier Win32-only plan.
+Current status (2026-11-20): the architecture below is implemented, but UI
+acceptance is reopened. `ROADMAP.md` owns the active backlog and
+`CONTINUATION_PLAN.md` defines acceptance gates. Desktop NZB import is
+fixed locally with an isolated interaction run (`app/PICKER_SMOKE.md`); broader
+UI acceptance and release checks remain. The user-approved Compact
+native reference is now applied locally: common controls v6 and OS chrome,
+without the former global theme disabling or process-wide styling hooks. Web stays egui
+with the existing layout, Caustica default and selectable Classic themes.
+
+The phases, reviews and completion claims below are historical records from
+2026-11-18, not evidence that current interactions pass. Preserve the shared
+engine/server/front-end boundaries while implementing the continuation plan.
 
 ## Goal
 

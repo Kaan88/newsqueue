@@ -292,7 +292,7 @@ thread_local! { static STATS_TAB: RefCell<usize> = const { RefCell::new(0) }; }
 
 fn build_stats(owner: HWND, tab_index: usize) -> HWND {
     let d = form::create(Some(owner), "Statistics & history", 760, 500, false);
-    let tab = mk("SysTabControl32", "", form::CHILD | WS_CLIPSIBLINGS.0, 0, 10, 10, 740, 440, d, ID_STATS_TAB);
+    let tab = form::reg(d, ID_STATS_TAB, mk("SysTabControl32", "", form::CHILD | WS_CLIPSIBLINGS.0, 0, 10, 10, 740, 440, d, ID_STATS_TAB));
     for (i, t) in ["Daily transfer", "Monthly transfer", "Speed graph", "Download history", "Misc. stats"].iter().enumerate() {
         let z = wz(t);
         let mut it = TCITEMW::default();
@@ -301,19 +301,20 @@ fn build_stats(owner: HWND, tab_index: usize) -> HWND {
         send(tab, TCM_INSERTITEMW, i, &it as *const _ as isize);
     }
     register_chart();
-    let chart = mk("NQChart", "", form::CHILD, WS_EX_CLIENTEDGE.0, 22, 44, 716, 394, d, ID_STATS_CHART);
+    let pane=form::tab_panel(tab,12,34,716,394);
+    let chart = form::reg(pane, ID_STATS_CHART, mk("NQChart", "", form::CHILD, WS_EX_CLIENTEDGE.0, 0, 0, 716, 394, pane, ID_STATS_CHART));
     let _ = chart;
-    form::label(d, "Search", 22, 44, 50);
-    form::edit(d, ID_STATS_SEARCH, "", 74, 44, 240, 0);
-    form::button(d, ID_STATS_RETRY, "Retry", 658, 43, 80);
-    let lv = form::listview(d, ID_STATS_HIST, &[("Name", 330, false), ("Date", 130, false), ("Size", 90, true), ("Status", 140, false)], 22, 76, 716, 362, 0);
+    form::label(pane, "Search", 0, 0, 50);
+    form::edit(pane, ID_STATS_SEARCH, "", 52, 0, 240, 0);
+    form::button(pane, ID_STATS_RETRY, "Retry", 636, 0, 80);
+    let lv = form::listview(pane, ID_STATS_HIST, &[("Name", 330, false), ("Date", 130, false), ("Size", 90, true), ("Status", 140, false)], 0, 32, 716, 362, 0);
     let _ = lv;
-    form::label_id(d, ID_STATS_MISC, "", 30, 52, 700, 300);
+    form::label_id(pane, ID_STATS_MISC, "", 8, 8, 700, 300);
     form::button(d, IDOK_, "Close", 670, 462, 80);
     // Siblings above the tab control.
     for id in [ID_STATS_CHART, ID_STATS_HIST, ID_STATS_MISC, ID_STATS_SEARCH, ID_STATS_RETRY] {
         unsafe {
-            let _ = SetWindowPos(form::item(d, id), Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            let _ = SetWindowPos(form::item(d, id), Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
     }
     unsafe {
@@ -842,14 +843,16 @@ fn prompt(owner: HWND, title: &str, intro: &str, value: &str, hint: &str, passwo
 
 fn build_prompt(owner: HWND, title: &str, intro: &str, value: &str, hint: &str, password: bool) -> HWND {
     let has_hint = !hint.is_empty();
-    let d = form::create(Some(owner), title, 420, if has_hint { 150 } else { 128 }, false);
-    form::label(d, intro, 14, 8, 392);
-    let e = form::edit(d, 10, value, 14, 34, 392, if password { ES_PASSWORD as u32 } else { 0 });
+    let intro_height=form::text_height(intro,392);
+    let edit_y=18+intro_height;
+    let hint_height=form::text_height(hint,392).max(18);
+    let y=if has_hint {edit_y+28+hint_height+8} else {edit_y+32};
+    let d = form::create(Some(owner), title, 420, (y+54).max(if has_hint {150} else {128}), false);
+    form::label_id(d, 20, intro, 14, 12, 392, intro_height);
+    let e = form::edit(d, 10, value, 14, edit_y, 392, if password { ES_PASSWORD as u32 } else { 0 });
     send(e, EM_SETSEL, 0, -1);
-    let mut y = 66;
     if has_hint {
-        form::note(d, hint, 14, 62, 392, 18);
-        y = 88;
+        form::note(d, hint, 14, edit_y+28, 392, hint_height);
     }
     form::hline(d, 14, y, 392);
     form::button(d, IDOK_, "OK", 240, y + 12, 80);
@@ -875,7 +878,6 @@ pub fn execute(owner: HWND, current: &str) -> Option<String> {
 /// The archive password prompt; `asked` = the engine needs it to continue.
 pub fn password(owner: HWND, subject: &str, asked: bool) -> Option<String> {
     let intro = if asked { format!("{subject} is password protected.") } else { format!("Archive password for {subject}") };
-    let intro: String = intro.chars().take(70).collect();
     prompt(owner, "Enter password", &intro, "", "", true)
 }
 
@@ -884,16 +886,35 @@ pub fn password(owner: HWND, subject: &str, asked: bool) -> Option<String> {
 fn build_rss_feeds(owner: HWND) -> HWND {
     let d = form::create(Some(owner), "RSS feeds", 560, 470, true);
     let (urls, filters) = with_engine(|e| (e.settings.rss_urls.join("\n"), e.settings.rss_filters.clone()));
-    form::label(d, "Feed URLs, one per line. API keys stay in the local settings file.", 14, 8, 532);
+    form::label_id(d, 20, "Feed URLs, one per line. API keys stay in the local settings file.", 14, 12, 532, 16);
     form::memo(d, 10, &urls, 14, 32, 532, 130);
-    form::label(d, "Autodownload filters (empty: only list the items)", 14, 174, 400);
-    form::note(d, "pattern | A[P]  or  pattern | D.  The last matching line wins; P adds the item paused.", 14, 196, 532, 18);
+    form::label_id(d, 21, "Autodownload filters (empty: only list the items)", 14, 178, 532, 16);
+    form::note_id(d, 22, "pattern | A[P]  or  pattern | D.  The last matching line wins; P adds the item paused.", 14, 196, 532, 18);
     form::memo(d, 11, &filters, 14, 218, 532, 190);
-    form::hline(d, 14, 420, 532);
+    form::label_id(d, 23, "", 14, 420, 532, 2);
+    unsafe { SetWindowLongW(form::item(d,23),GWL_STYLE,(form::CHILD|form::SS_ETCHEDHORZ) as i32); }
     form::button(d, 12, "Filter help", 14, 432, 90);
     form::button(d, IDOK_, "Save", 380, 432, 80);
     form::button(d, IDCANCEL_, "Cancel", 466, 432, 80);
+    form::resize_layout(d, 560, 470, layout_rss_feeds);
     d
+}
+
+fn layout_rss_feeds(d: HWND, w: i32, h: i32) {
+    let extra=(h-s(470)).max(0);
+    let upper=extra/3;
+    let place=|id,x,y,width: i32,height: i32| unsafe {
+        let _=MoveWindow(form::item(d,id),x,y,width.max(1),height.max(1),true);
+    };
+    place(20,s(14),s(12),w-s(28),s(16));
+    place(10,s(14),s(32),w-s(28),s(130)+upper);
+    place(21,s(14),s(178)+upper,w-s(28),s(16));
+    place(22,s(14),s(196)+upper,w-s(28),s(18));
+    place(11,s(14),s(218)+upper,w-s(28),s(190)+extra-upper);
+    place(23,s(14),h-s(50),w-s(28),s(2));
+    place(12,s(14),h-s(38),s(90),s(26));
+    place(IDOK_,w-s(180),h-s(38),s(80),s(26));
+    place(IDCANCEL_,w-s(94),h-s(38),s(80),s(26));
 }
 
 pub fn rss_feeds(owner: HWND) {
@@ -934,12 +955,66 @@ pub fn filter_help(owner: HWND) {
 
 // ------------------------------------------------------- screenshot mode --
 
+pub(crate) fn audit_smoke(main: HWND) {
+    let d=build_stats(main,0);
+    show_offscreen(d);
+    for index in 0..5 {
+        stats_show(d,index);
+        assert_eq!(send(form::item(d,ID_STATS_TAB),TCM_GETCURSEL,0,0),index as isize);
+        for (id,visible) in [(ID_STATS_CHART,index<=2),(ID_STATS_HIST,index==3),(ID_STATS_SEARCH,index==3),(ID_STATS_MISC,index==4)] {
+            let control=form::item(d,id);
+            assert!(!control.is_invalid());
+            assert_eq!(unsafe {IsWindowVisible(control).as_bool()},visible);
+        }
+    }
+    unsafe {DestroyWindow(d).unwrap();}
+    let d=build_rss_feeds(main);
+    show_offscreen(d);
+    unsafe {
+        SetWindowPos(d,None,0,0,s(800),s(650),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE).unwrap();
+        let mut client=RECT::default();let mut edit=RECT::default();
+        GetClientRect(d,&mut client).unwrap();GetWindowRect(form::item(d,10),&mut edit).unwrap();
+        assert_eq!(edit.right-edit.left,client.right-s(28));
+        let mut minimum=MINMAXINFO::default();
+        send(d,WM_GETMINMAXINFO,0,&mut minimum as *mut _ as isize);
+        assert!(minimum.ptMinTrackSize.x>=s(560));
+        DestroyWindow(d).unwrap();
+    }
+}
+
+/// Additional state variants for the isolated visual audit. Never applies actions.
+pub(crate) fn audit_variant(main: HWND, index: usize) -> Option<(String, HWND)> {
+    Some(match index {
+        0..=3 => (format!("stats-{}", index+1), build_stats(main,index+1)),
+        4..=13 => {
+            let tag=(index-4) as u8;
+            with_engine(|e| e.speed_limit_tag=(tag>0).then_some(tag));
+            (format!("speed-{tag}"),build_speed_limit(main))
+        }
+        14..=17 => {
+            let i=index-14;
+            ui(|u| {u.snap.settings["shutdown_method"]=SHUTDOWN_METHODS[i].into();u.countdown.armed=false;u.countdown.until=None;});
+            (format!("shutdown-idle-{i}"),build_shutdown(main))
+        }
+        18 => {
+            with_engine(|e| e.pause_until=Some(Instant::now()+Duration::from_secs(615)));
+            ("pause-active".into(),build_pause_for(main))
+        }
+        19 => ("password-long".into(),build_prompt(main,"Enter password","Very.Long.Collection.Name.İstanbul.日本語.with.many.parts.and.a.long.archive.name is password protected.","","",true)),
+        20 => {
+            let d=build_rss_feeds(main);
+            unsafe {let _=SetWindowPos(d,None,0,0,s(800),s(650),SWP_NOMOVE|SWP_NOZORDER|SWP_NOACTIVATE);}
+            ("rss-feeds-large".into(),d)
+        }
+        _ => return None,
+    })
+}
 /// Opens a dialog without its loop for `--screenshot` (NQ_DEMO_DIALOG).
 pub fn demo(name: &str, main: HWND) -> Option<HWND> {
     let d = match name {
         "setup" => crate::setup::build(main, std::env::var("NQ_DEMO_SETUP_PAGE").ok().and_then(|p| p.parse().ok()).unwrap_or(0)),
         "server" => crate::setup::build_server(main, &with_engine(|e| e.settings.servers[0].clone()), true),
-        "stats" => build_stats(main, 0),
+        "stats" => build_stats(main, std::env::var("NQ_DEMO_STATS_TAB").ok().and_then(|v|v.parse::<usize>().ok()).unwrap_or(0).min(4)),
         "notes" => build_notes(main),
         "about" => build_about(main),
         "columns" => build_columns(main),
@@ -964,9 +1039,7 @@ pub fn demo(name: &str, main: HWND) -> Option<HWND> {
         "rss-feeds" => build_rss_feeds(main),
         _ => return None,
     };
-    unsafe {
-        let _ = ShowWindow(d, SW_SHOWNOACTIVATE);
-        let _ = UpdateWindow(d);
-    }
+    show_offscreen(d);
+    unsafe { let _ = UpdateWindow(d); }
     Some(d)
 }

@@ -6,7 +6,7 @@ param(
 # from the portable folder package.ps1 makes.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.7'
+$version = '1.0.8'
 Push-Location $root
 try {
     if (-not $SkipPackage) {

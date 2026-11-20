@@ -1,10 +1,79 @@
-# NewsQueue parity roadmap
+# NewsQueue roadmap
 
-Goal: **behavioural parity** with AltBinz 0.48.4 — same workflow, settings and
-results, implemented from the measured evidence in `app/MECHANICS.md`. This is
-not a source-code or artwork copy.
+## Release 1.0.8 (2026-11-20)
 
-## Current status (2026-11-18)
+- Native Compact desktop with the completed dialog/layout polish pass.
+- List scrolling defers UI refresh work through native scrollbar tracking and wheel bursts; selection restoration preserves the viewport. Log updates follow the tail only when already at the bottom.
+- Open dialogs remember the last successfully opened folder per picker across restarts. Cancel leaves it unchanged; missing folders fall back to Windows defaults.
+- 119 workspace tests passed, including real shell-dialog factories and folder persistence. Hidden scrolling tests passed at 96/192 DPI with 500-row fixtures across all five lists. See `app/UI_POLISH_AUDIT.md` for exact visual coverage and limits.
+
+## Active priorities (2026-11-20)
+
+Keep the shared Rust engine, server/Docker deployment, native Win32 desktop and
+egui/WASM web UI. AltBinz parity is no longer a product requirement. Detailed
+acceptance gates are in `CONTINUATION_PLAN.md`.
+
+1. **Fixed locally: desktop NZB import.** The process-wide disabled-theme policy
+   made Windows' file-dialog factory fail with `0x80040111`. `pick.rs` now enables
+   themes for each picker lifetime, restores them on return and exposes errors
+   separately from cancellation. Real toolbar/menu/shortcut imports, multiselect,
+   add-paused, cancel, invalid input, reload, export and folder selection passed.
+   Keep the regression checks passing; this is not an installed release.
+2. Establish a dated desktop/web capability matrix with observed results and
+   named gaps; preserve historical test evidence without treating it as current.
+3. Add focused/integration/UI/release verification scopes and CI.
+4. Restore Caustica as the default web theme, with Classic selectable and
+   independent System/Light/Dark preferences. Compile WASM and inspect both themes
+   in the browser; preserve the current layout and shared interactions.
+5. **Applied locally: approved native Compact desktop.** OS chrome and native
+   themed controls replace the old styling hooks. Background UI smoke and
+   off-screen captures pass; manual keyboard/tray/per-monitor transition checks
+   remain unverified under the no-desktop-control preference.
+6. **Requested side experiment:** Qt6 version closely matching Compact, isolated
+   from the production frontend and engine. See `app/qt6-mockup`.
+
+### Current verification (2026-11-20)
+
+- Native polish audit: optimized `app/target/newsqueue-polished.exe` passed
+  516 hidden captures (129 cases × four DPI settings), with zero measured
+  control-bound/static-text warnings, and expanded smoke at each DPI. Fixed
+  Statistics tab registration/backgrounds, narrow toolbar/RSS layouts,
+  resizable RSS editor, wrapped notes/prompts and stale dialog color tags.
+  Exact coverage and remaining limits: `app/UI_POLISH_AUDIT.md`.
+
+- `cargo test --locked --offline --workspace`: 118 passed (25 desktop, 80 core,
+  12 server, 1 web). Initial sandbox loopback tests were denied (10013); the
+  permitted rerun passed. `RUSTC_WRAPPER` was cleared only in each build process.
+- The new regression activates real Windows open/save COM factories under the
+  Classic theme policy without showing UI, and checks policy restoration on
+  success/error. Another test distinguishes cancellation from failure.
+- Isolated interaction and persisted-artifact checks passed; see
+  `app/PICKER_SMOKE.md` and `app/picker-smoke.ps1`. The final test process exited 0.
+  Startup connection, updates and Web access were disabled with no configured
+  servers or feeds. No live Usenet download was performed.
+- The initial desktop launcher returned the installed-app path unexpectedly.
+  Direct launch of the exact local executable with an explicit isolated
+  `--config` resolved that problem. No input was sent to the installed app.
+- The normal debug output is locked by an existing background process. The fix
+  was built using `cargo rustc ... -- -o target/import-audit/fixed.exe`, leaving
+  the existing process alone. The installed app has not been replaced.
+- Subsequent agent work must use hidden/off-screen launches without taking
+  desktop focus/control. Interactive checks need an explicit user request.
+- Native Compact production verification: 118 workspace tests plus the real
+  off-screen `--ui-smoke` passed; 34 screenshots captured across all Setup
+  pages/dialogs/tabs and forced 96/120/144 DPI queue layouts. See
+  `app/NATIVE_COMPACT.md`. Existing goldens and installed app were not replaced.
+- Remaining gates: broader capability coverage, actual per-monitor transitions,
+  keyboard/tray interaction and other Windows versions, web themes/WASM/browser
+  QA, and release validation.
+
+## Historical release evidence (through 2026-11-18)
+
+Everything below is retained release history, including its old completion
+claims and suggested order. It is not the active backlog or current acceptance
+status. The local fixes and priorities above supersede it.
+
+## Recorded status (2026-11-18)
 
 Self-update confirmed working by the user (1.0.2 → 1.0.3). 1.0.4 is the
 first release built on the core `Engine`. 1.0.5 runs the engine on its own
@@ -30,7 +99,7 @@ resume-all, pause-for, the RSS timer and starting a PAR2 check.
 Core builds and passes its tests on Debian 13 (x86_64) with distro `par2` and
 `unrar`; the unrar destination separator was a Linux bug and is fixed.
 
-Current app version: **1.0.7** (2026-11-18: fixes a 1.0.6 crash when a menu opened; 1.0.6 brought the native Win32 desktop, web UI and Inno Setup installer; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
+Current app version: **1.0.8** (2026-11-20: native Compact polish, responsive scrolling/menus, picker fix and remembered open folders; 1.0.7 fixes a 1.0.6 crash when a menu opened; 1.0.6 brought the native Win32 desktop, web UI and Inno Setup installer; 1.0.2 was the first self-updating release), versioned independently of the AltBinz 0.48.4
 parity target. `v1.0.0` was deleted and rebuilt on 2026-11-04 because its
 binaries corrupted every download; `v1.0.1` supersedes it and adds
 content-based naming for obfuscated posts.

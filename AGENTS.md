@@ -3,12 +3,25 @@
 ## Project
 
 - Read `CLAUDE.md` for the full architecture, verification and release guide, and `ROADMAP.md` for current work and blockers.
-- `app/` is the whole Rust 2021 workspace: the native Win32 desktop app (`newsqueue`, root package), `core` (engine), `server` (JSON API library + headless binary) and `web` (egui web UI for WebAssembly). A from-scratch clone of AltBinz, presented as NewsQueue 1.0.7. The web UI must stay egui.
+- `app/` is the whole Rust 2021 workspace: the native Win32 desktop app (`newsqueue`, root package), `core` (engine), `server` (JSON API library + headless binary) and `web` (egui web UI for WebAssembly). A from-scratch clone of AltBinz, presented as NewsQueue 1.0.8. The web UI must stay egui.
+- Product direction (2026-11-20): reliability first; keep the desktop picker regression and isolated smoke checks passing before release. Desktop reference is the user-approved native Compact mockup (`app/native-mockups`): common controls v6 and OS-managed chrome. The production desktop now uses that styling. Web stays egui, with Caustica default and selectable Classic, independently of System/Light/Dark brightness. See `CONTINUATION_PLAN.md` for acceptance gates. AltBinz parity is no longer a product requirement.
 - `app/MECHANICS.md` records measured constants, formulas and function addresses from the original Delphi binary; `app/mechanics.json` is the machine-checked list. Keep both in sync with `model.rs`, and only mark a value "estimated" after searching the evidence.
 - `capture/`, `investigation.cany/`, `altbinz_original/` and `reference/` are read-only evidence. Harness files (`craft.json`, `feed.json`, `build-activity.log`, `checks/`) are generated; don't edit them. 
 - Ghidra 12.1.4 is installed at `C:\Users\kaank\AppData\Roaming\craft-anything\engines\ghidra\ghidra_12.1.4_PUBLIC`. Use it when the recorded evidence is insufficient to verify a value or behavior; do not guess mechanics.
 
+## Desktop testing preference
+
+- Keep agent-driven test launches hidden/off-screen and do not take desktop focus
+  or control. Use background tests and nonactivating captures. Interactive UI
+  testing requires a fresh explicit user request; do not infer permission from
+  a general implementation task. Deliver runnable mockups for the user to open.
+
 ## Commands (from `app/`)
+
+- Native visual audit: `ui-polish-audit.ps1 -Executable target/newsqueue-polished.exe`
+  runs 129 cases at each of 96/120/144/192 DPI, hidden/off-screen with isolated
+  sample data. See `UI_POLISH_AUDIT.md`. `--ui-audit <output-folder>` is the
+  single-DPI entry point; it never starts the engine/tray or reads real settings.
 
 ```powershell
 cargo build
@@ -17,16 +30,20 @@ cargo run
 cargo run -- --screenshot shots/now.png
 ```
 
+- `--ui-smoke` exercises production native controls/command dispatch with the sample engine, off-screen and without user input, tray, network or persistence. Launch diagnostic binaries with `Start-Process -WindowStyle Hidden` to suppress their debug console.
+- Picker regression: `cargo test --locked --offline -p newsqueue pick::tests` activates the real Windows dialog factories without showing windows. `picker-smoke.ps1` prepares isolated fixtures or verifies completed artifacts; it never launches the app. See `PICKER_SMOKE.md`.
 - Single test: `cargo test speed_limit_uses_decompiled_formula`; also `cargo test unrar`, `cargo test par2`, and `cargo test par2_repair_then_unrar_chain_works`.
-- `--screenshot` captures the native window (or one dialog) with `PrintWindow` at 96 DPI, writes a PNG and exits 0. It uses sample data, not saved state, and starts no engine thread.
+- `--screenshot` captures the native window (or one dialog) off-screen without activation/taskbar presence using `PrintWindow` at 96 DPI, writes a PNG and exits 0. It uses sample data, not saved state, and starts no engine thread.
 - `cargo run -- --unrar-test <folder-with-rar> <dest>` and `cargo run -- --par2-test <folder-with-par2>` exercise post-processing without the UI.
 - `cargo run -- --rss-test` fetches configured feeds; `--rss-download-test` also downloads NZBs accepted by the filters.
 - `powershell -ExecutionPolicy Bypass -File .\tray-verify.ps1` builds nothing; run `cargo build` first and close the debug NewsQueue. It runs in a temporary `NQ_CONFIG` folder and checks the tray icon, speed tooltip, balloon API result, minimize to tray (hidden, no taskbar button), continued engine tick (queue autosave), click-to-restore, close-to-tray and tray Exit.
-- `.\build-installer.ps1` runs `package.ps1`, compiles `installer\newsqueue.iss` with Inno Setup 7 into `dist\NewsQueue-1.0.7-Setup.exe` and writes its SHA256.
-- `.\installer-test.ps1` compiles a test variant of the installer (`NewsQueue Install Test`, own AppId) from `dist\NewsQueue-1.0.7` (run `package.ps1` first), installs it into a temp folder over a simulated IExpress install, checks files/registry/shortcuts/relaunch, launches the installed exe and uninstalls. It never touches a real NewsQueue install.
+- `.\build-installer.ps1` runs `package.ps1`, compiles `installer\newsqueue.iss` with Inno Setup 7 into `dist\NewsQueue-1.0.8-Setup.exe` and writes its SHA256.
+- `.\installer-test.ps1` compiles a test variant of the installer (`NewsQueue Install Test`, own AppId) from `dist\NewsQueue-1.0.8` (run `package.ps1` first), installs it into a temp folder over a simulated IExpress install, checks files/registry/shortcuts/relaunch, launches the installed exe and uninstalls. It never touches a real NewsQueue install.
 - `.\shutdown-verify.ps1` arms the safe `Exit` shutdown path in a debug build, hides the window in the tray and checks the 15-second countdown still exits the app (temporary `NQ_CONFIG`).
 - `.\download-while-tray-verify.ps1` runs a local mock NNTP server, hides the app in the tray, and verifies a download still completes and the payload is correct. It works in a temporary `NQ_CONFIG` folder; `app/*.json` are not touched.
 - Release builds use the Windows GUI subsystem, so they do not open a console. Use the debug build (`cargo run`) for CLI diagnostics and unit tests.
+- `installer-test.ps1 -Hidden` uses silent installers and off-screen installed-app capture; skips the legacy visible wizard/relaunch check.
+- `--ui-scroll-smoke` verifies wheel/scroll messages, timer isolation, selection viewport and log tail behavior using off-screen demo data.
 - `cargo fmt --check` currently fails on existing code. Run `cargo fmt` when formatting; don't claim the check passed unless you ran it.
 
 ## Where things live

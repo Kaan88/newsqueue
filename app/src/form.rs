@@ -48,6 +48,24 @@ thread_local! {
     static GRAY: RefCell<HashSet<isize>> = RefCell::new(HashSet::new());
     static ACCENT: RefCell<HashSet<isize>> = RefCell::new(HashSet::new());
     static MODELESS: RefCell<Vec<HWND>> = const { RefCell::new(Vec::new()) };
+    static RESIZE: RefCell<HashMap<isize, (i32, i32, fn(HWND, i32, i32))>> = RefCell::new(HashMap::new());
+}
+
+/// Register a dialog's minimum client size and layout in physical pixels.
+pub fn resize_layout(d: HWND, width: i32, height: i32, layout: fn(HWND, i32, i32)) {
+    RESIZE.with(|r| r.borrow_mut().insert(d.0 as isize, (width, height, layout)));
+    let mut rc = RECT::default();
+    unsafe { let _ = GetClientRect(d, &mut rc); }
+    layout(d, rc.right, rc.bottom);
+}
+
+pub(crate) fn audit_color_cleanup(owner: HWND) {
+    let before=(GRAY.with(|g|g.borrow().len()),ACCENT.with(|g|g.borrow().len()));
+    let d=create(Some(owner),"Color lifetime check",200,100,false);
+    let n=note(d,"Note",4,4,100,20);
+    accent(n);
+    unsafe {DestroyWindow(d).unwrap();}
+    assert_eq!(before,(GRAY.with(|g|g.borrow().len()),ACCENT.with(|g|g.borrow().len())));
 }
 
 pub fn register_classes() {
@@ -55,6 +73,7 @@ pub fn register_classes() {
         for (name, proc_, bg) in [
             (w!("NQDlg"), Some(dlg_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), GetSysColorBrush(COLOR_BTNFACE)),
             (w!("NQPanel"), Some(panel_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), GetSysColorBrush(COLOR_BTNFACE)),
+            (w!("NQTabPanel"), Some(tab_panel_proc as unsafe extern "system" fn(HWND, u32, WPARAM, LPARAM) -> LRESULT), HBRUSH::default()),
         ] {
             let wc = WNDCLASSEXW {
                 cbSize: std::mem::size_of::<WNDCLASSEXW>() as u32,
@@ -230,6 +249,23 @@ fn focus_first(dlg: HWND) {
 
 unsafe extern "system" fn dlg_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match m {
+        WM_SIZE => {
+            let layout = RESIZE.with(|r| r.borrow().get(&(h.0 as isize)).copied());
+            if let Some((_, _, layout)) = layout {
+                let mut rc=RECT::default();
+                let _=GetClientRect(h,&mut rc);
+                layout(h,rc.right,rc.bottom);
+            }
+            LRESULT(0)
+        }
+        WM_GETMINMAXINFO => {
+            if let Some((w,ht,_))=RESIZE.with(|r| r.borrow().get(&(h.0 as isize)).copied()) {
+                let (w,ht)=outer(GetWindowLongW(h,GWL_STYLE) as u32,GetWindowLongW(h,GWL_EXSTYLE) as u32,w,ht);
+                (*(lp.0 as *mut MINMAXINFO)).ptMinTrackSize=POINT{x:w,y:ht};
+                return LRESULT(0);
+            }
+            DefWindowProcW(h,m,wp,lp)
+        }
         WM_COMMAND => {
             let id = (wp.0 & 0xffff) as i32;
             let code = ((wp.0 >> 16) & 0xffff) as u32;
@@ -259,6 +295,15 @@ unsafe extern "system" fn dlg_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> L
         WM_CTLCOLORSTATIC | WM_CTLCOLORBTN => ctl_color(h, m, wp, lp),
         WM_PRINTCLIENT => print_face(h, wp),
         WM_DESTROY => {
+            // Child HWNDs are reusable: retaining color tags can tint an
+            // unrelated control in a later dialog.
+            unsafe extern "system" fn clear_color(c: HWND, _: LPARAM) -> windows::core::BOOL {
+                GRAY.with(|g| g.borrow_mut().remove(&(c.0 as isize)));
+                ACCENT.with(|g| g.borrow_mut().remove(&(c.0 as isize)));
+                TRUE
+            }
+            let _=EnumChildWindows(Some(h),Some(clear_color),LPARAM(0));
+            RESIZE.with(|r| r.borrow_mut().remove(&(h.0 as isize)));
             MODELESS.with(|l| l.borrow_mut().retain(|x| *x != h));
             CTRLS.with(|c| c.borrow_mut().retain(|k, _| k.0 != h.0 as isize));
             let p = GetWindowLongPtrW(h, GWLP_USERDATA) as *const Data;
@@ -322,9 +367,31 @@ unsafe extern "system" fn panel_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) ->
     }
 }
 
+/// A tab's content area inherits the theme instead of painting a gray patch.
+unsafe extern "system" fn tab_panel_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    match m {
+        WM_ERASEBKGND | WM_PRINTCLIENT => {
+            let _=DrawThemeParentBackground(h,HDC(wp.0 as *mut _),None);
+            LRESULT(1)
+        }
+        WM_CTLCOLORSTATIC => {
+            let dc=HDC(wp.0 as *mut _);
+            let _=DrawThemeParentBackground(HWND(lp.0 as *mut _),dc,None);
+            SetTextColor(dc,COLORREF(GetSysColor(COLOR_BTNTEXT)));
+            SetBkMode(dc,TRANSPARENT);
+            LRESULT(GetStockObject(NULL_BRUSH).0 as isize)
+        }
+        _=>panel_proc(h,m,wp,lp),
+    }
+}
+
+pub fn tab_panel(tab: HWND,x: i32,y: i32,w: i32,h: i32)->HWND {
+    mk("NQTabPanel","",sty!(CHILD,WS_CLIPSIBLINGS),WS_EX_CONTROLPARENT.0,x,y,w,h,tab,0)
+}
+
 // ------------------------------------------------------------ controls ----
 
-fn reg(parent: HWND, id: i32, c: HWND) -> HWND {
+pub(crate) fn reg(parent: HWND, id: i32, c: HWND) -> HWND {
     if id > 2 || id == IDOK_ || id == IDCANCEL_ {
         let root = unsafe { GetAncestor(parent, GA_ROOT) };
         CTRLS.with(|m| m.borrow_mut().insert((root.0 as isize, id), c));
@@ -354,9 +421,27 @@ pub fn heading(p: HWND, t: &str, x: i32, y: i32, wd: i32) -> HWND {
     h
 }
 pub fn note(p: HWND, t: &str, x: i32, y: i32, wd: i32, ht: i32) -> HWND {
-    let n = mk("STATIC", t, CHILD | 0x80, 0, x, y, wd, ht, p, 0);
+    let n = mk("STATIC", t, CHILD | 0x80, 0, x, y, wd, ht.max(text_height(t,wd)), p, 0);
     GRAY.with(|g| g.borrow_mut().insert(n.0 as isize));
     n
+}
+pub fn note_id(p: HWND, id: i32, t: &str, x: i32, y: i32, wd: i32, ht: i32) -> HWND {
+    reg(p,id,note(p,t,x,y,wd,ht))
+}
+
+/// Wrapped label height measured using the same font as the native control.
+pub fn text_height(text: &str, width: i32) -> i32 {
+    if text.is_empty() { return 16; }
+    unsafe {
+        let dc=GetDC(None);
+        let old=SelectObject(dc,font().into());
+        let mut rc=RECT {right:s(width),..Default::default()};
+        let mut text:Vec<u16>=text.encode_utf16().collect();
+        DrawTextW(dc,&mut text,&mut rc,DT_CALCRECT|DT_WORDBREAK|DT_NOPREFIX);
+        SelectObject(dc,old);
+        ReleaseDC(None,dc);
+        ((rc.bottom*96+DPI.load(std::sync::atomic::Ordering::Relaxed) as i32-1)/DPI.load(std::sync::atomic::Ordering::Relaxed) as i32).max(16)
+    }
 }
 pub fn accent(c: HWND) {
     ACCENT.with(|g| g.borrow_mut().insert(c.0 as isize));
@@ -493,6 +578,12 @@ pub fn lv_selected(lv: HWND) -> Option<usize> {
 }
 
 pub fn lv_select(lv: HWND, row: usize) {
+    lv_select_preserving_scroll(lv,row);
+    send(lv, LVM_ENSUREVISIBLE, row, 0);
+}
+
+/// Restore selection after a data refresh without pulling the viewport to it.
+pub fn lv_select_preserving_scroll(lv: HWND, row: usize) {
     let mut clear = LVITEMW::default();
     clear.stateMask = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
     send(lv, LVM_SETITEMSTATE, usize::MAX, &clear as *const _ as isize);
@@ -500,7 +591,6 @@ pub fn lv_select(lv: HWND, row: usize) {
     it.stateMask = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
     it.state = LIST_VIEW_ITEM_STATE_FLAGS(LVIS_SELECTED.0 | LVIS_FOCUSED.0);
     send(lv, LVM_SETITEMSTATE, row, &it as *const _ as isize);
-    send(lv, LVM_ENSUREVISIBLE, row, 0);
 }
 
 pub fn lv_set_checked(lv: HWND, row: usize, on: bool) {

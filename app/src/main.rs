@@ -6,18 +6,23 @@
 //! running while the window is minimized or hidden in the tray.
 //!
 //! ```text
-//! newsqueue [--config DIR] [--screenshot out.png] [file.nzb ...]
+//! newsqueue [--config DIR] [--screenshot out.png | --ui-smoke] [file.nzb ...]
 //! ```
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #![allow(clippy::all, non_snake_case)]
 
 #[macro_use]
 mod util;
+#[cfg(test)]
+#[allow(dead_code)] // Legacy evidence tests; hooks are not compiled into the app.
 mod classic;
 mod cli;
 mod dialogs;
 mod form;
 mod pick;
+mod menu_trace;
+mod scroll;
+mod ui_audit;
 mod queue;
 mod setup;
 mod shutdown;
@@ -49,6 +54,7 @@ use windows::Win32::UI::WindowsAndMessaging::*;
 const CHILD: u32 = WS_CHILD.0 | WS_VISIBLE.0;
 const TIMER_REFRESH: usize = 1;
 const TIMER_SOON: usize = 2;
+const WM_QUEUE_MENU: u32 = WM_APP + 1;
 
 // Main toolbar.
 const ID_CONNECT: i32 = 100;
@@ -166,6 +172,8 @@ pub struct Ui {
     toast: Option<(String, Instant)>,
     /// A dialog opened from an engine event is up; don't open another.
     busy: bool,
+    /// Native menus run a nested message loop on this same UI thread.
+    menu_active: bool,
     splitter_drag: Option<i32>,
     seq: u64,
 }
@@ -269,7 +277,10 @@ fn main() {
             _ => {}
         }
     }
-    let demo = screenshot.is_some();
+    let scroll_smoke = args.iter().any(|arg| arg == "--ui-scroll-smoke");
+    let ui_smoke = args.iter().any(|arg| arg == "--ui-smoke");
+    let audit = args.windows(2).find(|a| a[0] == "--ui-audit").map(|a| a[1].clone());
+    let demo = screenshot.is_some() || ui_smoke || scroll_smoke || audit.is_some();
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let icc = INITCOMMONCONTROLSEX {
@@ -277,18 +288,8 @@ fn main() {
             dwICC: ICC_WIN95_CLASSES | ICC_STANDARD_CLASSES | ICC_UPDOWN_CLASS | ICC_TAB_CLASSES | ICC_LISTVIEW_CLASSES | ICC_BAR_CLASSES,
         };
         let _ = InitCommonControlsEx(&icc);
-        // The classic look: no visual styles at all, so controls, frames,
-        // scroll bars and the menu bar draw 3D bevels from the system
-        // colours (comctl32 v6 features stay)...
-        SetThemeAppProperties(SET_THEME_APP_PROPERTIES_FLAGS(0));
-        // ...in the Windows 2000 colours (this process only; see classic.rs).
-        let patched = classic::install();
-        classic::face_classes();
-        classic::hook_captions();
-        classic::FORCE_ACTIVE.store(demo, std::sync::atomic::Ordering::Relaxed);
-        if patched == 0 {
-            eprintln!("classic colours: no import slots found");
-        }
+        // Use Windows common-controls v6 and OS-managed non-client chrome.
+        // Do not disable visual styles: the shell file-dialog factories need them.
     }
     if demo && std::env::var("NQ_DPI").is_err() {
         // Goldens are rendered at 100 % whatever the monitor.
@@ -337,6 +338,18 @@ fn main() {
         SetTimer(Some(main), TIMER_REFRESH, 250, None);
     }
     refresh();
+    if scroll_smoke {
+        ui_audit::scroll_smoke(main);
+        std::process::exit(0);
+    }
+    if let Some(path) = audit {
+        ui_audit::run(main, &path);
+        std::process::exit(0);
+    }
+    if ui_smoke {
+        run_ui_smoke(main);
+        std::process::exit(0);
+    }
     if let Some(path) = screenshot {
         std::process::exit(take_screenshot(main, &path));
     }
@@ -408,10 +421,7 @@ fn take_screenshot(main: HWND, path: &str) -> i32 {
         Ok("rss") => 3,
         _ => 0,
     };
-    unsafe {
-        let _ = SetWindowPos(main, None, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
-        let _ = ShowWindow(main, SW_SHOWNOACTIVATE);
-    }
+    show_offscreen(main);
     select_tab(tab);
     refresh();
     // Select the first downloading collection, as a user would have.
@@ -437,6 +447,103 @@ fn take_screenshot(main: HWND, path: &str) -> i32 {
     } else {
         1
     }
+}
+
+/// Background smoke against the production window procedures and sample engine.
+/// No tray, network, saved configuration, user input injection or desktop focus.
+fn run_ui_smoke(main: HWND) {
+    show_offscreen(main);
+    form::audit_color_cleanup(main);
+    dialogs::audit_smoke(main);
+    refresh();
+    let (queue, filter, pages) = ui(|u| (u.queue, u.qfilter, u.pages));
+    assert!(send(queue, LVM_GETITEMCOUNT, 0, 0) > 0);
+    assert_ne!(send(queue, LVM_GETEXTENDEDLISTVIEWSTYLE, 0, 0) & LVS_EX_GRIDLINES as isize, 0);
+    form::set_text(filter, "no-such-subject-for-native-smoke");
+    refresh();
+    assert_eq!(send(queue, LVM_GETITEMCOUNT, 0, 0), 0);
+    form::set_text(filter, "");
+    refresh();
+    for i in 0..4 {
+        select_tab(i);
+        for (j, page) in pages.iter().enumerate() {
+            assert_eq!(unsafe { IsWindowVisible(*page).as_bool() }, i == j);
+        }
+    }
+    select_tab(0);
+    let selectable = ui(|u| u.rows.iter().position(|row| matches!(row,
+        Row::Coll(i) if u.snap.queue[*i].status == Some(ItemStatus::Downloading)
+    ))).expect("active sample collection");
+    form::lv_select(queue, selectable);
+    let id = selected().expect("selected collection").id;
+    send(main, WM_COMMAND, ID_HOLD as usize, 0);
+    refresh();
+    assert_eq!(ui(|u| u.snap.queue.iter().find(|c| c.id == id).unwrap().status), Some(ItemStatus::Paused));
+    send(main, WM_COMMAND, ID_RESUME as usize, 0);
+    refresh();
+    assert_ne!(ui(|u| u.snap.queue.iter().find(|c| c.id == id).unwrap().status), Some(ItemStatus::Paused));
+    unsafe {
+        // Verify context-menu entry is deferred until ListView input unwinds.
+        // Remove the request without displaying a popup or capturing input.
+        send(main, WM_CONTEXTMENU, queue.0 as usize, -1);
+        let mut request = MSG::default();
+        assert!(PeekMessageW(&mut request, Some(main), WM_QUEUE_MENU, WM_QUEUE_MENU, PM_REMOVE).as_bool());
+        assert_eq!(request.lParam.0, -1);
+        ui(|u| u.splitter_drag = Some(20));
+        send(pages[0], WM_CAPTURECHANGED, 0, 0);
+        assert!(ui(|u| u.splitter_drag.is_none()));
+        // Both menu-bar and context-menu loops must leave the UI snapshot alone.
+        // Holding HOST also makes any accidental synchronous engine access fail.
+        for popup in [0, 1] {
+            send(main, WM_ENTERMENULOOP, popup, 0);
+            ui(|u| u.seq = 0);
+            HOST.with(|host| {
+                let _borrow = host.borrow_mut();
+                send(main, WM_TIMER, TIMER_REFRESH, 0);
+                send(main, WM_TIMER, TIMER_SOON, 0);
+            });
+            assert_eq!(ui(|u| u.seq), 0);
+            send(main, WM_EXITMENULOOP, popup, 0);
+            send(main, WM_TIMER, TIMER_SOON, 0);
+            assert!(ui(|u| u.seq > 0));
+        }
+        let menu = GetMenu(main);
+        for index in 0..5 { update_menu(GetSubMenu(menu, index)); }
+        for (width, height) in [(760, 480), (900, 600), (1280, 820)] {
+            SetWindowPos(main, None, 0, 0, s(width), s(height), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE).unwrap();
+            layout(main);
+            let toolbar=ui(|u|u.tb);
+            let mut bounds=RECT::default();
+            GetClientRect(toolbar,&mut bounds).unwrap();
+            for index in 0..send(toolbar,TB_BUTTONCOUNT,0,0).max(0) as usize {
+                let mut button=RECT::default();
+                send(toolbar,TB_GETITEMRECT,index,&mut button as *mut _ as isize);
+                assert!(button.right<=bounds.right && button.bottom<=bounds.bottom,"toolbar item {index} clipped at width {width}");
+            }
+            let mut filter=RECT::default();let mut count=RECT::default();
+            GetWindowRect(ui(|u|u.rss_filter),&mut filter).unwrap();
+            GetWindowRect(ui(|u|u.rss_count),&mut count).unwrap();
+            assert!(filter.right<=count.left,"RSS filter overlaps count at width {width}");
+        }
+    }
+    for page in 0..15 {
+        let dialog = setup::build(main, page);
+        show_offscreen(dialog);
+        unsafe { DestroyWindow(dialog).unwrap(); }
+    }
+    for name in ["about", "columns", "pause", "speed", "notes", "server", "version", "shutdown", "unrar-password", "rename", "execute", "rss-feeds"] {
+        let dialog = dialogs::demo(name, main).unwrap();
+        unsafe { DestroyWindow(dialog).unwrap(); }
+    }
+    // Exercise the real shell factories under production theme initialization.
+    unsafe {
+        use windows::Win32::System::Com::*;
+        use windows::Win32::UI::Shell::*;
+        let _: IFileOpenDialog = CoCreateInstance(&FileOpenDialog, None, CLSCTX_INPROC_SERVER).unwrap();
+        let _: IFileSaveDialog = CoCreateInstance(&FileSaveDialog, None, CLSCTX_INPROC_SERVER).unwrap();
+        DestroyWindow(main).unwrap();
+    }
+    println!("PASS: native Compact controls, filtering, tabs, pause/resume dispatch, deferred context menu, capture-loss cleanup, menu-loop timer isolation/resume, menus, resize, 15 Setup pages, dialogs, shell factories");
 }
 
 // ---------------------------------------------------------- main window ---
@@ -473,7 +580,7 @@ fn toolbar(parent: HWND, size: i32, items: &[Option<Tb>], text: bool) -> HWND {
         "ToolbarWindow32",
         "",
         // The main toolbar keeps the etched divider under the menu bar.
-        sty!(CHILD, WS_CLIPSIBLINGS, TBSTYLE_FLAT, TBSTYLE_TOOLTIPS, CCS_NOPARENTALIGN, CCS_NORESIZE) | if text { 0 } else { sty!(CCS_NODIVIDER) },
+        sty!(CHILD, WS_CLIPSIBLINGS, TBSTYLE_FLAT, TBSTYLE_TOOLTIPS, CCS_NOPARENTALIGN, CCS_NORESIZE) | if text { sty!(TBSTYLE_WRAPABLE) } else { sty!(CCS_NODIVIDER) },
         0,
         0,
         0,
@@ -518,7 +625,9 @@ fn toolbar(parent: HWND, size: i32, items: &[Option<Tb>], text: bool) -> HWND {
     send(tb, TB_ADDBUTTONSW, btns.len(), btns.as_ptr() as isize);
     if text {
         send(tb, TB_SETBUTTONWIDTH, 0, ((s(90) as isize) << 16) | s(55) as isize);
-        send(tb, TB_SETBUTTONSIZE, 0, ((s(53) as isize) << 16) | s(55) as isize);
+        send(tb, TB_SETBUTTONSIZE, 0, ((s(46) as isize) << 16) | s(55) as isize);
+    } else {
+        send(tb, TB_SETBUTTONSIZE, 0, ((s(22) as isize) << 16) | s(23) as isize);
     }
     tb
 }
@@ -534,12 +643,14 @@ fn create_main() -> HWND {
         let (ow, oh) = outer(style, WS_EX_ACCEPTFILES.0, cw, ch);
         let x = wa.left + ((wa.right - wa.left) - ow).max(0) / 2;
         let y = wa.top + ((wa.bottom - wa.top) - oh).max(0) / 2;
-        let main = mkpx("NewsQueueMain", &format!("{APP_NAME} {VERSION}"), style, WS_EX_ACCEPTFILES.0, x, y, ow, oh, None, 0);
+        // An unshown owner keeps screenshot/smoke windows out of the taskbar.
+        let owner = ui(|u| u.demo).then(|| mkpx("STATIC", "", WS_POPUP.0, WS_EX_TOOLWINDOW.0, 0, 0, 0, 0, None, 0));
+        let main = mkpx("NewsQueueMain", &format!("{APP_NAME} {VERSION}"), style, WS_EX_ACCEPTFILES.0, x, y, ow, oh, owner, 0);
         DragAcceptFiles(main, true);
-        let _ = SetMenu(main, Some({ let m = menu_bar(); classic::face_menus(m); m }));
+        let _ = SetMenu(main, Some(menu_bar()));
         let tb = toolbar(
             main,
-            32,
+            30,
             &[
                 Some(Tb(ID_CONNECT, "connect", "Connect", "Connect to / disconnect from the Usenet servers", true)),
                 None,
@@ -616,10 +727,10 @@ fn create_main() -> HWND {
         cue(qfilter, "Filter subjects");
         let lvs = sty!(CHILD, WS_TABSTOP, LVS_REPORT, LVS_SHOWSELALWAYS, LVS_OWNERDATA, LVS_SINGLESEL);
         let queue = mkpx("SysListView32", "", lvs | LVS_NOSORTHEADER, WS_EX_CLIENTEDGE.0, 0, 0, 10, 10, Some(pq), ID_QUEUE);
-        form::lv_setup(queue, LVS_EX_HEADERDRAGDROP);
+        form::lv_setup(queue, LVS_EX_HEADERDRAGDROP | LVS_EX_GRIDLINES);
         send(queue, LVM_SETIMAGELIST, LVSIL_SMALL as usize, imagelist(s(16), &["plus", "minus", "file"]));
         let conns = mkpx("SysListView32", "", lvs | LVS_NOSORTHEADER, WS_EX_CLIENTEDGE.0, 0, 0, 10, 10, Some(pq), ID_CONNS);
-        form::lv_setup(conns, 0);
+        form::lv_setup(conns, LVS_EX_GRIDLINES);
         form::lv_cols(conns, &[("#", 34, true), ("Action", 110, false), ("Description", 420, false), ("Status", 140, false), ("Server", 200, false)]);
         // PAR2 page.
         let pp = pages[1];
@@ -628,7 +739,7 @@ fn create_main() -> HWND {
             p2_buttons.push(mkpx("BUTTON", t, sty!(CHILD, WS_TABSTOP, BS_PUSHBUTTON), 0, 0, 0, 10, 10, Some(pp), id));
         }
         let par2 = mkpx("SysListView32", "", lvs | LVS_NOSORTHEADER, WS_EX_CLIENTEDGE.0, 0, 0, 10, 10, Some(pp), ID_P2_LIST);
-        form::lv_setup(par2, 0);
+        form::lv_setup(par2, LVS_EX_GRIDLINES);
         form::lv_cols(par2, &[("Name", 380, false), ("Size", 90, true), ("Blocks", 70, true), ("Info", 260, false), ("Unrar", 55, false), ("Status", 220, false)]);
         // Log page.
         let pl = pages[2];
@@ -641,7 +752,7 @@ fn create_main() -> HWND {
         cue(log_filter, "Filter log lines");
         let log_count = mkpx("STATIC", "", sty!(CHILD, 2), 0, 0, 0, 10, 10, Some(pl), 0);
         let log = mkpx("SysListView32", "", lvs | LVS_NOSORTHEADER, WS_EX_CLIENTEDGE.0, 0, 0, 10, 10, Some(pl), ID_LOG_LIST);
-        form::lv_setup(log, 0);
+        form::lv_setup(log, LVS_EX_GRIDLINES);
         form::lv_cols(log, &[("Time", 80, false), ("Area", 90, false), ("Message", 1000, false)]);
         // RSS page.
         let pr = pages[3];
@@ -655,10 +766,10 @@ fn create_main() -> HWND {
         cue(rss_filter, "Filter names");
         let rss_count = mkpx("STATIC", "", sty!(CHILD, 2), 0, 0, 0, 10, 10, Some(pr), 0);
         let rss = mkpx("SysListView32", "", lvs | LVS_NOSORTHEADER, WS_EX_CLIENTEDGE.0, 0, 0, 10, 10, Some(pr), ID_RSS_LIST);
-        form::lv_setup(rss, 0);
+        form::lv_setup(rss, LVS_EX_GRIDLINES);
         form::lv_cols(rss, &[("Name", 520, false), ("Date", 160, false), ("Description", 600, false)]);
         // Status bar.
-        let sb = mkpx("msctls_statusbar32", "", sty!(CHILD, SBARS_SIZEGRIP, WS_CLIPSIBLINGS), 0, 0, 0, 0, 0, Some(main), ID_STATUS);
+        let sb = mkpx("msctls_statusbar32", "", sty!(CHILD, SBARS_SIZEGRIP, SBARS_TOOLTIPS, WS_CLIPSIBLINGS), 0, 0, 0, 0, 0, Some(main), ID_STATUS);
         let wd = [90, 95, 120, 100, 105, 100, 120, 120];
         let mut edges = vec![];
         let mut acc = 0;
@@ -695,8 +806,9 @@ fn create_main() -> HWND {
             u.rss = rss;
         });
         for p in pages {
-            let _ = SetWindowPos(p, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE);
+            let _ = SetWindowPos(p, Some(HWND_TOP), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
         }
+        for list in [queue,conns,par2,log,rss] { scroll::install(list); }
         select_tab(0);
         layout(main);
         main
@@ -863,8 +975,26 @@ fn layout(h: HWND) {
     let (w, hh) = (rc.right, rc.bottom);
     send(sb, WM_SIZE, 0, 0);
     let sbh = wnd_h(sb);
-    let tbh = hi(send(tb, TB_GETBUTTONSIZE, 0, 0) as isize) + s(4);
+    // Native wrapping keeps every toolbar command reachable at minimum width.
+    let mut total=0;
+    for index in 0..send(tb,TB_BUTTONCOUNT,0,0).max(0) as usize {
+        let mut r=RECT::default();
+        send(tb,TB_GETITEMRECT,index,&mut r as *mut _ as isize);
+        total+=r.right-r.left;
+    }
+    let rows=((total+w.max(1)-1)/w.max(1)).max(1);
+    let mut tr=RECT::default();
+    send(tb,TB_SETROWS,(rows as usize)|0x10000,&mut tr as *mut _ as isize);
+    let tbh=(tr.bottom-tr.top).max(hi(send(tb,TB_GETBUTTONSIZE,0,0) as isize))+s(4);
     mv(tb, 0, 0, w, tbh);
+    let widths=[90,95,120,100,105,100,120,120,140];
+    let total=s(widths.iter().sum());
+    let mut edge=0;
+    let edges:Vec<i32>=widths.iter().enumerate().map(|(i,width)| {
+        edge+=s(*width);
+        if i==8 {-1} else if w<total {edge*w/total} else {edge}
+    }).collect();
+    send(sb,SB_SETPARTS,edges.len(),edges.as_ptr() as isize);
     let th = hh - tbh - sbh;
     mv(tab, 0, tbh, w, th);
     let mut r = RECT { left: 0, top: 0, right: w, bottom: th };
@@ -875,9 +1005,9 @@ fn layout(h: HWND) {
     }
     // Queue page: secondary toolbar + filter, queue, splitter, connections.
     let qh = s(30);
-    let eh = s(23);
-    let ew = s(190);
-    mv(qtb, 0, (qh - hi(send(qtb, TB_GETBUTTONSIZE, 0, 0) as isize)) / 2, pw - ew - s(60), qh);
+    let eh = s(22);
+    let ew = s(183);
+    mv(qtb, 0, s(4), pw - ew - s(60), s(23));
     mv(qfilter, pw - ew - s(4), (qh - eh) / 2, ew, eh);
     mv(qlabel, pw - ew - s(52), (qh - s(16)) / 2, s(40), s(16));
     let ch = conns_height(ph - qh);
@@ -906,10 +1036,14 @@ fn layout(h: HWND) {
         mv(*b, x, by, bw, bh);
         x += bw + s(4);
     }
-    mv(rlabel, x + s(10), (qh - s(16)) / 2, s(40), s(16));
-    mv(rfilter, x + s(56), (qh - eh) / 2, s(220), eh);
-    mv(rcount, pw - s(150), (qh - s(16)) / 2, s(140), s(16));
-    mv(rss, 0, qh, pw, ph - qh);
+    let narrow=pw<x+s(56+220+154);
+    let ry=if narrow {qh} else {0};
+    let rx=if narrow {s(4)} else {x+s(10)};
+    mv(rlabel,rx,ry+(qh-s(16))/2,s(40),s(16));
+    mv(rfilter,rx+s(46),ry+(qh-eh)/2,(pw-rx-s(46+154)).min(s(220)),eh);
+    mv(rcount,pw-s(150),ry+(qh-s(16))/2,s(140),s(16));
+    let rss_top=qh+ry;
+    mv(rss,0,rss_top,pw,ph-rss_top);
 }
 
 fn select_tab(i: usize) {
@@ -953,6 +1087,7 @@ fn rebuild_columns(lv: HWND, cols: &[usize], widths: &[i32]) {
 
 /// Pulls the newest snapshot and updates what changed.
 fn refresh() {
+    if scroll::active() { return; }
     let Some(handle) = ui(|u| u.handle.clone()) else { return };
     if ui(|u| u.demo) {
         HOST.with(|h| {
@@ -1024,7 +1159,7 @@ fn refresh() {
     }
     let cur = form::lv_selected(queue);
     match (new_sel_row, cur) {
-        (Some(r), c) if c != Some(r) => form::lv_select(queue, r),
+        (Some(r), c) if c != Some(r) => form::lv_select_preserving_scroll(queue, r),
         (None, Some(_)) if sel.is_some() => {
             // The selected collection is gone (deleted, cleaned up).
             send(queue, LVM_SETITEMSTATE, usize::MAX, &LVITEMW { stateMask: LVIS_SELECTED, ..Default::default() } as *const _ as isize);
@@ -1045,8 +1180,11 @@ fn refresh() {
         }
     }
     if log_changed || first {
+        let top=send(log,LVM_GETTOPINDEX,0,0).max(0) as usize;
+        let page=send(log,LVM_GETCOUNTPERPAGE,0,0).max(1) as usize;
+        let follow=first || top+page>=old_log;
         send(log, LVM_SETITEMCOUNT, n_log, LVSICF_NOSCROLL as isize);
-        if n_log > 0 {
+        if n_log > 0 && follow {
             send(log, LVM_ENSUREVISIBLE, n_log - 1, 0);
         }
         unsafe {
@@ -1142,6 +1280,7 @@ fn set_status(sb: HWND, i: usize, t: &str) {
     LAST.with(|l| l.borrow_mut()[i] = t.to_string());
     let z = wz(t);
     send(sb, SB_SETTEXTW, i, z.as_ptr() as isize);
+    send(sb, SB_SETTIPTEXTW, i, z.as_ptr() as isize);
 }
 
 pub fn toast(t: impl Into<String>) {
@@ -1241,11 +1380,35 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
             if wp.0 == TIMER_SOON {
                 let _ = KillTimer(Some(h), TIMER_SOON);
             }
+            if ui(|u| u.menu_active) || scroll::active() {
+                // Keep routine snapshot/engine checkout and event dialogs out of
+                // the menu's input loop. Downloads run on their own thread.
+                // Preserve the existing shutdown deadline while a menu is open.
+                if wp.0 == TIMER_REFRESH && !ui(|u| u.demo) {
+                    tick_shutdown(h);
+                }
+                return LRESULT(0);
+            }
             refresh();
             if wp.0 == TIMER_REFRESH {
                 tick(h);
             }
             LRESULT(0)
+        }
+        WM_ENTERMENULOOP => {
+            ui(|u| u.menu_active = true);
+            menu_trace::enter();
+            DefWindowProcW(h, m, wp, lp)
+        }
+        WM_EXITMENULOOP => {
+            ui(|u| u.menu_active = false);
+            menu_trace::exit();
+            refresh_soon();
+            DefWindowProcW(h, m, wp, lp)
+        }
+        WM_MENUSELECT => {
+            menu_trace::selected(wp.0);
+            DefWindowProcW(h, m, wp, lp)
         }
         WM_COMMAND => {
             let id = (wp.0 & 0xffff) as i32;
@@ -1276,8 +1439,15 @@ unsafe extern "system" fn main_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
         }
         WM_CONTEXTMENU => {
             if HWND(wp.0 as *mut c_void) == ui(|u| u.queue) {
-                queue_menu(h, lp);
+                // Let the ListView finish its right-button processing and release
+                // capture before entering the modal menu tracking loop.
+                let _ = PostMessageW(Some(h), WM_QUEUE_MENU, wp, lp);
+                return LRESULT(0);
             }
+            DefWindowProcW(h, m, wp, lp)
+        }
+        WM_QUEUE_MENU => {
+            queue_menu(h, lp);
             LRESULT(0)
         }
         WM_DROPFILES => {
@@ -1394,9 +1564,15 @@ unsafe extern "system" fn page_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
             }
             LRESULT(0)
         }
+        WM_CAPTURECHANGED => {
+            ui(|u| u.splitter_drag = None);
+            LRESULT(0)
+        }
         WM_CTLCOLORSTATIC => {
             let dc = HDC(wp.0 as *mut c_void);
             SetBkMode(dc, TRANSPARENT);
+            SetBkColor(dc, COLORREF(GetSysColor(COLOR_BTNFACE)));
+            SetTextColor(dc, COLORREF(GetSysColor(COLOR_BTNTEXT)));
             LRESULT(GetSysColorBrush(COLOR_BTNFACE).0 as isize)
         }
         WM_NOTIFY | WM_COMMAND | WM_DRAWITEM | WM_CONTEXTMENU => SendMessageW(GetParent(h).unwrap_or_default(), m, Some(wp), Some(lp)),
@@ -1580,7 +1756,7 @@ unsafe fn queue_draw(lp: LPARAM, queue: HWND) -> LRESULT {
         let r = u.rows.get(row).copied()?;
         let col = u.cols.get(sub).copied()?;
         let (p, kind) = queue::bar(&u.snap.queue, r);
-        let text = queue::cell(&u.snap.queue, r, queue::COL_STATUS);
+        let text = if col==queue::COL_STATUS {queue::cell(&u.snap.queue, r, queue::COL_STATUS)} else {String::new()};
         let active = matches!(r, Row::Coll(i) if u.snap.queue[i].status == Some(ItemStatus::Downloading));
         Some((r, col, p, kind, text, queue::finished(&u.snap.queue, r), active))
     });
@@ -1609,20 +1785,19 @@ unsafe fn queue_draw(lp: LPARAM, queue: HWND) -> LRESULT {
     let old = SelectObject(dc, font().into());
     let mut t = wz(&text);
     t.pop();
-    if kind == Bar::Done {
+    if kind == Bar::Done || pct <= 0.0 {
         // Finished rows show their state as plain text, like the other columns.
         let mut tr = RECT { left: rc.left + s(6), top: rc.top, right: rc.right - s(4), bottom: rc.bottom };
-        SetTextColor(dc, if sel && focused { COLORREF(GetSysColor(COLOR_HIGHLIGHTTEXT)) } else { rgb(120, 120, 120) });
+        SetTextColor(dc, if sel && focused { COLORREF(GetSysColor(COLOR_HIGHLIGHTTEXT)) } else if kind == Bar::Done { COLORREF(GetSysColor(COLOR_GRAYTEXT)) } else { COLORREF(GetSysColor(COLOR_WINDOWTEXT)) });
         DrawTextW(dc, &mut t, &mut tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
         SelectObject(dc, old);
         return LRESULT(CDRF_SKIPDEFAULT as isize);
     }
-    classic_progress(dc, bar, fill_right, kind);
-    // The text over the dark highlight or red fill is white, over the
-    // orange of a paused job black (white on orange is hard to read), the
-    // rest black.
-    let on_fill = if matches!(kind, Bar::Paused) { rgb(0, 0, 0) } else { rgb(255, 255, 255) };
-    for (l, rr, col) in [(bar.left, fill_right, on_fill), (fill_right, bar.right, rgb(0, 0, 0))] {
+    native_progress(queue, dc, bar, fill_right, kind);
+    // Match the Compact reference: light text over native colored fills,
+    // system window text over the unfilled portion.
+    let on_fill = COLORREF(GetSysColor(COLOR_HIGHLIGHTTEXT));
+    for (l, rr, col) in [(bar.left, fill_right, on_fill), (fill_right, bar.right, COLORREF(GetSysColor(COLOR_WINDOWTEXT)))] {
         if rr <= l {
             continue;
         }
@@ -1637,23 +1812,23 @@ unsafe fn queue_draw(lp: LPARAM, queue: HWND) -> LRESULT {
     LRESULT(CDRF_SKIPDEFAULT as isize)
 }
 
-/// A classic smooth progress bar: a sunken white well and a solid fill.
-unsafe fn classic_progress(dc: HDC, bar: RECT, fill_right: i32, kind: Bar) {
-    let mut well = bar;
-    FillRect(dc, &well, GetSysColorBrush(COLOR_WINDOW));
-    let _ = DrawEdge(dc, &mut well, BDR_SUNKENOUTER, BF_RECT);
-    let inner = RECT { left: bar.left + 1, top: bar.top + 1, right: fill_right.min(bar.right - 1), bottom: bar.bottom - 1 };
-    if inner.right <= inner.left {
-        return;
+/// Windows-themed progress with the same green/amber/error states as Compact.
+unsafe fn native_progress(owner: HWND, dc: HDC, bar: RECT, fill_right: i32, kind: Bar) {
+    let theme = OpenThemeData(Some(owner), w!("Progress"));
+    let inner = RECT { right: fill_right.clamp(bar.left, bar.right), ..bar };
+    if theme.0 != 0 {
+        let _ = DrawThemeBackground(theme, dc, PP_TRANSPARENTBAR.0, PBBS_NORMAL.0, &bar, None);
+        let state = match kind { Bar::Paused => PBFS_PAUSED, Bar::Error => PBFS_ERROR, _ => PBFS_NORMAL };
+        if inner.right > inner.left {
+            let _ = DrawThemeBackground(theme, dc, PP_FILL.0, state.0, &inner, None);
+        }
+        let _ = CloseThemeData(theme);
+    } else {
+        // System-color fallback for high-contrast or unavailable theme services.
+        FillRect(dc, &bar, GetSysColorBrush(COLOR_WINDOW));
+        let _ = FrameRect(dc, &bar, GetSysColorBrush(COLOR_WINDOWFRAME));
+        FillRect(dc, &inner, GetSysColorBrush(COLOR_HIGHLIGHT));
     }
-    let fill = match kind {
-        Bar::Paused => rgb(204, 120, 0),
-        Bar::Error => rgb(192, 32, 32),
-        _ => COLORREF(GetSysColor(COLOR_HIGHLIGHT)),
-    };
-    let brush = CreateSolidBrush(fill);
-    FillRect(dc, &inner, brush);
-    let _ = DeleteObject(brush.into());
 }
 
 /// Log lines coloured by area: errors red, warnings orange.
@@ -1727,6 +1902,11 @@ fn queue_menu(h: HWND, lp: LPARAM) {
             let mut p = POINT::default();
             let _ = GetCursorPos(&mut p);
             (x, y) = (p.x, p.y);
+        }
+        // A control or interrupted splitter drag must not retain mouse capture
+        // while Windows tracks the popup's hover selection.
+        if !GetCapture().is_invalid() {
+            let _ = ReleaseCapture();
         }
         let _ = TrackPopupMenu(menu, TPM_RIGHTBUTTON, x, y, None, h, None);
         let _ = DestroyMenu(menu);
