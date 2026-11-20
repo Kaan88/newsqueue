@@ -25,6 +25,17 @@ verified direct-unpack cleanup. An independent Astra review and targeted Ghidra
 comparison informed the changes. Real-account TLS/plain measurements compare
 identical downloaded payloads; see `app/UI_POLISH_AUDIT.md` for exact evidence.
 
+## Download flow correction (2026-11-21)
+
+Use AltBinz's observed immediate-streaming behavior as the download-flow reference
+across supported named/obfuscated files, resume and recovery paths. The 1.0.9
+all-files-first-article barrier is removed locally; actual per-connection states,
+received article bytes and STAT counters replace inferred Downloading labels.
+The full 59-file live NZB completed over TLS/plain with identical hashes; first
+completed file fell from 79.5 seconds to 1.8–2.2 seconds. See
+`app/UI_POLISH_AUDIT.md` for regression coverage, timing and remaining limits.
+This is a local fix, not a new published release.
+
 ## Active priorities (2026-11-20)
 
 Keep the shared Rust engine, server/Docker deployment, native Win32 desktop and

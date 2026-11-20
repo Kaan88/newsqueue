@@ -1758,6 +1758,20 @@ impl Engine {
                 self.paused || self.scheduler_hold,
                 active_workers,
             );
+            if !self.paused && !self.scheduler_hold {
+                if let Some(snapshot) = self.active_dl.as_ref().and_then(|a| a.snapshot.lock().ok().map(|s| s.clone())) {
+                    self.threads = snapshot.activities.iter().enumerate().map(|(index, a)| ThreadRow {
+                        number: index as u32 + 1,
+                        action: a.action.clone(),
+                        description: a.description.clone(),
+                        status: match a.received {
+                            Some(bytes) => format!("{} KB / {} s", bytes / 1024, a.since.elapsed().as_secs()),
+                            None => format!("{} ({} s)", a.action, a.since.elapsed().as_secs()),
+                        },
+                        server: snapshot.connection_servers.get(index).cloned().unwrap_or_default(),
+                    }).collect();
+                }
+            }
         } else if !self.threads.is_empty() {
             self.threads.clear();
         }

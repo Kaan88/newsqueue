@@ -257,3 +257,63 @@ runs. There was no observed frontend throughput bottleneck. The initial CLI CPU
 improvement was not uniform across final GUI/server runs; do not generalize it
 into a guaranteed CPU reduction. Tests use isolated output folders, with no
 production queue changes or visible UI interaction.
+
+### Multi-file startup correction (2026-11-21)
+
+The earlier single-file benchmark did not cover multi-file startup. The released
+1.0.9 downloader fetched the first article of every file serially before starting
+its workers, even with STAT disabled. The connection panel inferred activity from
+queue state and worker count, so it falsely described preparation as downloading.
+
+- Named NZB files now enter the worker queue immediately; no separate BODY name
+  lookup is needed. The first valid article establishes the advertised size;
+  inconsistent headers still fail validation and can fall back to another server.
+- Extensionless/obfuscated files retain content/name discovery, but each prepared
+  file starts streaming while later files are discovered. Discovery reserves one
+  configured connection per provider, rather than exceeding connection limits.
+  When every provider has just one slot, each prepared file drains before the next
+  discovery. Deterministic naming and checksummed resume validation remain.
+- Worker ownership survives preparation errors/cancellation. Pending production
+  prevents a temporarily empty work queue from ending the download prematurely.
+- Concurrent duplicate articles coalesce through the bounded cache. Valid resumed
+  parts no longer require an extra first-article download just to establish names.
+- The shared connection rows report actual preparation, connection, article,
+  writing, verification, retry, waiting and failure states. Article rows include
+  received encoded-body KB and elapsed time; collection progress still counts
+  decoded written payload. Optional STAT shows article/provider counters and stops
+  repeating commands against a broken or unsupported STAT connection.
+
+Controlled regressions cover earlier payload streaming before a delayed later
+lookup for named/obfuscated files, one/two connections, and two single-slot
+providers. A separate test gates an article's final bytes on receiving an interim
+progress callback. Existing integrity, provider fallback, resume, cache, proxy,
+PAR2, extraction and direct-unpack checks remain enabled. 158 workspace tests
+passed serially (30 native, 100 core, 14 server, 14 web); hidden native 96/192 DPI
+and production WASM/authenticated API smoke checks passed. The extra two-provider
+single-slot case also passed after the full suite.
+
+Real account verification used the full user-supplied 59-file jada NZB, 8
+connections, fresh isolated folders, STAT/cache/unpack/PAR2 disabled. Results:
+
+| Build / transport | First written payload | First completed file | Entire job |
+|---|---:|---:|---:|
+| Released 1.0.9 / TLS | 1.85 s | 79.51 s | 158.56 s |
+| Initial streaming fix / TLS | 0.79 s | 2.60 s | 68.45 s |
+| Named-file fast path / TLS | 0.83 s | 1.79 s | 78.47 s |
+| Named-file fast path / plain | 0.65 s | 2.16 s | 85.98 s |
+
+All 59 SHA-256 hashes matched across all four complete 2,944,891,658-byte jobs.
+Network throughput varied, so this demonstrates removal of the startup barrier,
+not a guaranteed total-speed multiplier. No minute-long mid-file stall occurred
+in these runs; its exact cause in the user's earlier session remains unproven.
+The new worker telemetry makes such waits distinguishable. This aligns the
+supported download paths with immediate streaming; it is not an exhaustive
+proof of identical AltBinz behavior in every failure scenario. No new public
+release or Docker deployment is implied by this local correction.
+
+The installed Windows executable was replaced after validation, with the previous
+binary retained in `app/target/newsqueue-installed-before-startup-fix.exe`.
+Installed `--ui-smoke` passed without activation, and hashes of all existing
+settings/queue/history/statistics/picker JSON files were unchanged. The desktop
+shortcut still points to the same installation. Docker and public release assets
+remain unchanged.

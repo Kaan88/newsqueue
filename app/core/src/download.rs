@@ -32,6 +32,14 @@ pub enum Stage {
 }
 
 #[derive(Clone, Debug)]
+pub struct ConnectionActivity {
+    pub action: String,
+    pub description: String,
+    pub since: Instant,
+    pub received: Option<u64>,
+}
+
+#[derive(Clone, Debug)]
 pub struct DownloadSnapshot {
     pub id: u64,
     pub stage: Stage,
@@ -53,6 +61,8 @@ pub struct DownloadSnapshot {
     pub server_bytes: Vec<u64>,
     /// Number of NNTP connections this job uses.
     pub workers: usize,
+    pub activities: Vec<ConnectionActivity>,
+    pub connection_servers: Vec<String>,
     pub speed_bps: f64,
     pub message: String,
     pub current_file: String,
@@ -169,6 +179,7 @@ struct ArticleCache {
     ttl: Duration,
     bytes: usize,
     entries: HashMap<String, CachedArticle>,
+    pending: HashSet<String>,
     order: VecDeque<String>,
 }
 
@@ -179,6 +190,7 @@ impl ArticleCache {
             ttl: Duration::from_secs(cleanup_minutes.max(1) as u64 * 60),
             bytes: 0,
             entries: HashMap::new(),
+            pending: HashSet::new(),
             order: VecDeque::new(),
         }
     }
@@ -270,6 +282,8 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         sizes: vec![0; job.files.len()],
         server_bytes: vec![0; servers.len()],
         workers: planned_workers,
+        connection_servers: servers.iter().flat_map(|server| (0..server.connection_count()).map(move |_| format!("{}:{}", server.address, server.port))).collect(),
+        activities: vec![ConnectionActivity { action: "Waiting".into(), description: "Waiting for prepared articles".into(), since: Instant::now(), received: None }; planned_workers],
         speed_bps: 0.0,
         message: "Connecting".into(),
         current_file: String::new(),
@@ -310,6 +324,20 @@ fn snapshot_set(snap: &Mutex<DownloadSnapshot>, f: impl FnOnce(&mut DownloadSnap
     }
 }
 
+fn activity(snap: &Mutex<DownloadSnapshot>, slot: usize, action: &str, description: impl Into<String>) {
+    let description = description.into();
+    snapshot_set(snap, |s| {
+        if let Some(a) = s.activities.get_mut(slot) {
+            if a.action != action || a.description != description {
+                *a = ConnectionActivity { action: action.into(), description, since: Instant::now(), received: None };
+            }
+        }
+    });
+}
+fn server_slot(servers: &[Server], index: usize) -> usize {
+    servers[..index].iter().map(|s| s.connection_count() as usize).sum()
+}
+
 fn run_job(
     job: &DownloadJob,
     servers: &[Server],
@@ -341,9 +369,8 @@ fn run_job(
         );
     });
 
-    // Name lookup pass: one connection fetches the first article of every
-    // file so the real yEnc file names are known before the parallel workers
-    // create the files. The fetched article is kept and reused by a worker.
+    // Discover names in order, feeding each prepared file immediately to
+    // workers. Later metadata lookups must not hold up earlier payloads.
     let total = job_total(job);
     let cache = Arc::new(Mutex::new(ArticleCache::new(
         job.cache_mb,
@@ -351,7 +378,8 @@ fn run_job(
     )));
     let _ = server;
     let mut lookups: Vec<Option<Nntp>> = servers.iter().map(|_| None).collect();
-    let mut tasks: VecDeque<Task> = VecDeque::new();
+    let mut pool = WorkerPool::start(job, servers, throttle_bps, pause, stop, snap, &cache);
+    let discovery_owns_all_slots = servers.iter().all(|s| s.connection_count() == 1);
     let mut paths: Vec<Option<PathBuf>> = vec![None; job.files.len()];
     let mut skipped = vec![false; job.files.len()];
     let mut expected_sizes: Vec<Option<u64>> = vec![None; job.files.len()];
@@ -376,10 +404,8 @@ fn run_job(
             skipped[index] = true;
             done_bytes = done_bytes.saturating_add(file.bytes);
             snapshot_set(snap, |s| {
-                s.bytes = done_bytes;
-                if let Some(p) = s.file_progress.get_mut(index) {
-                    *p = file.bytes;
-                }
+                if let Some(p) = s.file_progress.get_mut(index) { *p = file.bytes; }
+                s.bytes = s.file_progress.iter().sum();
             });
             continue;
         }
@@ -390,9 +416,19 @@ fn run_job(
         segments.sort_by_key(|s| s.number);
         let fallback = format!("file{:02}.bin", index + 1);
         let base = safe_file_name(&file.name, &fallback);
+        if Path::new(&file.name).extension().is_none() {
+            activity(snap, 0, "Preparing", format!("File {}/{}: {}", index + 1, job.files.len(), base));
+        }
+        snapshot_set(snap, |s| s.message = format!("Preparing file {}/{}", index + 1, job.files.len()));
         let cached = cache.lock().ok().and_then(|mut cache| cache.get(&segments[0].id));
         let mut lookup_server = None;
-        let body = match cached {
+        let needs_lookup = Path::new(&file.name).extension().is_none();
+        if discovery_owns_all_slots && needs_lookup && !pool.tasks.lock().unwrap().tasks.is_empty() {
+            quit_all(&mut lookups);
+            pool.finish()?;
+            pool = WorkerPool::start(job, servers, throttle_bps, pause, stop, snap, &cache);
+        }
+        let body = if !needs_lookup { None } else { match cached {
             Some(body) => Some(body),
             None => match lookup_body(
                 servers,
@@ -417,11 +453,12 @@ fn run_job(
                     return Err(e);
                 }
             },
+        }
         };
         // A first article that no server has must not fail the whole job:
         // record it as missing (PAR2 can repair it) and fall back to the NZB
         // name. Its slot is left as a hole in the file.
-        let first_missing = body.is_none();
+        let first_missing = needs_lookup && body.is_none();
         let (yenc_name, first_begin, first_data, first_crc) = match body.as_deref().map(decode_yenc) {
             Some(Ok(decoded)) => decoded,
             Some(Err(e)) => {
@@ -462,6 +499,9 @@ fn run_job(
         }
         let progress_path = progress_path_for(&path);
         let verified_path = integrity::verified_path(&path);
+        if needs_lookup && (progress_path.exists() || verified_path.exists()) {
+            activity(snap, 0, "Verifying", format!("Checking saved ranges: {name}"));
+        }
         let mut records = integrity::read(&path, &progress_path, &segments);
         if !progress_path.exists() && job.skip_existing {
             records = integrity::read(&path, &verified_path, &segments);
@@ -477,8 +517,8 @@ fn run_job(
             let resumed_bytes = records.values().map(|r| r.len).sum::<u64>();
             done_bytes = done_bytes.saturating_add(resumed_bytes);
             snapshot_set(snap, |snapshot| {
-                snapshot.bytes = done_bytes;
                 if let Some(progress) = snapshot.file_progress.get_mut(index) { *progress = resumed_bytes; }
+                snapshot.bytes = snapshot.file_progress.iter().sum();
             });
         }
         // Rewrite only verified records, discarding torn, stale or legacy lines.
@@ -512,7 +552,7 @@ fn run_job(
                     expected_size: decoded_size,
                     multipart: segments.len() > 1,
                 };
-                if seg_index == 0 {
+                if seg_index == 0 && needs_lookup {
                     if stop.load(Ordering::Relaxed) { return Err("Stopped".into()); }
                     if task.multipart && first_begin.is_none() { return Err(format!("{SIZE_MISMATCH}: multipart article has no range")); }
                     let mut files = HashMap::new();
@@ -522,147 +562,34 @@ fn run_job(
                     files.values().next().unwrap().sync_data().map_err(|e| format!("Cannot flush downloaded file: {e}"))?;
                     done_bytes = done_bytes.saturating_add(first_data.len() as u64);
                     snapshot_set(snap, |s| {
-                        s.bytes = done_bytes;
                         s.file_progress[index] += first_data.len() as u64;
+                        s.bytes = s.file_progress.iter().sum();
+                        s.stage = Stage::Downloading;
                         s.speed_bps = done_bytes as f64 / lookup_started.elapsed().as_secs_f64().max(0.001);
                     });
                     if segments.len() == 1 { verify_file(index, &path, file, snap)?; }
-                    throttle_wait(first_data.len() as f64, throttle_bps, 1, stop, pause);
-                } else { tasks.push_back(task); }
+                    throttle_wait(first_data.len() as f64, throttle_bps, snap.lock().map(|s| s.workers).unwrap_or(1), stop, pause);
+                } else { pool.tasks.lock().unwrap().tasks.push_back(task); }
             }
             offset = offset.saturating_add(segment.bytes);
+        }
+        if discovery_owns_all_slots && needs_lookup {
+            // With one slot per provider, finish this file before the next,
+            // rather than scanning every file before downloading any of them.
+            quit_all(&mut lookups);
+            pool.finish()?;
+            if index + 1 < job.files.len() {
+                pool = WorkerPool::start(job, servers, throttle_bps, pause, stop, snap, &cache);
+            }
         }
     }
     quit_all(&mut lookups);
 
-    if !tasks.is_empty() {
-    // Each server gets the number of connections it is configured for,
-    // interleaved so a job with few articles still uses every server.
-    let mut assignment: Vec<usize> = Vec::new();
-    let mut per_server: Vec<usize> = servers
-        .iter()
-        .map(|server| (server.connections.max(1) as usize).min(MAX_CONNECTIONS_PER_SERVER as usize))
-        .collect();
-    while per_server.iter().any(|count| *count > 0) {
-        for (index, count) in per_server.iter_mut().enumerate() {
-            if *count > 0 {
-                *count -= 1;
-                assignment.push(index);
-            }
-        }
-    }
-    assignment.truncate(tasks.len().max(servers.len()));
-    let worker_count = assignment.len().max(1);
-    let job_files = Arc::new(job.files.clone());
-    snapshot_set(snap, |s| {
-        s.stage = Stage::Downloading;
-        s.bytes = done_bytes;
-        s.workers = worker_count;
-        s.message = format!("Downloading with {worker_count} connections");
-    });
-
-    let mut live = vec![0usize; servers.len()];
-    for server_index in &assignment {
-        live[*server_index] += 1;
-    }
-    let shared_tasks = Arc::new(Mutex::new(TaskQueue {
-        tasks,
-        in_flight: 0,
-        live,
-        failed: vec![None; servers.len()],
-    }));
-    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
-    let connect_errors = Arc::new(Mutex::new(Vec::<String>::new()));
-    let speed = Arc::new(Mutex::new(SpeedMeter {
-        window: Instant::now(),
-        bytes: 0,
-    }));
-    let servers = servers.to_vec();
-    let retry_count = job.retry_count;
-    let retry_delay = job.retry_delay;
-    let priority = job.priority;
-    let proxy = job.proxy.clone();
-    let mut handles = Vec::new();
-    for server_index in assignment {
-        let server = servers[server_index].clone();
-        let tasks = shared_tasks.clone();
-        let errors = errors.clone();
-        let connect_errors = connect_errors.clone();
-        let speed = speed.clone();
-        let pause = Arc::clone(pause);
-        let stop = Arc::clone(stop);
-        let snap = Arc::clone(snap);
-        let cache = cache.clone();
-        let proxy = proxy.clone();
-        let throttle = throttle_bps.clone();
-        let job_files = job_files.clone();
-        handles.push(thread::spawn(move || {
-            let context = WorkerContext {
-                server_index,
-                files: &job_files,
-                tasks: &tasks,
-                pause: &pause,
-                stop: &stop,
-                snap: &snap,
-                speed: &speed,
-                errors: &errors,
-                connect_errors: &connect_errors,
-                cache: &cache,
-                proxy: &proxy,
-                throttle_bps: &throttle,
-                worker_count,
-                retry_count,
-                retry_delay,
-                priority,
-            };
-            download_worker(&server, &context);
-            // This connection is gone either way; articles only it could
-            // still try must not wait for it.
-            if let Ok(mut queue) = tasks.lock() {
-                queue.live[server_index] = queue.live[server_index].saturating_sub(1);
-            }
-        }));
-    }
-    for handle in handles {
-        if handle.join().is_err() && errors.lock().map(|e| e.is_empty()).unwrap_or(false) {
-            if let Ok(mut e) = errors.lock() {
-                e.push("A download worker stopped unexpectedly".into());
-            }
-        }
-    }
-
-    let fatal = errors.lock().ok().and_then(|e| e.first().cloned());
-    if let Some(message) = fatal {
-        snapshot_set(snap, |s| {
-            s.stage = Stage::Error;
-            s.speed_bps = 0.0;
-            s.message = message.clone();
-        });
-        return Err(message);
-    }
+    pool.finish()?;
     if stop.load(Ordering::Relaxed) {
-        snapshot_set(snap, |s| {
-            s.stage = Stage::Stopped;
-            s.speed_bps = 0.0;
-        });
+        snapshot_set(snap, |s| { s.stage = Stage::Stopped; s.speed_bps = 0.0; });
         return Ok(());
     }
-    let remaining = shared_tasks.lock().map(|q| q.tasks.len()).unwrap_or(0);
-    if remaining > 0 {
-        let message = connect_errors
-            .lock()
-            .ok()
-            .and_then(|e| e.first().cloned())
-            .unwrap_or_else(|| format!("{remaining} articles were not downloaded"));
-        snapshot_set(snap, |s| {
-            s.stage = Stage::Error;
-            s.speed_bps = 0.0;
-            s.message = message.clone();
-        });
-        return Err(message);
-    }
-
-    } // Worker pool; even an empty pool must pass final integrity checks.
 
     let missing = snap.lock().map(|snapshot| snapshot.missing).unwrap_or(0);
     if missing > 0 {
@@ -738,6 +665,142 @@ fn run_job(
     Ok(())
 }
 
+/// Owns workers until they drain, including all preparation error paths.
+struct WorkerPool {
+    tasks: Arc<Mutex<TaskQueue>>,
+    errors: Arc<Mutex<Vec<String>>>,
+    connect_errors: Arc<Mutex<Vec<String>>>,
+    handles: Vec<thread::JoinHandle<()>>,
+    stop: Arc<AtomicBool>,
+}
+impl WorkerPool {
+    fn start(job: &DownloadJob, servers: &[Server], throttle_bps: &Arc<AtomicU64>,
+        pause: &Arc<AtomicBool>, stop: &Arc<AtomicBool>, snap: &Arc<Mutex<DownloadSnapshot>>,
+        cache: &Arc<Mutex<ArticleCache>>) -> Self {
+    // Each server gets the number of connections it is configured for,
+    // interleaved so a job with few articles still uses every server.
+    let mut assignment: Vec<usize> = Vec::new();
+    let mut per_server: Vec<usize> = servers
+        .iter()
+        .map(|server| (server.connections.max(1) as usize).min(MAX_CONNECTIONS_PER_SERVER as usize))
+        .collect();
+    while per_server.iter().any(|count| *count > 0) {
+        for (index, count) in per_server.iter_mut().enumerate() {
+            if *count > 0 {
+                *count -= 1;
+                assignment.push(index);
+            }
+        }
+    }
+
+    let article_count = job.files.iter().filter(|f| !f.skip).map(|f| f.segments.len()).sum::<usize>();
+    assignment.truncate(article_count.max(servers.len()));
+    let worker_count = assignment.len().max(1);
+    let job_files = Arc::new(job.files.clone());
+    snapshot_set(snap, |s| s.workers = worker_count);
+    let mut live = vec![0usize; servers.len()];
+    for server_index in &assignment {
+        live[*server_index] += 1;
+    }
+    let shared_tasks = Arc::new(Mutex::new(TaskQueue {
+        tasks: VecDeque::new(),
+        producing: true,
+        in_flight: 0,
+        live,
+        failed: vec![None; servers.len()],
+    }));
+    let errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let connect_errors = Arc::new(Mutex::new(Vec::<String>::new()));
+    let speed = Arc::new(Mutex::new(SpeedMeter {
+        window: Instant::now(),
+        bytes: 0,
+    }));
+    let servers = servers.to_vec();
+    let retry_count = job.retry_count;
+    let retry_delay = job.retry_delay;
+    let priority = job.priority;
+    let proxy = job.proxy.clone();
+    let mut handles = Vec::new();
+    let needs_discovery = job.files.iter().any(|f| !f.skip && Path::new(&f.name).extension().is_none());
+    let mut reserved = HashSet::new();
+    let mut ordinal = vec![0usize; servers.len()];
+    for server_index in assignment {
+        let worker_slot = server_slot(&servers, server_index) + ordinal[server_index];
+        ordinal[server_index] += 1;
+        let preparation_slot = needs_discovery && reserved.insert(server_index);
+        let server = servers[server_index].clone();
+        let tasks = shared_tasks.clone();
+        let errors = errors.clone();
+        let connect_errors = connect_errors.clone();
+        let speed = speed.clone();
+        let pause = Arc::clone(pause);
+        let stop = Arc::clone(stop);
+        let snap = Arc::clone(snap);
+        let cache = cache.clone();
+        let proxy = proxy.clone();
+        let throttle = throttle_bps.clone();
+        let job_files = job_files.clone();
+        handles.push(thread::spawn(move || {
+            let context = WorkerContext {
+                worker_slot,
+                server_index,
+                files: &job_files,
+                tasks: &tasks,
+                pause: &pause,
+                stop: &stop,
+                snap: &snap,
+                speed: &speed,
+                errors: &errors,
+                connect_errors: &connect_errors,
+                cache: &cache,
+                proxy: &proxy,
+                throttle_bps: &throttle,
+                worker_count,
+                retry_count,
+                retry_delay,
+                priority,
+            };
+            // Reserve one connection per provider for name discovery. Never
+            // exceed the user's connection limit while preparation overlaps.
+            while preparation_slot && tasks.lock().map(|q| q.producing).unwrap_or(false)
+                && !stop.load(Ordering::Relaxed) { thread::sleep(Duration::from_millis(25)); }
+            let idle = tasks.lock().map(|q| !q.producing && q.tasks.is_empty() && q.in_flight == 0).unwrap_or(true);
+            if !stop.load(Ordering::Relaxed) && !idle { download_worker(&server, &context); }
+            else { activity(&snap, worker_slot, "Idle", "No pending articles"); }
+            // This connection is gone either way; articles only it could
+            // still try must not wait for it.
+            if let Ok(mut queue) = tasks.lock() {
+                queue.live[server_index] = queue.live[server_index].saturating_sub(1);
+            }
+        }));
+    }
+    Self { tasks: shared_tasks, errors, connect_errors, handles, stop: stop.clone() }
+    }
+    fn finish(&mut self) -> Result<(), String> {
+        if let Ok(mut q) = self.tasks.lock() { q.producing = false; }
+        for handle in self.handles.drain(..) {
+            if handle.join().is_err() { self.errors.lock().unwrap().push("A download worker stopped unexpectedly".into()); }
+        }
+        if let Some(error) = self.errors.lock().unwrap().first() { return Err(error.clone()); }
+        if self.stop.load(Ordering::Relaxed) { return Ok(()); }
+        let remaining = self.tasks.lock().unwrap().tasks.len();
+        if remaining > 0 {
+            return Err(self.connect_errors.lock().unwrap().first().cloned()
+                .unwrap_or_else(|| format!("{remaining} articles were not downloaded")));
+        }
+        Ok(())
+    }
+}
+impl Drop for WorkerPool {
+    fn drop(&mut self) {
+        if !self.handles.is_empty() {
+            self.stop.store(true, Ordering::Relaxed);
+            if let Ok(mut q) = self.tasks.lock() { q.producing = false; }
+            for handle in self.handles.drain(..) { let _ = handle.join(); }
+        }
+    }
+}
+
 fn verify_file(index: usize, path: &Path, file: &DownloadFile, snap: &Mutex<DownloadSnapshot>) -> Result<bool, String> {
     let records = integrity::read(path, &progress_path_for(path), &file.segments);
     let size = fs::metadata(path).map(|m| m.len()).unwrap_or(0);
@@ -752,6 +815,7 @@ fn verify_file(index: usize, path: &Path, file: &DownloadFile, snap: &Mutex<Down
 /// Articles waiting for a connection, shared by every worker of a job.
 struct TaskQueue {
     tasks: VecDeque<Task>,
+    producing: bool,
     /// Tasks a worker has taken and not yet finished or handed back.
     in_flight: usize,
     /// Workers still alive, per server index.
@@ -796,6 +860,7 @@ fn throttle_wait(mut bytes: f64, limit: &AtomicU64, workers: usize, stop: &Atomi
 
 struct WorkerContext<'a> {
     files: &'a [DownloadFile],
+    worker_slot: usize,
     server_index: usize,
     tasks: &'a Mutex<TaskQueue>,
     pause: &'a AtomicBool,
@@ -831,21 +896,33 @@ fn precheck(job: &DownloadJob, servers: &[Server], snap: &Mutex<DownloadSnapshot
     snapshot_set(snap, |s| s.message = format!("Pre-check: {} articles", ids.len()));
     let mut unknown: Vec<&str> = ids.clone();
     let mut inconclusive = false;
-    for server in servers {
+    for (server_index, server) in servers.iter().enumerate() {
         if unknown.is_empty() {
             break;
         }
         if stop.load(Ordering::Relaxed) { return Err("Stopped".into()); }
+        activity(snap, server_slot(servers, server_index), "Pre-check", format!("Connecting for STAT: {} articles", unknown.len()));
         let Ok(mut nntp) = Nntp::connect(server, &job.proxy) else { inconclusive = true; continue };
         let mut still = Vec::new();
-        for id in unknown {
+        let count = unknown.len();
+        let mut pending = unknown.into_iter().enumerate();
+        while let Some((position, id)) = pending.next() {
+            let detail = format!("STAT {}/{} — provider {}/{}", position + 1, count, server_index + 1, servers.len());
+            activity(snap, server_slot(servers, server_index), "Pre-check", detail.clone());
+            snapshot_set(snap, |s| s.message = detail);
             while pause.load(Ordering::Relaxed) && !stop.load(Ordering::Relaxed) { thread::sleep(Duration::from_millis(25)); }
             if stop.load(Ordering::Relaxed) { return Err("Stopped".into()); }
             match nntp.stat(id) {
                 Ok(true) => {}
                 Ok(false) => still.push(id),
                 // Some servers have no STAT: do not judge by this one.
-                Err(_) => { inconclusive = true; still.push(id); },
+                Err(_) => {
+                    // A broken/unsupported STAT connection cannot answer the
+                    // remaining articles. Do not repeat a timeout for each ID.
+                    inconclusive = true; still.push(id);
+                    still.extend(pending.map(|(_, id)| id));
+                    break;
+                },
             }
         }
         let _ = nntp.quit();
@@ -895,7 +972,7 @@ fn next_task(ctx: &WorkerContext) -> Next {
         else if let Some(error) = queue.exhaustion_error(&task) { transport_error = Some(error); }
         else { missing += 1; }
     }
-    let done = queue.tasks.is_empty() && queue.in_flight == 0;
+    let done = !queue.producing && queue.tasks.is_empty() && queue.in_flight == 0;
     drop(queue);
     mark_missing(ctx.snap, missing);
     if let Some(error) = transport_error { record_error(ctx.errors, ctx.stop, error); }
@@ -923,28 +1000,45 @@ fn finish_task(ctx: &WorkerContext, retry: Option<Task>) {
     if let Some(error) = transport_error { record_error(ctx.errors, ctx.stop, error); }
 }
 
+fn decode_for_worker(body: &[u8], task: &Task, ctx: &WorkerContext) -> Result<(Option<u64>, Vec<u8>, Option<u32>, u64), String> {
+    let decoded = decode_for_task(body, task)?;
+    let mut snapshot = ctx.snap.lock().map_err(|_| "Download state unavailable")?;
+    let size = &mut snapshot.sizes[task.file_index];
+    if *size != 0 && *size != decoded.3 { return Err(format!("{SIZE_MISMATCH}: inconsistent file size")); }
+    *size = decoded.3;
+    Ok(decoded)
+}
+
 fn download_worker(server: &Server, ctx: &WorkerContext) {
     set_thread_priority(ctx.priority);
+    while ctx.tasks.lock().map(|q| q.tasks.is_empty() && q.producing).unwrap_or(false)
+        && !ctx.stop.load(Ordering::Relaxed) { thread::sleep(Duration::from_millis(25)); }
+    if ctx.stop.load(Ordering::Relaxed) { return; }
+    let idle = ctx.tasks.lock().map(|q| !q.producing && q.tasks.is_empty() && q.in_flight == 0).unwrap_or(true);
+    if idle { activity(ctx.snap, ctx.worker_slot, "Idle", "No pending articles"); return; }
     let mut connect_attempt = 0;
     let mut nntp = loop {
+        activity(ctx.snap, ctx.worker_slot, "Connecting", "Opening NNTP connection");
         match Nntp::connect(server, ctx.proxy) {
             Ok(nntp) => break Some(nntp),
             Err(e) => {
                 if connect_attempt < ctx.retry_count && !ctx.stop.load(Ordering::Relaxed) {
                     connect_attempt += 1;
+                    activity(ctx.snap, ctx.worker_slot, "Retry", format!("{e}; retry in {} s", ctx.retry_delay));
                     retry_wait(ctx.retry_delay, ctx.stop);
                     continue;
                 }
                 // One failed connection should not kill the whole job; the
                 // remaining workers can still finish the queue.
                 if let Ok(mut queue) = ctx.tasks.lock() { queue.failed[ctx.server_index] = Some(e.clone()); }
+                activity(ctx.snap, ctx.worker_slot, "Failed", e.clone());
                 if let Ok(mut list) = ctx.connect_errors.lock() { list.push(e); }
                 return;
             }
         }
     };
     let mut files: HashMap<usize, fs::File> = HashMap::new();
-    loop {
+    'work: loop {
         if ctx.stop.load(Ordering::Relaxed) {
             break;
         }
@@ -960,6 +1054,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         let mut task = match next_task(ctx) {
             Next::Task(task) => *task,
             Next::Wait => {
+                activity(ctx.snap, ctx.worker_slot, "Waiting", "Waiting for prepared articles or another provider");
                 thread::sleep(Duration::from_millis(50));
                 continue;
             }
@@ -967,13 +1062,24 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         };
         let mut attempts = 0;
         let decoded = loop {
-            let cached = ctx
-                .cache
-                .lock()
-                .ok()
-                .and_then(|mut cache| cache.get(&task.id));
+            activity(ctx.snap, ctx.worker_slot, "Article", format!("{} - receiving article (read timeout {} s)", ctx.files[task.file_index].name, server_timeout()));
+            // Coalesce simultaneous references to the same article without
+            // holding the cache lock during network I/O.
+            let cached = loop {
+                if ctx.stop.load(Ordering::Relaxed) { break None; }
+                let mut cache = ctx.cache.lock().unwrap();
+                if let Some(body) = cache.get(&task.id) { break Some(body); }
+                if cache.limit == 0 || cache.pending.insert(task.id.clone()) { break None; }
+                drop(cache);
+                thread::sleep(Duration::from_millis(10));
+            };
+            if ctx.stop.load(Ordering::Relaxed) {
+                if let Ok(mut cache) = ctx.cache.lock() { cache.pending.remove(&task.id); }
+                finish_task(ctx, None);
+                break 'work;
+            }
             let attempt = if let Some(body) = cached {
-                decode_for_task(&body, &task)
+                decode_for_worker(&body, &task, ctx)
 
             } else {
                 // A connection that failed is dropped and replaced before the
@@ -984,10 +1090,14 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                     None => Nntp::connect(server, ctx.proxy),
                 };
                 match connection {
-                    Ok(mut connection) => match connection.body(&task.id) {
+                    Ok(mut connection) => match connection.body_with_progress(&task.id, |bytes| {
+                        snapshot_set(ctx.snap, |s| {
+                            if let Some(a) = s.activities.get_mut(ctx.worker_slot) { a.received = Some(bytes); }
+                        });
+                    }) {
                         Ok(body) => {
                             nntp = Some(connection);
-                            let decoded = decode_for_task(&body, &task);
+                            let decoded = decode_for_worker(&body, &task, ctx);
                             // Only a body that decoded cleanly is cached, so a
                             // corrupt copy is never served to another server's
                             // retry.
@@ -1008,6 +1118,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                     Err(error) => Err(error),
                 }
             };
+            if let Ok(mut cache) = ctx.cache.lock() { cache.pending.remove(&task.id); }
             match attempt {
                 Ok(value) => break Ok(value),
                 Err(error)
@@ -1016,6 +1127,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
                         && !ctx.stop.load(Ordering::Relaxed) =>
                 {
                     attempts += 1;
+                    activity(ctx.snap, ctx.worker_slot, "Retry", format!("{error}; retry in {} s", ctx.retry_delay));
                     retry_wait(ctx.retry_delay, ctx.stop);
                 }
                 Err(error) => break Err(error),
@@ -1042,6 +1154,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         let offset = begin
             .map(|value| value.saturating_sub(1))
             .unwrap_or(task.offset);
+        activity(ctx.snap, ctx.worker_slot, "Writing", ctx.files[task.file_index].name.clone());
         let write_result = write_article(&mut files, &task, offset, &data);
         if let Err(e) = write_result {
             finish_task(ctx, None);
@@ -1067,6 +1180,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             }
         }
         if let Ok(mut s) = ctx.snap.lock() {
+            s.stage = Stage::Downloading;
             s.bytes = s.bytes.saturating_add(chunk);
             if let Some(b) = s.server_bytes.get_mut(ctx.server_index) {
                 *b = b.saturating_add(chunk);
@@ -1090,6 +1204,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             task.expected_size.is_some_and(|size| s.file_progress[task.file_index] >= size)
         }).unwrap_or(false);
         if ready {
+            activity(ctx.snap, ctx.worker_slot, "Verifying", ctx.files[task.file_index].name.clone());
             if let Some(file) = files.get(&task.file_index) {
                 if let Err(e) = file.sync_data() { record_error(ctx.errors, ctx.stop, format!("Cannot flush downloaded file: {e}")); break; }
             }
@@ -1101,6 +1216,7 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         throttle_wait(chunk as f64, ctx.throttle_bps, ctx.worker_count, ctx.stop, ctx.pause);
 
     }
+    activity(ctx.snap, ctx.worker_slot, "Idle", "No pending articles");
     if let Some(mut nntp) = nntp {
         let _ = nntp.quit();
     }
@@ -1528,6 +1644,10 @@ impl Nntp {
     }
 
     fn body(&mut self, id: &str) -> Result<Vec<u8>, String> {
+        self.body_with_progress(id, |_| {})
+    }
+
+    fn body_with_progress(&mut self, id: &str, mut progress: impl FnMut(u64)) -> Result<Vec<u8>, String> {
         validate_message_id(id)?;
         let response = self.command(&format!("BODY <{id}>"))?;
         if response.starts_with("430") {
@@ -1537,6 +1657,8 @@ impl Nntp {
             return Err(format!("Server refused article: {}", reply_code(&response)));
         }
         let mut out = Vec::new();
+        let mut reported = Instant::now() - Duration::from_millis(250);
+        let mut check_progress_at = 0;
         loop {
             let mut line = Vec::new();
             let n = (&mut self.reader).take((MAX_ARTICLE_BYTES - out.len() + 1) as u64)
@@ -1555,7 +1677,15 @@ impl Nntp {
             }
             out.extend_from_slice(&line);
             out.push(b'\n');
+            if out.len() >= check_progress_at {
+                check_progress_at = out.len() + 8192;
+                if reported.elapsed() >= Duration::from_millis(250) {
+                    progress(out.len() as u64);
+                    reported = Instant::now();
+                }
+            }
         }
+        progress(out.len() as u64);
         Ok(out)
     }
 
@@ -1942,7 +2072,7 @@ pub(crate) mod tests {
             let active = spawn(two_part_job(&root), vec![local_server(port,2)],0.0);
             assert_eq!(wait_for(&active).stage,Stage::Completed);
             assert_eq!(fs::read(path).unwrap(),b"ABCDEFGHIJ");
-            assert_eq!(count.load(Ordering::Relaxed),2);
+            assert_eq!(count.load(Ordering::Relaxed), if missing { 2 } else { 1 }, "verified unchanged parts need no network lookup");
             let _ = fs::remove_dir_all(root);
         }
     }
@@ -2065,12 +2195,14 @@ pub(crate) mod tests {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         std::thread::spawn(move || {
-            for _ in 0..4 {
+            for _ in 0..16 {
                 let Ok((mut stream, _)) = listener.accept() else {
                     break;
                 };
+                let articles = articles.clone(); let count = count.clone();
+                std::thread::spawn(move || {
                 let Ok(mut reader) = stream.try_clone().map(BufReader::new) else {
-                    continue;
+                    return;
                 };
                 let _ = stream.write_all(b"200 mock ready\r\n");
                 loop {
@@ -2099,6 +2231,7 @@ pub(crate) mod tests {
                         }
                     }
                 }
+                });
             }
         });
         (port, counter)
@@ -2818,6 +2951,91 @@ pub(crate) mod tests {
         let snapshot = wait_for(&spawn(job, vec![local_server(port, 1)], 0.0));
         assert_eq!(snapshot.stage, Stage::Incomplete, "{}", snapshot.message);
         let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn article_progress_is_reported_before_body_finishes() {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let (sent, received) = std::sync::mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut socket, _) = listener.accept().unwrap();
+            let mut reader = BufReader::new(socket.try_clone().unwrap());
+            socket.write_all(b"200 ready\r\n").unwrap();
+            let mut command = String::new(); reader.read_line(&mut command).unwrap();
+            assert_eq!(command.trim(), "BODY <progress>");
+            socket.write_all(b"222 article\r\nhello\r\n").unwrap();
+            received.recv_timeout(Duration::from_secs(1)).expect("no progress before the article finished");
+            socket.write_all(b"world\r\n.\r\n").unwrap();
+        });
+        let mut nntp = Nntp::connect(&local_server(port, 1), &ProxyConfig::default()).unwrap();
+        let mut updates = Vec::new();
+        let body = nntp.body_with_progress("progress", |bytes| {
+            updates.push(bytes); let _ = sent.send(());
+        }).unwrap();
+        assert_eq!(body, b"hello\nworld\n");
+        assert_eq!(updates.first(), Some(&6));
+        assert_eq!(updates.last(), Some(&12));
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn payload_starts_before_later_file_discovery() {
+        for (connections, obfuscated) in [(1, false), (2, false), (1, true), (2, true), (3, true)] {
+            let root = temp_root(&format!("pipeline-{connections}-{obfuscated}"));
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            let port = listener.local_addr().unwrap().port();
+            let second = Arc::new(AtomicBool::new(false));
+            let streamed = Arc::new(AtomicBool::new(false));
+            let seen = streamed.clone();
+            std::thread::spawn(move || {
+                for incoming in listener.incoming().take(8) {
+                    let Ok(mut socket) = incoming else { break; };
+                    let second = second.clone(); let seen = seen.clone();
+                    std::thread::spawn(move || {
+                        let mut reader = BufReader::new(socket.try_clone().unwrap());
+                        socket.write_all(b"200 ready\r\n").unwrap();
+                        loop {
+                            let mut line = String::new();
+                            if reader.read_line(&mut line).unwrap_or(0) == 0 || line.trim() == "QUIT" { break; }
+                            let Some(id) = line.trim().strip_prefix("BODY <").and_then(|s| s.strip_suffix('>')) else { continue; };
+                            let body = match id {
+                                "a1" => yenc_part(b"abc", 6, 1),
+                                "a2" => { second.store(true, Ordering::SeqCst); yenc_part(b"def", 6, 4) }
+                                "b1" => {
+                                    let deadline = Instant::now() + Duration::from_millis(800);
+                                    while !second.load(Ordering::SeqCst) && Instant::now() < deadline { thread::sleep(Duration::from_millis(5)); }
+                                    seen.store(second.load(Ordering::SeqCst), Ordering::SeqCst);
+                                    yenc_part(b"ghi", 3, 1)
+                                }
+                                _ => panic!("unexpected article"),
+                            };
+                            socket.write_all(b"222 article\r\n").unwrap();
+                            socket.write_all(&body).unwrap();
+                            socket.write_all(b"\r\n.\r\n").unwrap();
+                        }
+                    });
+                }
+            });
+            let mut job = mock_job(&root, vec![
+                Segment { number: 1, bytes: 3, id: "a1".into() },
+                Segment { number: 2, bytes: 3, id: "a2".into() },
+            ], 6);
+            job.files.push(DownloadFile { skip: false, name: "second.bin".into(), bytes: 3,
+                segments: vec![Segment { number: 1, bytes: 3, id: "b1".into() }] });
+            if obfuscated { job.files[0].name = "opaque-first".into(); job.files[1].name = "opaque-second".into(); }
+            // Case 3 has two providers with one slot each: discovery must
+            // release both reserved slots before scanning the next file.
+            let servers = if connections == 3 { vec![local_server(port, 1), local_server(port, 1)] }
+                else { vec![local_server(port, connections)] };
+            let snapshot = wait_for(&spawn(job, servers, 0.0));
+            assert_eq!(snapshot.stage, Stage::Completed, "{}", snapshot.message);
+            assert!(streamed.load(Ordering::SeqCst), "later discovery blocked earlier payload ({connections} connections)");
+            assert_eq!(fs::read(root.join("mock.bin")).unwrap(), b"abcdef");
+            assert_eq!(fs::read(root.join(if obfuscated { "mock (2).bin" } else { "second.bin" })).unwrap(), b"ghi");
+            assert!(snapshot.file_verified.iter().all(|v| *v));
+            let _ = fs::remove_dir_all(root);
+        }
     }
 
     #[test]
