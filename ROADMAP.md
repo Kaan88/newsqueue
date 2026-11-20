@@ -7,6 +7,17 @@
 - Open dialogs remember the last successfully opened folder per picker across restarts. Cancel leaves it unchanged; missing folders fall back to Windows defaults.
 - 119 workspace tests passed, including real shell-dialog factories and folder persistence. Hidden scrolling tests passed at 96/192 DPI with 500-row fixtures across all five lists. See `app/UI_POLISH_AUDIT.md` for exact visual coverage and limits.
 
+## Release 1.0.9 (2026-11-20)
+
+Desktop now defaults to **Allow only one instance**, with NZB handoff and independent configuration folders. Original Windows fonts are preserved; repeated connections-divider resizing no longer changes toolbar height.
+
+Web/native shared decimal MB/s caps now update active downloader workers; the
+web divider persists its height, settings categories support hold-and-drag,
+TLS defaults follow the desktop rule, and the web shell prevents text-selection
+cursors outside fields. Caustica uses Inter 14 px; native Windows font and label sizes are unchanged. Shared toolbars start with Connect and include Speed;
+Check for updates is inside desktop About. Temp-directory documentation now
+states accurately that download/resume files go directly into job folders.
+
 ## Active priorities (2026-11-20)
 
 Keep the shared Rust engine, server/Docker deployment, native Win32 desktop and

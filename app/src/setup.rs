@@ -14,6 +14,7 @@ use std::rc::Rc;
 use windows::Win32::Foundation::*;
 use windows::Win32::Graphics::Gdi::*;
 use windows::Win32::UI::Controls::*;
+use windows::Win32::UI::Shell::{SetWindowSubclass, DefSubclassProc};
 use windows::Win32::UI::Input::KeyboardAndMouse::{ReleaseCapture, SetCapture};
 use windows::Win32::UI::WindowsAndMessaging::*;
 
@@ -75,7 +76,7 @@ const SIZE_MODES: [&str; 5] = ["kB", "MB", "GB", "TB", "Automatic"];
 static FIELDS: &[F] = &[
     // Download
     f(0, "download_dir", "Default download folder", K::Dir),
-    f(0, "temp_dir", "Temporary folder", K::Dir),
+    f(0, "temp_dir", "Temporary folder (unused)", K::Dir),
     f(0, "unrar_dir", "Unrar folder", K::Dir),
     f(0, "low_free_space_mb", "Pause when free space drops below", K::Num(0, 1_000_000, "MB")),
     f(0, "autosave_minutes", "Autosave the download queue every", K::Num(1, 999, "min")),
@@ -169,8 +170,10 @@ static FIELDS: &[F] = &[
     f(13, "web_access_key", "Web access password", K::Password),
     f(13, "", "Open http://<this PC>:8480 in a browser. The password is required unless you listen on 127.0.0.1. No TLS: use a VPN or reverse proxy outside your home network. Turning web access off takes effect after a restart.", K::Note),
     // User interface
+    f(14, "single_instance", "Allow only one instance", K::Check),
+    f(14, "", "Applies to the next launch. Separate configuration folders remain independent.", K::Note),
     f(14, "thread_list_visible", "Show the connections list [F9]", K::Check),
-    f(14, "thread_list_height", "Height of the connections list", K::Num(60, 600, "px")),
+    f(14, "thread_list_height", "Height of the connections list", K::Num(60, 8192, "px")),
     f(14, "speed_bytes_mode", "Speed unit", K::Index(&SPEED_MODES)),
     f(14, "queue_bytes_mode", "Queue size unit", K::Index(&SIZE_MODES)),
 ];
@@ -207,6 +210,7 @@ pub fn build(owner: HWND, page: usize) -> HWND {
     let settings = with_engine(|e| e.settings.clone());
     let d = form::create(Some(owner), "Setup", 720, 576, false);
     form::listbox(d, ID_PAGES, &PAGES, 10, 10, 164, 510);
+    unsafe { let _ = SetWindowSubclass(form::item(d, ID_PAGES), Some(category_drag_proc), 1, 0); }
     form::label_id(d, ID_HEAD, "", PANEL_X, 12, 400, 20);
     send(form::item(d, ID_HEAD), WM_SETFONT, bold().0 as usize, 1);
     form::hline(d, PANEL_X, 36, PANEL_W);
@@ -332,6 +336,18 @@ pub fn open(owner: HWND, page: usize) {
             0
         }),
     );
+}
+
+unsafe extern "system" fn category_drag_proc(h: HWND, msg: u32, wp: WPARAM, lp: LPARAM, _id: usize, _data: usize) -> LRESULT {
+    let result = DefSubclassProc(h, msg, wp, lp);
+    if msg == WM_LBUTTONDOWN || (msg == WM_MOUSEMOVE && wp.0 & 1 != 0 && windows::Win32::UI::Input::KeyboardAndMouse::GetCapture() == h) {
+        let hit = send(h, LB_ITEMFROMPOINT, 0, lp.0) as u32;
+        let index = (hit & 0xffff) as usize;
+        if hit >> 16 == 0 && index < PAGES.len() {
+            if let Ok(parent) = GetParent(h) { show_page(parent, index); }
+        }
+    }
+    result
 }
 
 fn show_page(d: HWND, i: usize) {

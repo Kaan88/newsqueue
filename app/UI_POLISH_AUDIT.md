@@ -100,3 +100,70 @@ Open-file pickers save their last successful parent folder by dialog title in th
 ## Release 1.0.8 verification
 
 The packaged executable passed `--ui-scroll-smoke` and `--ui-smoke` at 96/192 DPI. Maximum wheel dispatch was 2.09/4.02 ms respectively. All 119 workspace tests passed (26 desktop, 80 core, 12 server, 1 web). The current egui WASM build succeeded and is included. `installer-test.ps1 -Hidden` passed silent install/reinstall, old-process wait, isolated registry/shortcuts, installed off-screen screenshot, uninstall, and preservation of settings/folder history. The legacy visible wizard/relaunch path was deliberately skipped. The portable archive contains only the executable, tools/licenses, icon, README/roadmap and web assets; no runtime state or downloaded files.
+
+
+## Approved QoL follow-up — 2026-11-20 (local build)
+
+- Shared main toolbar order starts Connect, Add NZB, Pause, Pause for, Speed,
+  then movement, Unpack/Delete, Clean up, Stats, Options. Desktop Version button
+  and direct Help update entry removed; About contains Check for updates.
+- Native Segoe UI has a 14 px minimum at 96 DPI, scaled with DPI. Label heights
+  are measured; longer captions shortened to prevent clipping. Native connections
+  divider can use available space while leaving a usable queue area.
+- Web Sea Glass/Copper use bundled OFL Inter (14 px body); Classic typography is
+  retained. Connections divider supports dragging, remembered browser height,
+  double-click reset and arrow-key adjustment. Settings categories switch during
+  primary-button dragging; ordinary hover leaves the page unchanged. TLS toggles
+  default 119/563 ports only. Text fields retain the I-beam, other surfaces the arrow.
+- Shared custom caps are decimal MB/s; invalid/nonfinite inputs are rejected.
+  New and active workers use the cap. Throttle waits recheck changes and stop/pause
+  every 25 ms, so removing a very low cap does not leave a worker asleep.
+- Temp-folder descriptions corrected: it is reserved/unused; payloads and resume
+  sidecars remain in each job's download folder.
+
+Verification:
+- 136 workspace tests (26 native, 82 core, 14 API, 14 web) passed, including new
+  custom-cap validation/mode switching/API publication and interruptible throttling.
+- `target/qol-audit-final/dpi-{96,120,144,192}`: 129 captures per DPI, 516 total,
+  zero measured parent-boundary/text-height warnings. Covers 15 Setup pages,
+  dialogs, server TLS/auth combinations and main-window size/tab/data variants.
+- Hidden native controls/toolbar/speed-parser and scrolling smoke passed at
+  96/192 DPI; logs in `target/qol-audit-final/`.
+- `web/qa/qol.py`: real egui browser actions against an isolated authenticated demo
+  server; divider persistence, custom cap/No limit, TLS default/custom ports,
+  category drag/no-hover navigation and cursor checks. All three styles in light
+  and dark; all eight settings pages at 390, 760 and 2560 px widths. Evidence in
+  `target/web-audit/qol-shots/`.
+- No real Usenet download or production restart. These changes are not a new
+  published release; existing deployed/installed versions remain separate.
+
+
+### Windows font/divider correction — 2026-11-20
+
+The user requested the original Windows typography. Restored the OS message font
+and original shared label/note/memo geometry; larger Inter remains web-only.
+Reproduced the reported divider defect in an offscreen regression: the toolbar
+height grew from 54 to 56 pixels on the first drag layout. TB_SETROWS may return
+the existing toolbar height when rows do not change, so adding padding each time
+caused cumulative growth. Layout now derives height from actual button bounds.
+The regression drives the real divider WM_MOUSEMOVE handler 80 times at each of
+three window sizes, without capturing or moving the desktop mouse. Native smoke
+and scrolling checks pass at 96/192 DPI. Prior larger-font captures are historical.
+
+Local web review runs independently at http://127.0.0.1:18510 with isolated demo
+state under target/qol-preview; it does not control the deployed Docker queue.
+
+## 1.0.9 release verification
+
+The Windows single-instance option is enabled by default, with an exclusive
+per-profile lock before engine startup. A hidden two-process test exercises
+Unicode NZB handoff through WM_COPYDATA, and tests cover lock release,
+independent profiles, old-settings defaults and explicitly disabling the option.
+The full workspace suite passes: 140 tests (30 desktop, 82 core, 14 server,
+14 web), plus the spawned handoff helper. Diagnostic windows bypass the lock.
+
+The release keeps the original Windows font and includes the repeated-divider
+regression test. Desktop input/focus and tray interaction are not automated
+against the user's live desktop; verification uses offscreen native windows and
+headless browsers. The installer check uses its isolated test identity and
+hidden mode, which skips the visible legacy wizard/relaunch check.

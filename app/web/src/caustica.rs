@@ -103,7 +103,7 @@ pub(crate) const LIGHT_ACCENT: Color32 = Color32::from_rgb(0x08, 0x75, 0x87);
 // The light accent is deepened for readable small text on the light panel.
 #[allow(non_snake_case)]
 pub(crate) fn ACCENT() -> Color32 {
-    pick(Color32::from_rgb(0x60, 0xca, 0xd8), LIGHT_ACCENT)
+    crate::caustica_icons::accent()
 }
 #[allow(non_snake_case)]
 pub(crate) fn DEEP() -> Color32 {
@@ -139,18 +139,18 @@ const NUMBER: f32 = 58.;
 const SANS: &str = "plex";
 const SEMIBOLD: &str = "plex semibold";
 const MONO: &str = "plex mono";
-/// IBM Plex as three named families, each falling back to egui's own fonts (and Hack, which
+/// Inter for UI text and IBM Plex Mono for fixed-width text, each falling back to egui's own fonts (and Hack, which
 /// `theme` appends) for the glyphs Plex lacks. Call after the stock families are final.
 pub(crate) fn fonts(defs: &mut egui::FontDefinitions) {
     use egui::FontFamily;
     for (name, bytes) in [
         (
-            "IBM Plex Sans",
-            &include_bytes!("../../assets/fonts/IBMPlexSans-Regular.ttf")[..],
+            "Inter",
+            &include_bytes!("../../assets/fonts/Inter-Regular.ttf")[..],
         ),
         (
-            "IBM Plex Sans SemiBold",
-            &include_bytes!("../../assets/fonts/IBMPlexSans-SemiBold.ttf")[..],
+            "Inter SemiBold",
+            &include_bytes!("../../assets/fonts/Inter-SemiBold.ttf")[..],
         ),
         (
             "IBM Plex Mono",
@@ -169,9 +169,9 @@ pub(crate) fn fonts(defs: &mut egui::FontDefinitions) {
     let mut mono = stock(defs, FontFamily::Monospace);
     let more: Vec<String> = sans.iter().filter(|f| !mono.contains(f)).cloned().collect();
     mono.extend(more);
-    // Plex leads the stock families too, so everything egui draws itself is in it.
+    // The UI fonts lead the stock families too, so everything egui draws itself is in it.
     for (family, font) in [
-        (FontFamily::Proportional, "IBM Plex Sans"),
+        (FontFamily::Proportional, "Inter"),
         (FontFamily::Monospace, "IBM Plex Mono"),
     ] {
         defs.families
@@ -180,8 +180,8 @@ pub(crate) fn fonts(defs: &mut egui::FontDefinitions) {
             .insert(0, font.to_owned());
     }
     for (family, font, rest) in [
-        (SANS, "IBM Plex Sans", &sans),
-        (SEMIBOLD, "IBM Plex Sans SemiBold", &sans),
+        (SANS, "Inter", &sans),
+        (SEMIBOLD, "Inter SemiBold", &sans),
         (MONO, "IBM Plex Mono", &mono),
     ] {
         let mut list = vec![font.to_owned()];

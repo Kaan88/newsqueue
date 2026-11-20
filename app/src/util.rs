@@ -288,7 +288,19 @@ pub fn draw_icon(c: &Cv, name: &str) {
             c.arrow_down(GREEN, 2.);
             c.rect(3., 19., 18., 3., GRAY);
         }
+        "speed" => {
+            c.arc(3., 5., 18., 18., (21., 14.), (3., 14.), 2., GRAY);
+            c.line(4., 20., 20., 20., 2., GRAY);
+            c.line(12., 15., 18., 7., 2.2, BLUE);
+            c.ell(10.5, 13.5, 3., 3., Some(BLUE), None);
+        }
         "cleanup" => {
+            c.line(18., 2., 10., 13., 2., GRAY);
+            c.poly(&[(8., 11.), (15., 15.), (11., 22.), (3., 17.)], BLUE);
+            c.line(7., 16., 5., 19., 1.2, WHITE);
+            c.line(10., 17., 8., 20., 1.2, WHITE);
+        }
+        "delete" => {
             c.rect(4., 4.5, 16., 2.5, GRAY);
             c.rect(9., 2., 6., 3., GRAY);
             c.poly(&[(6., 8.), (18., 8.), (17., 22.), (7., 22.)], BLUE);

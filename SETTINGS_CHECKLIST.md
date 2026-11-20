@@ -10,7 +10,7 @@ after adding a setting: it needs a field, a default, a control and behaviour.
 |---|---|---|
 | `download_dir` | Setup: Download | core/src/command.rs, core/src/download.rs, core/src/engine.rs, core/src/model.rs, server/src/lib.rs, src/main.rs, src/setup.rs, web/src/settings.rs |
 | `nzb_dir` | Setup: NZB | core/src/engine.rs, core/src/model.rs, core/src/rss.rs, src/cli.rs, src/main.rs, src/setup.rs, web/src/settings.rs |
-| `temp_dir` | Setup: Download | core/src/command.rs, core/src/download.rs, core/src/engine_tests.rs, core/src/model.rs, core/src/par2.rs, core/src/unrar.rs, server/src/lib.rs, src/main.rs, src/setup.rs, src/update.rs, web/src/settings.rs |
+| `temp_dir` | Setup: Download (reserved/unused) | Persisted/rebased and created by `ensure_dirs`; download payloads and `.nqpart` resume files use each collection’s download folder. |
 | `unrar_dir` | Setup: Download | core/src/engine_tests.rs, core/src/model.rs, core/src/unrar.rs, src/main.rs, src/setup.rs, web/src/settings.rs |
 | `max_speed_kbps` | Setup: Connection | core/src/engine.rs, src/main.rs, src/setup.rs |
 | `max_speed_mbps` | Setup: Connection (follows the line speed) | core/src/engine.rs, src/main.rs, src/setup.rs, web/src/settings.rs |
@@ -100,3 +100,5 @@ after adding a setting: it needs a field, a default, a control and behaviour.
 | `unrar_path` | Setup: Unpack | core/src/engine.rs, core/src/tools.rs, src/setup.rs, web/src/settings.rs |
 | `par2_path` | Setup: Par2 | core/src/engine.rs, core/src/tools.rs, src/setup.rs, web/src/settings.rs |
 | `sevenzip_path` | Setup: Unpack | core/src/engine.rs, core/src/tools.rs, src/setup.rs, web/src/settings.rs |
+
+- `single_instance` — Desktop only, default `true`; Setup → User interface → **Allow only one instance**. A per-configuration exclusive lock prevents a second engine; launches forward absolute NZB paths and restore the existing window. Applies on next launch. Diagnostics bypass the lock.

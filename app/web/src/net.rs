@@ -105,6 +105,7 @@ pub struct Snapshot {
     pub speed_bps: f64,
     pub speed_limit_bps: f64,
     pub speed_limit_tag: Option<u8>,
+    pub custom_speed_limit_mbs: Option<f64>,
     pub queue_remaining_bytes: f64,
     pub queue: Vec<QueueRow>,
     pub log_tail: Vec<LogLine>,

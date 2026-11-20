@@ -43,6 +43,7 @@ pub struct Engine {
     pub pause_minutes: u32,
     pub resume_ids: Vec<u64>,
     pub speed_limit_tag: Option<u8>,
+    pub custom_speed_limit_mbs: Option<f64>,
     pub speed_ceiling_mbps: f64,
     pub auto_speed: bool,
     pub auto_speed_ticks: u32,
@@ -144,6 +145,7 @@ impl Engine {
         let now = Instant::now();
         let mut engine = Self {
             speed_limit_tag: settings.startup_speed_limit,
+            custom_speed_limit_mbs: None,
             speed_ceiling_mbps: settings.max_speed_mbps,
             auto_speed: settings.max_speed_kbps <= 0.0,
             settings,
@@ -321,6 +323,7 @@ impl Engine {
     /// Global bandwidth limit in bytes per second. `None` means "No limit"
     /// and is 0 (unthrottled), matching function 0x817178.
     pub fn speed_limit_bps(&self) -> f64 {
+        if let Some(mbs) = self.custom_speed_limit_mbs { return mbs * 1_000_000.0; }
         match self.speed_limit_tag {
             Some(tag) => speed_limit_bps(tag, self.speed_ceiling_mbps),
             None => 0.0,
@@ -469,7 +472,15 @@ impl Engine {
         self.toast(format!("Paused for {minutes} min"));
     }
 
+    pub fn set_custom_speed_limit(&mut self, mbs: f64) {
+        self.custom_speed_limit_mbs = Some(mbs);
+        self.speed_limit_tag = None;
+        self.log("Connection", &format!("Speed limit set to {mbs:.2} MB/s."));
+        self.toast(format!("Speed limit {mbs:.2} MB/s"));
+    }
+
     pub fn set_speed_limit(&mut self, tag: Option<u8>) {
+        self.custom_speed_limit_mbs = None;
         self.speed_limit_tag = tag;
         match tag {
             Some(t) => {
@@ -1418,6 +1429,7 @@ impl Engine {
             && !self.settings.enabled_servers().is_empty();
 
         if let Some(active) = &self.active_dl {
+            active.throttle_bps.store(self.speed_limit_bps().to_bits(), Ordering::Relaxed);
             let collection_active = self
                 .queue
                 .iter()

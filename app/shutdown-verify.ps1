@@ -41,7 +41,7 @@ try {
     $main = [IntPtr]::Zero
     for ($i = 0; $i -lt 100 -and $main -eq [IntPtr]::Zero; $i++) {
         Start-Sleep -Milliseconds 200
-        $h = [ShutdownCheck]::FindWindow([IntPtr]::Zero, 'NewsQueue 1.0.8')
+        $h = [ShutdownCheck]::FindWindow([IntPtr]::Zero, 'NewsQueue 1.0.9')
         $owner = 0
         if ($h -ne [IntPtr]::Zero) { [void][ShutdownCheck]::GetWindowThreadProcessId($h, [ref]$owner) }
         if ($owner -eq $proc.Id) { $main = $h }

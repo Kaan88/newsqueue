@@ -6,12 +6,12 @@ A Rust Usenet downloader with a native Win32 desktop, a headless server and
 an egui/WASM web UI. The shared engine, queue and settings live in `app/`.
 Originally inspired by AltBinz, NewsQueue now follows its own product direction.
 
-The current release combines **Windows 1.0.8** with **server/web 1.0.8-web.1**.
+The current release is **1.0.9** for Windows, server and web.
 
 ## Download and run
 
-- **Windows x64:** use the [1.0.8 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.8).
-  These are the existing, tested native Compact release binaries, unchanged.
+- **Windows x64:** use the [1.0.9 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.9).
+  The native Compact design retains its original Windows font.
 - **Docker / web UI:** use the Linux amd64 image archive and Compose files from
   the same release. Follow the [Docker Compose guide](app/DOCKER.md) for setup,
   authentication, persistent folders, updates and source builds.
@@ -21,7 +21,7 @@ Quick start after downloading the image, `compose.yaml` and `env.example`:
 ```sh
 cp env.example .env
 # Edit .env and replace NQ_API_KEY with a long random key.
-docker load -i NewsQueue-1.0.8-web.1-linux-amd64.tar.gz
+docker load -i NewsQueue-1.0.9-linux-amd64.tar.gz
 docker compose up -d --no-build
 ```
 
@@ -32,12 +32,36 @@ The image archive needs no registry account. The default port is loopback-only.
 The updated web UI restores **Caustica** alongside **Classic**, with independent
 **System / Light / Dark** preferences. It also fixes asynchronous server saves
 and preserves stored credentials when editing or removing server rows.
-Classic's layout and appearance remain intact. The existing Windows assets
-retain their originally bundled web UI; use the Docker build for the complete
-updated server/web pair.
+Classic's layout and appearance remain intact. Windows includes the same updated
+web UI for its optional Web access feature.
 
-For the matching source, download `NewsQueue-1.0.8-web.1-source.zip` or check
-out `web-v1.0.8-1-release`. The original `v1.0.8` tag remains tied to the Windows build.
+For matching source, download `NewsQueue-1.0.9-source.zip` or check out `v1.0.9`.
+
+## New in 1.0.9
+
+Desktop **Setup → User interface → Allow only one instance** is enabled by
+default, including for existing configurations. Opening NewsQueue again restores
+the running window and forwards NZB files to it. The setting applies on the next
+launch; separate configuration folders remain independent. The connections
+divider no longer grows the toolbar or progressively shrinks the queue.
+
+The web/native build adds custom speed caps in decimal MB/s, applied live
+across all download connections. Percentage limits and No limit remain available.
+The web connections divider is draggable and remembers its height in the browser.
+Caustica uses bundled Inter at 14 px; Classic retains its original font. Native
+controls retain the original Windows font and sizing. Both toolbars begin
+with Connect and expose the same common actions, including Speed. Desktop update
+checking is in About; desktop-only actions remain in menus.
+
+Hold the primary mouse button and drag over settings categories to switch pages.
+The web TLS checkbox now switches the standard ports 119/563 while preserving
+custom ports. Non-editable web surfaces use an arrow cursor.
+
+**Temporary folder:** this is currently a reserved setting, not an operational
+incomplete-download staging area. Partial payloads and `.nqpart` resume sidecars
+stay in each job's download folder. The Docker `/incomplete` mount is retained for
+compatibility. Custom speed caps are session controls, like percentage caps; the
+existing startup-speed setting still determines the limit after a restart.
 
 ## Features
 
@@ -119,7 +143,7 @@ Build the per-user installer:
 .\build-installer.ps1
 ```
 
-This writes `app/dist/NewsQueue-1.0.8-Setup.exe` and a `.sha256` checksum. The
+This writes `app/dist/NewsQueue-1.0.9-Setup.exe` and a `.sha256` checksum. The
 installer copies the app and tools to `%LOCALAPPDATA%\Programs\NewsQueue`,
 creates Start Menu and Desktop shortcuts, registers Add/Remove Programs, and
 includes an uninstaller. It does not need administrator rights.

@@ -8,6 +8,7 @@
 
 mod skin;
 mod caustica;
+mod caustica_icons;
 mod audit;
 mod theme;
 mod app;

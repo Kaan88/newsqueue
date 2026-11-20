@@ -1,15 +1,15 @@
 //! Independent web skin and brightness preferences, palettes, fonts and icons.
 //! Classic retains its original renderer and DejaVu metrics. Caustica uses the
-//! recovered Instrument recipes and IBM Plex without changing the app layout.
+//! Instrument recipes and Inter without changing the app layout.
 
 use egui::{Color32, FontFamily, FontId, Painter, Pos2, Rect, Shape, Stroke, pos2};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Theme { Classic, Caustica }
+pub enum Theme { Classic, Caustica, CausticaCopper }
 impl Theme {
-    pub fn from_saved(value: Option<&str>) -> Self { if value == Some("classic") { Self::Classic } else { Self::Caustica } }
-    pub fn key(self) -> &'static str { match self { Self::Classic => "classic", Self::Caustica => "caustica" } }
+    pub fn from_saved(value: Option<&str>) -> Self { match value { Some("classic") => Self::Classic, Some("caustica-copper") => Self::CausticaCopper, _ => Self::Caustica } }
+    pub fn key(self) -> &'static str { match self { Self::Classic => "classic", Self::Caustica => "caustica", Self::CausticaCopper => "caustica-copper" } }
 }
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Brightness { System, Light, Dark }
@@ -21,13 +21,15 @@ impl Brightness {
 static CAUSTICA: AtomicBool = AtomicBool::new(false);
 pub fn is_caustica() -> bool { CAUSTICA.load(Ordering::Relaxed) }
 pub fn configure(ctx: &egui::Context, theme: Theme, dark: bool) {
-    let changed = CAUSTICA.swap(theme == Theme::Caustica, Ordering::Relaxed) != (theme == Theme::Caustica);
+    let palette_changed = crate::caustica_icons::configure(theme == Theme::CausticaCopper);
+    let changed = CAUSTICA.swap(theme != Theme::Classic, Ordering::Relaxed) != (theme != Theme::Classic);
     crate::caustica::set_light(!dark);
-    if changed { install(ctx, dark); } else { set_dark(ctx, dark); }
+    if changed || palette_changed { install(ctx, dark); } else { set_dark(ctx, dark); }
 }
 const CAUSTICA_LIGHT_WARNING: Color32 = rgb(0x98,0x52,0x00);
 fn color(name: &str, light: Color32, dark: Color32) -> Color32 {
     if !is_caustica() { return pick(light, dark); }
+    if let Some(c) = crate::caustica_icons::color(name) { return c; }
     use crate::caustica as c;
     match name {
         "FACE" => c::PANEL(), "HILIGHT" | "LIGHT" => c::LIGHT_LINE(),
@@ -99,11 +101,11 @@ pub const BODY: f32 = 12.0;
 pub const SMALL: f32 = 11.0;
 
 pub fn font(size: f32) -> FontId {
-    if is_caustica() { crate::caustica::sans(size) } else { FontId::proportional(size) }
+    if is_caustica() { crate::caustica::sans(size + 2.0) } else { FontId::proportional(size) }
 }
 
 pub fn bold(size: f32) -> FontId {
-    if is_caustica() { crate::caustica::semibold(size) } else { FontId::new(size, FontFamily::Name("bold".into())) }
+    if is_caustica() { crate::caustica::semibold(size + 2.0) } else { FontId::new(size, FontFamily::Name("bold".into())) }
 }
 
 pub fn mono(size: f32) -> FontId {
@@ -309,6 +311,7 @@ fn arrow(p: &mut Pen, g: &Grid, up: bool, y_shift: f32) {
 }
 
 pub fn paint_icon(p: &Painter, rect: Rect, icon: Icon, enabled: bool) {
+    if is_caustica() { crate::caustica_icons::icon(p, rect, icon, enabled); return; }
     let s = rect.width().min(rect.height());
     let g = Grid { o: rect.center() - egui::vec2(s / 2.0, s / 2.0), k: s / 16.0 };
     let mut pen = Pen { p, out: Vec::new() };
@@ -559,6 +562,9 @@ mod preference_tests {
     fn restored_skin_and_legacy_brightness_are_independent() {
         assert_eq!(Theme::from_saved(None), Theme::Caustica);
         assert_eq!(Theme::from_saved(Some("classic")), Theme::Classic);
+        assert_eq!(Theme::from_saved(Some("caustica")), Theme::Caustica);
+        assert_eq!(Theme::from_saved(Some("caustica-copper")), Theme::CausticaCopper);
+        assert_eq!(Theme::from_saved(Some(Theme::CausticaCopper.key())), Theme::CausticaCopper);
         assert_eq!(Brightness::from_saved(Some("dark")), Brightness::Dark);
         assert_eq!(Brightness::from_saved(Some("light")), Brightness::Light);
         assert_eq!(Brightness::from_saved(None), Brightness::System);

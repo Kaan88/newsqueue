@@ -32,7 +32,7 @@ fn fields(page: usize) -> Vec<(&'static str, &'static str, Kind, &'static str)> 
     match page {
         1 => vec![
             ("download_dir", "Download folder", Text, ""),
-            ("temp_dir", "Temporary folder", Text, ""),
+            ("temp_dir", "Temporary folder", Text, "Currently unused. Partial downloads stay in each job’s download folder."),
             ("unrar_dir", "Unpack folder", Text, "Empty: unpack into the download folder."),
             ("nzb_dir", "NZB folder", Text, ""),
             ("auto_import_folder", "Watch folder", Text, "NZB files dropped here are queued."),
@@ -113,6 +113,7 @@ const PAGE_H: f32 = 520.0;
 #[derive(Default)]
 pub struct SettingsPage {
     pub page: usize,
+    category_drag: bool,
     /// Edited copy of the public settings; None until first shown.
     draft: Option<Map<String, Value>>,
     /// The settings the draft started from, to send only changes.
@@ -236,11 +237,13 @@ impl SettingsPage {
 
     /// The list of pages on the left, like a property sheet's tree.
     fn page_list(&mut self, ui: &mut Ui, height: f32) {
-        let (rect, _) = ui.allocate_exact_size(vec2(150.0, height), Sense::hover());
+        let row_h = if theme::is_caustica() { 28.0 } else { 22.0 };
+        let (rect, _) = ui.allocate_exact_size(vec2(if theme::is_caustica() { 172.0 } else { 150.0 }, height), Sense::hover());
+        if !ui.input(|i| i.pointer.primary_down()) { self.category_drag = false; }
         ui.painter().rect_filled(rect, 0.0, WINDOW());
         skin::edge(ui.painter(), rect, Edge::Sunken);
         for (i, name) in PAGES.iter().enumerate() {
-            let r = Rect::from_min_size(pos2(rect.left() + 2.0, rect.top() + 3.0 + i as f32 * 22.0), vec2(rect.width() - 4.0, 22.0));
+            let r = Rect::from_min_size(pos2(rect.left() + 2.0, rect.top() + 3.0 + i as f32 * row_h), vec2(rect.width() - 4.0, row_h));
             let resp = ui.interact(r, ui.scope_id().with(("optpage", i)), Sense::click());
             crate::audit::item(ui, PAGES[i], r);
             let tw = skin::text_width(ui, name, theme::font(BODY));
@@ -252,7 +255,9 @@ impl SettingsPage {
                 p.rect_filled(tr, 0.0, SEL());
             }
             p.text(pos2(tr.left() + 3.0, r.center().y), Align2::LEFT_CENTER, *name, theme::font(BODY), if sel { SEL_TEXT() } else { TEXT() });
-            if resp.clicked() {
+            let pressed = resp.contains_pointer() && ui.input(|i| i.pointer.primary_pressed());
+            if pressed { self.category_drag = true; }
+            if resp.clicked() || pressed || (self.category_drag && resp.contains_pointer()) {
                 self.page = i;
             }
         }
@@ -426,7 +431,7 @@ impl SettingsPage {
             self.server_sel = self.server_sel.min(servers.len().saturating_sub(1));
         }
         let Some(server) = servers.get_mut(self.server_sel) else { return };
-        let lw = if narrow { 96.0 } else { 120.0 };
+        let lw = if narrow && !theme::is_caustica() { 96.0 } else { 120.0 };
         skin::group(ui, "Server", |ui| {
             let fw = (ui.available_width() - lw - 8.0).max(100.0);
             let mut on = server["enabled"].as_bool().unwrap_or(true);
@@ -456,6 +461,10 @@ impl SettingsPage {
             let mut ssl = server["ssl"].as_bool().unwrap_or(true);
             if skin::checkbox(ui, &mut ssl, "Secure connection (TLS)").changed() {
                 server["ssl"] = ssl.into();
+                let port = server["port"].as_u64().unwrap_or(563);
+                if (ssl && port == 119) || (!ssl && port == 563) {
+                    server["port"] = (if ssl { 563u64 } else { 119u64 }).into();
+                }
             }
             if let Some(used) = server["used_bytes"].as_f64().filter(|u| *u > 0.0) {
                 skin::note(ui, &format!("Used this month: {}", crate::app::size(used)));

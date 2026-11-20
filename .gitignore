@@ -40,3 +40,5 @@ __pycache__/
 
 # screenshots.ps1 -Check output
 app/shots/check/
+
+/app/newsqueue-instance.lock

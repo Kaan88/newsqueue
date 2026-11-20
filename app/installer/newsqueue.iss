@@ -1,5 +1,5 @@
 ; NewsQueue per-user installer (Inno Setup 7). Built by build-installer.ps1:
-;   ISCC /DAppVersion=1.0.8 /DDistDir=<dist\NewsQueue-1.0.8> /DOutputDir=<dist> newsqueue.iss
+;   ISCC /DAppVersion=1.0.9 /DDistDir=<dist\NewsQueue-1.0.9> /DOutputDir=<dist> newsqueue.iss
 ;
 ; Copies from 1.0.2 to 1.0.5 update themselves by starting the setup with
 ; environment variables only (NQ_SILENT, NQ_INSTALL_DIR, NQ_NO_DESKTOP,
@@ -8,7 +8,7 @@
 ; /VERYSILENT /DIR= instead.
 
 #ifndef AppVersion
-  #define AppVersion "1.0.8"
+  #define AppVersion "1.0.9"
 #endif
 #ifndef DistDir
   #define DistDir "..\dist\NewsQueue-" + AppVersion

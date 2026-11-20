@@ -17,6 +17,7 @@ mod util;
 #[allow(dead_code)] // Legacy evidence tests; hooks are not compiled into the app.
 mod classic;
 mod cli;
+mod instance;
 mod dialogs;
 mod form;
 mod pick;
@@ -281,6 +282,20 @@ fn main() {
     let ui_smoke = args.iter().any(|arg| arg == "--ui-smoke");
     let audit = args.windows(2).find(|a| a[0] == "--ui-audit").map(|a| a[1].clone());
     let demo = screenshot.is_some() || ui_smoke || scroll_smoke || audit.is_some();
+    let settings = Settings::load();
+    let _instance_lock = if !demo && settings.single_instance {
+        match instance::lock(&app_base()) {
+            Ok(guard) => Some(guard),
+            Err(error) => {
+                if error.raw_os_error() != Some(32) || !instance::forward(&app_base(), &nzbs) {
+                    unsafe { let _ = MessageBoxW(None,
+                        w!("NewsQueue could not open this configuration. Another instance may be starting or not responding. Please try again shortly."),
+                        w!("NewsQueue"), MB_OK | MB_ICONERROR); }
+                }
+                return;
+            }
+        }
+    } else { None };
     unsafe {
         let _ = CoInitializeEx(None, COINIT_APARTMENTTHREADED);
         let icc = INITCOMMONCONTROLSEX {
@@ -298,7 +313,7 @@ fn main() {
     init_fonts();
     form::register_classes();
 
-    let mut host = if demo { EngineHost::new(demo_engine()) } else { EngineHost::new(Engine::new(Settings::load(), false)) };
+    let mut host = if demo { EngineHost::new(demo_engine()) } else { EngineHost::new(Engine::new(settings, false)) };
     if !demo {
         host.log("Main", "Native Win32 front end.");
         host.start(TICK_INTERVAL);
@@ -334,6 +349,7 @@ fn main() {
     }
 
     let main = create_main();
+    if _instance_lock.is_some() { unsafe { instance::register(main, &app_base()); } }
     unsafe {
         SetTimer(Some(main), TIMER_REFRESH, 250, None);
     }
@@ -455,6 +471,12 @@ fn run_ui_smoke(main: HWND) {
     show_offscreen(main);
     form::audit_color_cleanup(main);
     dialogs::audit_smoke(main);
+    let toolbar = ui(|u| u.tb);
+    for id in [ID_CONNECT, ID_NZB, ID_SPEED, ID_TOP, ID_UNPACK, ID_DELETE, ID_SETUP] {
+        assert!(send(toolbar, TB_COMMANDTOINDEX, id as usize, 0) >= 0);
+    }
+    assert_eq!(send(toolbar, TB_COMMANDTOINDEX, ID_CONNECT as usize, 0), 0);
+    assert_eq!(send(toolbar, TB_COMMANDTOINDEX, ID_VERSION as usize, 0), -1);
     refresh();
     let (queue, filter, pages) = ui(|u| (u.queue, u.qfilter, u.pages));
     assert!(send(queue, LVM_GETITEMCOUNT, 0, 0) > 0);
@@ -512,6 +534,17 @@ fn run_ui_smoke(main: HWND) {
         for (width, height) in [(760, 480), (900, 600), (1280, 820)] {
             SetWindowPos(main, None, 0, 0, s(width), s(height), SWP_NOMOVE | SWP_NOZORDER | SWP_NOACTIVATE).unwrap();
             layout(main);
+            let stable_height = wnd_h(ui(|u|u.tb));
+            for step in 0..80 {
+                // Exercise the actual drag handler without capturing the desktop mouse.
+                let page = ui(|u|u.pages[0]);
+                let mut bounds = RECT::default(); GetClientRect(page, &mut bounds).unwrap();
+                ui(|u|u.splitter_drag = Some(1));
+                let y = (bounds.bottom / 2 + (step % 21) - 10).max(1);
+                send(page, WM_MOUSEMOVE, 1, ((y as isize) << 16) | 10);
+                ui(|u|u.splitter_drag = None);
+                assert_eq!(wnd_h(ui(|u|u.tb)), stable_height, "toolbar height drift during splitter drag at step {step}");
+            }
             let toolbar=ui(|u|u.tb);
             let mut bounds=RECT::default();
             GetClientRect(toolbar,&mut bounds).unwrap();
@@ -654,27 +687,23 @@ fn create_main() -> HWND {
             &[
                 Some(Tb(ID_CONNECT, "connect", "Connect", "Connect to / disconnect from the Usenet servers", true)),
                 None,
+                Some(Tb(ID_NZB, "nzb", "Add NZB", "Import NZB files [Ctrl+O; hold Shift for paused]", false)),
                 Some(Tb(ID_PAUSE, "pause", "Pause", "Pause/resume downloading [F1]", true)),
                 Some(Tb(ID_PAUSEFOR, "pausefor", "Pause for", "Pause for a number of minutes", false)),
+                Some(Tb(ID_SPEED, "speed", "Speed", "Set the download speed limit", false)),
                 None,
-                Some(Tb(ID_NZB, "nzb", "NZB", "Import NZB files [hold Shift for paused]", false)),
+                Some(Tb(ID_TOP, "top", "Top", "Move to top", false)),
+                Some(Tb(ID_UP, "up", "Up", "Move up [Ctrl+Up]", false)),
+                Some(Tb(ID_DOWN, "down", "Down", "Move down [Ctrl+Down]", false)),
+                Some(Tb(ID_BOTTOM, "bottom", "Bottom", "Move to bottom", false)),
                 None,
-                Some(Tb(ID_DOWNLOAD, "download", "Download", "Open the download folder [hold Shift for the unrar folder]", false)),
+                Some(Tb(ID_UNPACK, "unrar", "Unpack", "Unpack selected collection", false)),
+                Some(Tb(ID_DELETE, "delete", "Delete", "Delete selected collection [Del]", false)),
                 None,
-                Some(Tb(ID_CLEANUP, "cleanup", "Cleanup", "Remove finished entries and completed PAR2 sets", false)),
-                None,
-                Some(Tb(ID_SCHEDULER, "scheduler", "Scheduler", "Enable/disable the scheduler", true)),
-                None,
-                Some(Tb(ID_SHUTDOWN, "shutdown", "Shutdown", "Shut down when all tasks are done", true)),
-                None,
-                Some(Tb(ID_SETUP, "setup", "Setup", "Setup options", false)),
-                None,
-                Some(Tb(ID_HOME, "home", "Home", "Project home page", false)),
-                Some(Tb(ID_VERSION, "version", "Version?", "Check for a new version", false)),
-                Some(Tb(ID_ABOUT, "about", "About", "About NewsQueue", false)),
-                Some(Tb(ID_NOTES, "notes", "Notes", "Notes", false)),
+                Some(Tb(ID_CLEANUP, "cleanup", "Clean up", "Remove finished entries and completed PAR2 sets", false)),
                 Some(Tb(ID_STATS, "stats", "Stats", "Statistics and download history", false)),
-                Some(Tb(ID_TRAY, "tray", "To tray", "Minimize to the tray", false)),
+                None,
+                Some(Tb(ID_SETUP, "setup", "Options", "Options [Ctrl+S]", false)),
             ],
             true,
         );
@@ -866,7 +895,7 @@ fn menu_bar() -> HMENU {
             ],
         ),
         ("&Tools", &[(ID_SETUP, "&Setup...\tCtrl+S"), (ID_RSS_FEEDS, "&RSS feeds..."), SEP, (ID_SCHEDULER, "Use the s&cheduler"), (ID_SHUTDOWN, "Shut &down when done...")]),
-        ("&Help", &[(ID_HOME, "&Home page"), (ID_VERSION, "Check for &updates..."), SEP, (ID_ABOUT, "&About NewsQueue")]),
+        ("&Help", &[(ID_HOME, "&Home page"), SEP, (ID_ABOUT, "&About NewsQueue")]),
     ];
     unsafe {
         let bar = CreateMenu().unwrap_or_default();
@@ -935,7 +964,7 @@ fn conns_height(page_h: i32) -> i32 {
         return 0;
     }
     let h = setting("thread_list_height").as_f64().unwrap_or(THREAD_PANEL_HEIGHT as f64) as i32;
-    s(h.clamp(60, 600)).min(page_h / 2)
+    s(h.max(60)).min((page_h - s(100)).max(s(60)))
 }
 
 fn layout(h: HWND) {
@@ -985,9 +1014,18 @@ fn layout(h: HWND) {
     let rows=((total+w.max(1)-1)/w.max(1)).max(1);
     let mut tr=RECT::default();
     send(tb,TB_SETROWS,(rows as usize)|0x10000,&mut tr as *mut _ as isize);
-    let tbh=(tr.bottom-tr.top).max(hi(send(tb,TB_GETBUTTONSIZE,0,0) as isize))+s(4);
+    // TB_SETROWS can return the current window height when the row count
+    // does not change. Adding padding to it makes every layout grow the bar.
+    // Measure button bounds instead: independent of the previous window size.
+    let mut bottom = 0;
+    for index in 0..send(tb, TB_BUTTONCOUNT, 0, 0).max(0) as usize {
+        let mut item = RECT::default();
+        send(tb, TB_GETITEMRECT, index, &mut item as *mut _ as isize);
+        bottom = bottom.max(item.bottom);
+    }
+    let tbh = bottom + s(2);
     mv(tb, 0, 0, w, tbh);
-    let widths=[90,95,120,100,105,100,120,120,140];
+    let widths=[155,95,120,100,105,100,120,120,140];
     let total=s(widths.iter().sum());
     let mut edge=0;
     let edges:Vec<i32>=widths.iter().enumerate().map(|(i,width)| {
@@ -1213,6 +1251,10 @@ fn refresh() {
     send(tb, TB_CHECKBUTTON, ID_PAUSE as usize, flags.1 as isize);
     send(tb, TB_CHECKBUTTON, ID_SCHEDULER as usize, flags.2 as isize);
     send(tb, TB_CHECKBUTTON, ID_SHUTDOWN as usize, armed as isize);
+    let selected = selected().is_some();
+    for id in [ID_TOP, ID_UP, ID_DOWN, ID_BOTTOM, ID_UNPACK, ID_DELETE] {
+        send(tb, TB_ENABLEBUTTON, id as usize, selected as isize);
+    }
     let timer = ui(|u| u.rss_buttons.last().copied()).unwrap_or_default();
     if form::checked(timer) != flags.3 {
         form::set_check(timer, flags.3);
@@ -1236,10 +1278,10 @@ fn filter_lines(snap: &Snapshot, filter: &str) -> Vec<usize> {
 fn status_texts(snap: &Snapshot) -> [String; 9] {
     let speed_mode = snap.settings.get("speed_bytes_mode").and_then(|v| v.as_u64()).unwrap_or(3) as u8;
     let queue_mode = snap.settings.get("queue_bytes_mode").and_then(|v| v.as_u64()).unwrap_or(1) as u8;
-    let limit = match snap.speed_limit_tag {
+    let limit = if let Some(mbs) = snap.custom_speed_limit_mbs { format!("Limit {mbs:.2} MB/s") } else { match snap.speed_limit_tag {
         Some(t) => format!("Limit {}%", t as u32 * 10),
         None => "No limit".into(),
-    };
+    }};
     let eta = if snap.speed_bps > 0.0 && snap.queue_remaining_bytes > 0.0 {
         format!("ETA {}", format_eta(snap.queue_remaining_bytes / snap.speed_bps))
     } else {
@@ -1362,6 +1404,13 @@ fn pre_translate(msg: &MSG) -> bool {
 
 unsafe extern "system" fn main_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
     match m {
+        WM_COPYDATA => instance::receive(h, lp),
+        instance::OPEN_PENDING => {
+            let _ = ShowWindow(h, if IsIconic(h).as_bool() { SW_RESTORE } else { SW_SHOW });
+            let _ = SetForegroundWindow(h);
+            for path in instance::take_pending() { add_nzb(path, false); }
+            LRESULT(0)
+        }
         WM_SIZE => {
             if wp.0 == SIZE_MINIMIZED as usize && !ui(|u| u.demo) && setting_bool("minimize_to_tray") && tray::ready() {
                 tray::hide_main_window(h.0 as isize);
@@ -1546,7 +1595,7 @@ unsafe extern "system" fn page_proc(h: HWND, m: u32, wp: WPARAM, lp: LPARAM) -> 
                 let y = hi(lp.0) as i16 as i32;
                 let mut rc = RECT::default();
                 let _ = GetClientRect(h, &mut rc);
-                let ht = ((rc.bottom - y) * 96 / DPI.load(std::sync::atomic::Ordering::Relaxed) as i32).clamp(60, 600);
+                let ht = ((rc.bottom - y) * 96 / DPI.load(std::sync::atomic::Ordering::Relaxed) as i32).clamp(60, ((rc.bottom - s(100)).max(s(60)) * 96 / DPI.load(std::sync::atomic::Ordering::Relaxed) as i32).max(60));
                 with_engine(|e| e.settings.thread_list_height = ht as f32);
                 ui(|u| {
                     if let Some(map) = u.snap.settings.as_object_mut() {

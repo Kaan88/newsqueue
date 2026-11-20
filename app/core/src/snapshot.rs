@@ -120,6 +120,7 @@ pub struct Snapshot {
     pub speed_limit_bps: f64,
     /// The speed-limit step (1-9 = 10-90 %), none = full speed.
     pub speed_limit_tag: Option<u8>,
+    pub custom_speed_limit_mbs: Option<f64>,
     pub queue_remaining_bytes: f64,
     pub queue: Vec<QueueRow>,
     /// The newest log lines, oldest first.
@@ -158,6 +159,7 @@ impl Snapshot {
             speed_bps: engine.speed_bps,
             speed_limit_bps: engine.speed_limit_bps(),
             speed_limit_tag: engine.speed_limit_tag,
+            custom_speed_limit_mbs: engine.custom_speed_limit_mbs,
             queue_remaining_bytes: engine.queue_remaining(),
             queue: engine
                 .queue

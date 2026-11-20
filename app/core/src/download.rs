@@ -12,7 +12,7 @@ use std::fs;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
@@ -55,6 +55,7 @@ pub struct DownloadSnapshot {
 }
 
 pub struct ActiveDownload {
+    pub throttle_bps: Arc<AtomicU64>,
     pub id: u64,
     pub snapshot: Arc<Mutex<DownloadSnapshot>>,
     pub pause: Arc<AtomicBool>,
@@ -265,13 +266,15 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         current_file: String::new(),
         missing: 0,
     }));
+    let throttle = Arc::new(AtomicU64::new(throttle_bps.to_bits()));
+    let throttle2 = throttle.clone();
     let pause = Arc::new(AtomicBool::new(false));
     let stop = Arc::new(AtomicBool::new(false));
     let snap = snapshot.clone();
     let pause2 = pause.clone();
     let stop2 = stop.clone();
     thread::spawn(move || {
-        let result = run_job(&job, &servers, throttle_bps, &pause2, &stop2, &snap);
+        let result = run_job(&job, &servers, &throttle2, &pause2, &stop2, &snap);
         if let Err(e) = result {
             if let Ok(mut s) = snap.lock() {
                 if s.stage != Stage::Stopped {
@@ -283,6 +286,7 @@ pub fn spawn(job: DownloadJob, servers: Vec<Server>, throttle_bps: f64) -> Activ
         }
     });
     ActiveDownload {
+        throttle_bps: throttle,
         id,
         snapshot,
         pause,
@@ -299,7 +303,7 @@ fn snapshot_set(snap: &Mutex<DownloadSnapshot>, f: impl FnOnce(&mut DownloadSnap
 fn run_job(
     job: &DownloadJob,
     servers: &[Server],
-    throttle_bps: f64,
+    throttle_bps: &Arc<AtomicU64>,
     pause: &Arc<AtomicBool>,
     stop: &Arc<AtomicBool>,
     snap: &Arc<Mutex<DownloadSnapshot>>,
@@ -578,11 +582,6 @@ fn run_job(
     }
     assignment.truncate(tasks.len().max(1));
     let worker_count = assignment.len().max(1);
-    let per_worker_throttle = if throttle_bps > 0.0 {
-        throttle_bps / worker_count as f64
-    } else {
-        0.0
-    };
     snapshot_set(snap, |s| {
         s.stage = Stage::Downloading;
         s.bytes = done_bytes;
@@ -622,6 +621,7 @@ fn run_job(
         let snap = Arc::clone(snap);
         let cache = cache.clone();
         let proxy = proxy.clone();
+        let throttle = throttle_bps.clone();
         handles.push(thread::spawn(move || {
             let context = WorkerContext {
                 server_index,
@@ -634,7 +634,8 @@ fn run_job(
                 connect_errors: &connect_errors,
                 cache: &cache,
                 proxy: &proxy,
-                throttle_bps: per_worker_throttle,
+                throttle_bps: &throttle,
+                worker_count,
                 retry_count,
                 retry_delay,
                 priority,
@@ -764,6 +765,18 @@ impl TaskQueue {
     }
 }
 
+/// Pay an article's bandwidth budget in short slices so live limit changes,
+/// pause and cancellation never wait behind a long low-speed sleep.
+fn throttle_wait(mut bytes: f64, limit: &AtomicU64, workers: usize, stop: &AtomicBool, pause: &AtomicBool) {
+    while bytes > 0.0 && !stop.load(Ordering::Relaxed) && !pause.load(Ordering::Relaxed) {
+        let rate = f64::from_bits(limit.load(Ordering::Relaxed)) / workers.max(1) as f64;
+        if !rate.is_finite() || rate <= 0.0 { return; }
+        let started = Instant::now();
+        thread::sleep(Duration::from_secs_f64((bytes / rate).min(0.025)));
+        bytes -= started.elapsed().as_secs_f64() * rate;
+    }
+}
+
 struct WorkerContext<'a> {
     server_index: usize,
     tasks: &'a Mutex<TaskQueue>,
@@ -775,7 +788,8 @@ struct WorkerContext<'a> {
     connect_errors: &'a Mutex<Vec<String>>,
     cache: &'a Arc<Mutex<ArticleCache>>,
     proxy: &'a ProxyConfig,
-    throttle_bps: f64,
+    throttle_bps: &'a AtomicU64,
+    worker_count: usize,
     retry_count: u32,
     retry_delay: u32,
     priority: u32,
@@ -907,7 +921,6 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
         }
     };
     let mut files: HashMap<usize, fs::File> = HashMap::new();
-    let mut next_allowed = Instant::now();
     loop {
         if ctx.stop.load(Ordering::Relaxed) {
             break;
@@ -1050,14 +1063,8 @@ fn download_worker(server: &Server, ctx: &WorkerContext) {
             }
         }
 
-        if ctx.throttle_bps > 0.0 {
-            let budget = Duration::from_secs_f64(chunk as f64 / ctx.throttle_bps);
-            let now = Instant::now();
-            next_allowed = next_allowed.max(now) + budget;
-            if next_allowed > now {
-                thread::sleep(next_allowed - now);
-            }
-        }
+        throttle_wait(chunk as f64, ctx.throttle_bps, ctx.worker_count, ctx.stop, ctx.pause);
+
     }
     if let Some(mut nntp) = nntp {
         let _ = nntp.quit();
@@ -1829,6 +1836,22 @@ fn crc32(data: &[u8]) -> u32 {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn throttle_changes_and_stop_interrupt_an_existing_wait() {
+        for stop_wait in [false, true] {
+            let limit = Arc::new(AtomicU64::new(1.0f64.to_bits()));
+            let stop = Arc::new(AtomicBool::new(false));
+            let (limit2, stop2) = (limit.clone(), stop.clone());
+            let started = Instant::now();
+            let worker = thread::spawn(move || throttle_wait(1_000_000.0, &limit2, 8, &stop2, &AtomicBool::new(false)));
+            thread::sleep(Duration::from_millis(50));
+            assert!(!worker.is_finished());
+            if stop_wait { stop.store(true, Ordering::Relaxed); } else { limit.store(0.0f64.to_bits(), Ordering::Relaxed); }
+            worker.join().unwrap();
+            assert!(started.elapsed() < Duration::from_secs(2));
+        }
+    }
 
     #[test]
     fn decodes_yenc_escapes() {

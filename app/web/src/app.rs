@@ -20,7 +20,7 @@ enum Dialog {
     Delete(u64),
     Rename(u64, String),
     Password(u64, String),
-    Speed(Option<u8>),
+    Speed(Option<u8>, f64, bool),
     PauseFor(f64),
     Stats(usize),
     About,
@@ -43,6 +43,7 @@ pub struct WebApp {
     appearance: theme::Theme,
     brightness: theme::Brightness,
     show_conns: bool,
+    conns_height: f32,
     /// The collection being dragged and the row it would land on.
     drag: Option<(u64, usize)>,
     /// Shown in the status bar until this time.
@@ -169,6 +170,7 @@ impl WebApp {
             appearance,
             brightness,
             show_conns: stored("nq-conns").as_deref() != Some("0"),
+            conns_height: stored("nq-conns-height").and_then(|s| s.parse::<f32>().ok()).filter(|v| v.is_finite()).unwrap_or(245.0),
             drag: None,
             toast: None,
             settings: SettingsPage::default(),
@@ -410,7 +412,7 @@ impl WebApp {
                         close = true;
                     }
                     if skin::menu_item(ui, "Speed limit...", "", true) {
-                        self.dialog = Some(Dialog::Speed(snap.speed_limit_tag));
+                        self.dialog = Some(Dialog::Speed(snap.speed_limit_tag, snap.custom_speed_limit_mbs.unwrap_or(15.0), snap.custom_speed_limit_mbs.is_some()));
                         close = true;
                     }
                     skin::menu_separator(ui);
@@ -496,7 +498,7 @@ impl WebApp {
                         close = true;
                     }
                     skin::menu_separator(ui);
-                    for (label, choice) in [("Caustica", theme::Theme::Caustica), ("Classic", theme::Theme::Classic)] {
+                    for (label, choice) in [("Caustica · Sea Glass", theme::Theme::Caustica), ("Caustica · Copper", theme::Theme::CausticaCopper), ("Classic", theme::Theme::Classic)] {
                         if skin::menu_check(ui, label, self.appearance == choice, true) {
                             self.appearance = choice;
                             store("nq-appearance", choice.key());
@@ -555,14 +557,14 @@ impl WebApp {
                     ui.add_space(2.0);
                     skin::gripper(ui, h);
                     let t = |s: &'static str| if narrow { "" } else { s };
-                    if skin::tool_button(ui, t("Add NZB"), Icon::Nzb, false, narrow).on_hover_text("Add NZB files (Ctrl+O)").clicked() {
-                        self.dialog = Some(Dialog::AddNzb);
-                    }
-                    skin::tool_separator(ui, h);
                     let r = skin::tool_button(ui, t("Connect"), Icon::Connect, snap.connected, narrow);
                     if r.on_hover_text(if snap.connected { "Disconnect from the servers" } else { "Connect to the servers" }).clicked() {
                         self.post(&ctx, if snap.connected { "/api/disconnect" } else { "/api/connect" });
                     }
+                    if skin::tool_button(ui, t("Add NZB"), Icon::Nzb, false, narrow).on_hover_text("Add NZB files (Ctrl+O)").clicked() {
+                        self.dialog = Some(Dialog::AddNzb);
+                    }
+                    skin::tool_separator(ui, h);
                     let r = skin::tool_button(ui, t("Pause"), Icon::Pause, snap.paused, narrow);
                     if r.on_hover_text(if snap.paused { "Resume downloading (F1)" } else { "Pause downloading (F1)" }).clicked() {
                         self.post(&ctx, if snap.paused { "/api/resume" } else { "/api/pause" });
@@ -571,8 +573,8 @@ impl WebApp {
                         if skin::tool_button(ui, "Pause for", Icon::PauseFor, false, false).on_hover_text("Pause for a number of minutes").clicked() {
                             self.dialog = Some(Dialog::PauseFor(10.0));
                         }
-                        if skin::tool_button(ui, "Speed", Icon::Speed, snap.speed_limit_tag.is_some(), false).on_hover_text("Speed limit").clicked() {
-                            self.dialog = Some(Dialog::Speed(snap.speed_limit_tag));
+                        if skin::tool_button(ui, "Speed", Icon::Speed, snap.speed_limit_bps > 0.0, false).on_hover_text("Speed limit").clicked() {
+                            self.dialog = Some(Dialog::Speed(snap.speed_limit_tag, snap.custom_speed_limit_mbs.unwrap_or(15.0), snap.custom_speed_limit_mbs.is_some()));
                         }
                     }
                     skin::tool_separator(ui, h);
@@ -627,22 +629,22 @@ impl WebApp {
             let (state, dot) = if offline {
                 ("Offline", theme::RED())
             } else if snap.connected {
-                ("Connected", Color32::from_rgb(0x30, 0xC0, 0x30))
+                ("Connected", if theme::is_caustica() { theme::GREEN() } else { Color32::from_rgb(0x30, 0xC0, 0x30) })
             } else {
                 ("Not connected", theme::GRAY_TEXT())
             };
             skin::status_pane(ui, if narrow { 108.0 } else { 118.0 }, state, TEXT(), Some(dot));
             let speed = if snap.paused { "Paused".to_string() } else { format!("{}/s", size(snap.speed_bps)) };
             if skin::status_pane(ui, 90.0, &speed, TEXT(), None).on_hover_text("Speed limit...").clicked() {
-                self.dialog = Some(Dialog::Speed(snap.speed_limit_tag));
+                self.dialog = Some(Dialog::Speed(snap.speed_limit_tag, snap.custom_speed_limit_mbs.unwrap_or(15.0), snap.custom_speed_limit_mbs.is_some()));
             }
             if !narrow {
-                let limit = match snap.speed_limit_tag {
+                let limit = if let Some(mbs) = snap.custom_speed_limit_mbs { format!("Limit {mbs:.2} MB/s") } else { match snap.speed_limit_tag {
                     Some(t) => format!("Limit {} %", t as u32 * 10),
                     None => "No limit".into(),
-                };
-                if skin::status_pane(ui, 80.0, &limit, TEXT(), None).on_hover_text("Speed limit...").clicked() {
-                    self.dialog = Some(Dialog::Speed(snap.speed_limit_tag));
+                }};
+                if skin::status_pane(ui, if snap.custom_speed_limit_mbs.is_some() { 150.0 } else { 90.0 }, &limit, TEXT(), None).on_hover_text("Speed limit...").clicked() {
+                    self.dialog = Some(Dialog::Speed(snap.speed_limit_tag, snap.custom_speed_limit_mbs.unwrap_or(15.0), snap.custom_speed_limit_mbs.is_some()));
                 }
                 skin::status_pane(ui, 100.0, &format!("{} left", size(snap.queue_remaining_bytes)), TEXT(), None);
                 let eta = if snap.speed_bps > 1.0 && snap.queue_remaining_bytes > 0.0 && !snap.paused {
@@ -810,8 +812,9 @@ impl WebApp {
                 rows.extend((0..snap.queue[ci].file_rows.len()).map(|fi| (ci, Some(fi))));
             }
         }
-        let conns_h = if self.show_conns && !narrow { (ui.available_height() * 0.3).clamp(90.0, 160.0) } else { 0.0 };
-        let row_h = if narrow { 24.0 } else { 18.0 };
+        let max_conns = (ui.available_height() - 100.0).max(60.0);
+        let conns_h = if self.show_conns && !narrow { self.conns_height.clamp(60.0, max_conns) } else { 0.0 };
+        let row_h = if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 };
         let pointer = ctx.input(|i| i.pointer.interact_pos());
         let released = ctx.input(|i| i.pointer.any_released());
         let mut drop_line: Option<(f32, Rect)> = None;
@@ -828,7 +831,7 @@ impl WebApp {
             cols.widths[0] = (ui.available_width() - cols.widths[1] - 22.0).max(120.0);
         }
         let empty = if snap.queue.is_empty() { "The queue is empty. Drop .nzb files here or use File > Add NZB files." } else { "No jobs match the filter." };
-        list_view(ui, &mut cols, "queue", -conns_h - if conns_h > 0.0 { 6.0 } else { 0.0 } + ui.available_height(), rows.len(), row_h, empty, false, |ui, idx, r, lefts, cols| {
+        list_view(ui, &mut cols, "queue", -conns_h - if conns_h > 0.0 { 10.0 } else { 0.0 } + ui.available_height(), rows.len(), row_h, empty, false, |ui, idx, r, lefts, cols| {
             let (ci, file) = rows[idx];
             let c = &snap.queue[ci];
             let resp = ui.interact(r, ui.scope_id().with(("qrow", c.id, file)), Sense::click_and_drag());
@@ -1007,11 +1010,23 @@ impl WebApp {
             ctx.set_cursor_icon(egui::CursorIcon::Grabbing);
         }
         if conns_h > 0.0 {
-            ui.add_space(6.0);
+            let (grip, response) = ui.allocate_exact_size(vec2(ui.available_width(), 10.0), Sense::click_and_drag());
+            crate::audit::item(ui, "Connections divider", grip);
+            let response = response.on_hover_cursor(egui::CursorIcon::ResizeVertical);
+            if response.dragged() {
+                self.conns_height = (conns_h - ui.input(|i| i.pointer.delta().y)).clamp(60.0, max_conns);
+                ctx.set_cursor_icon(egui::CursorIcon::ResizeVertical);
+            }
+            if response.clicked() { response.request_focus(); }
+            let key_step = if response.has_focus() { ui.input(|i| if i.key_pressed(Key::ArrowUp) { 20.0 } else if i.key_pressed(Key::ArrowDown) { -20.0 } else { 0.0 }) } else { 0.0 };
+            if key_step != 0.0 { self.conns_height = (conns_h + key_step).clamp(60.0, max_conns); }
+            if response.double_clicked() { self.conns_height = 245.0_f32.min(max_conns); }
+            if response.drag_stopped() || response.double_clicked() || key_step != 0.0 { store("nq-conns-height", &self.conns_height.to_string()); }
+            ui.painter().line_segment([grip.center() - vec2(17.0, 0.0), grip.center() + vec2(17.0, 0.0)], Stroke::new(2.0, if response.hovered() || response.dragged() { theme::BAR() } else { GRAY_TEXT() }));
             let threads = &snap.threads;
             let mut cols = self.cols_conns.clone();
             let empty = if snap.connected { "No connection is busy." } else { "Not connected. Queue > Connected, or the Connect button, connects." };
-            list_view(ui, &mut cols, "conns", 0.0, threads.len(), 18.0, empty, false, |ui, i, r, lefts, cols| {
+            list_view(ui, &mut cols, "conns", 0.0, threads.len(), if theme::is_caustica() { 24.0 } else { 18.0 }, empty, false, |ui, i, r, lefts, cols| {
                 let t = &threads[i];
                 let p = ui.painter();
                 cell(p, r, lefts, &cols, 0, &t.number.to_string(), TEXT());
@@ -1043,7 +1058,7 @@ impl WebApp {
         let mut cols = self.cols_hist.clone();
         let desktop_w = fit_first_column(ui, &mut cols, narrow);
         let mut select = None;
-        list_view(ui, &mut cols, "history", 0.0, n, if narrow { 24.0 } else { 18.0 }, "No history yet. Finished and failed jobs are listed here.", false, |ui, row, r, lefts, cols| {
+        list_view(ui, &mut cols, "history", 0.0, n, if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "No history yet. Finished and failed jobs are listed here.", false, |ui, row, r, lefts, cols| {
             let i = index_of(row);
             let h = &snap.history[i];
             let resp = ui.interact(r, ui.scope_id().with(("hrow", i)), Sense::click());
@@ -1099,7 +1114,7 @@ impl WebApp {
         let mut cols = self.cols_par2.clone();
         let desktop_w = fit_first_column(ui, &mut cols, narrow);
         let mut select = None;
-        list_view(ui, &mut cols, "par2", 0.0, n, if narrow { 24.0 } else { 18.0 }, "No PAR2 sets.", false, |ui, i, r, lefts, cols| {
+        list_view(ui, &mut cols, "par2", 0.0, n, if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "No PAR2 sets.", false, |ui, i, r, lefts, cols| {
             let s = &snap.par2[i];
             let resp = ui.interact(r, ui.scope_id().with(("prow", i)), Sense::click());
             let fg = row_ground(ui, r, sel == Some(i));
@@ -1147,7 +1162,7 @@ impl WebApp {
             skin::label(ui, &if narrow { format!("{}/{}", lines.len(), snap.log_tail.len()) } else { format!("{} of {} lines", lines.len(), snap.log_tail.len()) });
         });
         let mut cols = self.cols_log.clone();
-        list_view(ui, &mut cols, "log", 0.0, lines.len(), if narrow { 24.0 } else { 18.0 }, "The log is empty.", true, |ui, i, r, lefts, cols| {
+        list_view(ui, &mut cols, "log", 0.0, lines.len(), if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "The log is empty.", true, |ui, i, r, lefts, cols| {
             let l = lines[i];
             let color = match l.level.as_str() {
                 "Error" => theme::RED(),
@@ -1179,7 +1194,7 @@ impl WebApp {
         });
         let mut cols = self.cols_rss.clone();
         let desktop_w = fit_first_column(ui, &mut cols, narrow);
-        list_view(ui, &mut cols, "rss", 0.0, snap.rss.len(), if narrow { 24.0 } else { 18.0 }, "No feed items. Add feeds with Feeds..., then Refresh.", false, |ui, i, r, lefts, cols| {
+        list_view(ui, &mut cols, "rss", 0.0, snap.rss.len(), if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "No feed items. Add feeds with Feeds..., then Refresh.", false, |ui, i, r, lefts, cols| {
             let it = &snap.rss[i];
             let p = ui.painter();
             cell(p, r, lefts, &cols, 0, &it.name, TEXT());
@@ -1330,40 +1345,36 @@ impl WebApp {
                 }
                 Dialog::Password(id, draft)
             }
-            Dialog::Speed(mut tag) => {
-                let full = snap.settings["max_speed_mbps"].as_f64().unwrap_or(0.0);
-                let (_, close) = skin::dialog(ctx, "speed", "Speed Limit", 300.0, |ui| {
-                    if full > 0.0 {
-                        skin::label(ui, &format!("Full speed: {full:.2} Mbit/s"));
-                    } else {
-                        skin::note(ui, "Set the line speed in Options > Download to see the limits in Mbit/s.");
-                    }
-                    ui.add_space(2.0);
-                    if skin::radio(ui, tag.is_none(), "No limit").clicked() {
-                        tag = None;
-                    }
-                    for t in (1..=9u8).rev() {
-                        let text = if full > 0.0 { format!("{} %   ({:.2} Mbit/s)", t as u32 * 10, full * t as f64 / 10.0) } else { format!("{} %", t as u32 * 10) };
-                        if skin::radio(ui, tag == Some(t), &text).clicked() {
-                            tag = Some(t);
-                        }
-                    }
-                    skin::note(ui, "The limit applies to all connections together.");
+            Dialog::Speed(mut tag, mut mbs, mut custom) => {
+                let (_, close) = skin::dialog(ctx, "speed", "Speed limit", 370.0, |ui| {
+                    if skin::radio(ui, tag.is_none() && !custom, "No limit").clicked() { tag = None; custom = false; }
+                    if skin::radio(ui, custom, "Custom limit").clicked() { custom = true; }
+                    ui.horizontal(|ui| {
+                        ui.add_space(20.0);
+                        if skin::spin(ui, "custom-mbs", &mut mbs, 0.01, 1_000_000.0, 2, 120.0).changed() { custom = true; }
+                        skin::label(ui, "MB/s");
+                    });
+                    ui.add_space(8.0);
+                    if skin::radio(ui, tag.is_some() && !custom, "Percentage of configured line speed").clicked() { custom = false; tag = Some(tag.unwrap_or(9)); }
+                    let label = format!("{}%", tag.unwrap_or(9) * 10);
+                    if let Some(Some(t)) = skin::combo(ui, "speed-percent", &label, 110.0, |ui| {
+                        let mut chosen = None;
+                        for t in (1..=9u8).rev() { if skin::list_item(ui, tag == Some(t), &format!("{}%", t * 10)).clicked() { chosen = Some(t); } }
+                        chosen
+                    }) { tag = Some(t); custom = false; }
+                    ui.add_space(8.0);
+                    skin::note(ui, "Total across all servers and connections.\n1 MB/s = 1,000,000 bytes per second.");
                     skin::dialog_buttons(ui, |ui| {
-                        if skin::button(ui, "Cancel").clicked() {
-                            keep = false;
-                        }
-                        if skin::default_button(ui, "OK").clicked() || enter() {
-                            let v = tag.map_or("none".to_string(), |t| t.to_string());
-                            self.post(ctx, &format!("/api/speed-limit?tag={v}"));
+                        if skin::button(ui, "Cancel").clicked() { keep = false; }
+                        if skin::default_button(ui, "Apply").clicked() || enter() {
+                            if custom { self.post(ctx, &format!("/api/speed-limit?mbs={mbs}")); }
+                            else { let v = tag.map_or("none".to_string(), |t| t.to_string()); self.post(ctx, &format!("/api/speed-limit?tag={v}")); }
                             keep = false;
                         }
                     });
                 });
-                if close {
-                    keep = false;
-                }
-                Dialog::Speed(tag)
+                if close { keep = false; }
+                Dialog::Speed(tag, mbs, custom)
             }
             Dialog::PauseFor(mut minutes) => {
                 let (_, close) = skin::dialog(ctx, "pausefor", "Pause For", 330.0, |ui| {

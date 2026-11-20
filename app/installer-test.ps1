@@ -9,7 +9,7 @@
 param([switch]$Hidden)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $MyInvocation.MyCommand.Path
-$version = '1.0.8'
+$version = '1.0.9'
 $name = 'NewsQueue Install Test'
 $guid = 'C0FFEE00-5E7A-4B1D-9A2C-7E57DEADBEEF'
 $folder = Join-Path $root "dist\NewsQueue-$version"

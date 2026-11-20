@@ -26,6 +26,8 @@ pub enum Command {
     TogglePause,
     PauseFor(u32),
     SetSpeedLimit(Option<u8>),
+    /// Decimal megabytes per second, across all connections.
+    SetCustomSpeedLimit(f64),
     Pause(u64, bool),
     Delete(u64),
     Move(u64, MoveDir),
@@ -102,7 +104,14 @@ impl Engine {
             Disconnect => self.disconnect(),
             TogglePause => self.toggle_pause(),
             PauseFor(m) => self.pause_for(m),
-            SetSpeedLimit(tag) => self.set_speed_limit(tag),
+            SetSpeedLimit(tag) => {
+                if tag.is_some_and(|t| t > 10) { return Applied::Failed; }
+                self.set_speed_limit(tag)
+            },
+            SetCustomSpeedLimit(mbs) => {
+                if !valid_custom_speed(mbs) { return Applied::Failed; }
+                self.set_custom_speed_limit(mbs)
+            },
             Cleanup => self.cleanup(),
             RefreshRss => self.refresh_rss(),
             RetryHistory(index) => return self.retry_history(index),
@@ -352,6 +361,26 @@ impl Engine {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_speed_limit_is_decimal_global_and_switches_modes() {
+        let mut e = Engine::new(Settings::default(), true);
+        assert_eq!(e.apply(Command::SetCustomSpeedLimit(12.5)), Applied::Done);
+        assert_eq!(e.speed_limit_bps(), 12_500_000.0);
+        assert_eq!(e.speed_limit_tag, None);
+        for bad in [0.0, -1.0, f64::NAN, f64::INFINITY, f64::MAX] {
+            assert_eq!(e.apply(Command::SetCustomSpeedLimit(bad)), Applied::Failed);
+            assert_eq!(e.speed_limit_bps(), 12_500_000.0);
+        }
+        e.apply(Command::SetSpeedLimit(Some(5)));
+        assert_eq!(e.custom_speed_limit_mbs, None);
+        assert_eq!(e.speed_limit_bps(), speed_limit_bps(5, e.speed_ceiling_mbps));
+        e.apply(Command::SetCustomSpeedLimit(0.25));
+        assert_eq!(e.speed_limit_bps(), 250_000.0);
+        e.apply(Command::SetSpeedLimit(None));
+        assert_eq!(e.speed_limit_bps(), 0.0);
+        assert_eq!(e.custom_speed_limit_mbs, None);
+    }
 
     #[test]
     fn commands_address_collections_by_id() {

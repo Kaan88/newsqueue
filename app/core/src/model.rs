@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
 pub const APP_NAME: &str = "NewsQueue";
-pub const VERSION: &str = "1.0.8";
+pub const VERSION: &str = "1.0.9";
 /// GitHub `owner/name` used for the Home button and the update check.
 pub const HOME_REPO: &str = "Kaan88/newsqueue";
 pub const HOME_URL: &str = "https://github.com/Kaan88/newsqueue";
@@ -69,6 +69,11 @@ pub const QUEUE_COLUMN_NAMES: [&str; 12] = [
 pub const MB: f64 = 1024.0 * 1024.0;
 pub const GB: f64 = MB * 1024.0;
 pub const TB: f64 = GB * 1024.0;
+
+/// Custom limits use decimal MB/s and must produce a finite positive byte rate.
+pub fn valid_custom_speed(mbs: f64) -> bool {
+    mbs.is_finite() && mbs > 0.0 && (mbs * 1_000_000.0).is_finite()
+}
 
 /// Function 0x817178: `trunc(tag * MaxSpeedMbps / 10 * 125000)`.
 /// Tag 0 is "No limit" and yields 0 (unthrottled).
@@ -378,6 +383,7 @@ pub const PRIVATE_SETTINGS: &[&str] =
 pub struct Settings {
     pub download_dir: String,
     pub nzb_dir: String,
+    /// Reserved directory: created on startup; payloads/resume sidecars use download_dir.
     pub temp_dir: String,
     pub unrar_dir: String,
     pub max_speed_kbps: f64,
@@ -388,6 +394,8 @@ pub struct Settings {
     pub autosave_minutes: u32,
     pub skip_existing: bool,
     pub dblclick_expand: bool,
+    /// Desktop only: one process per configuration folder.
+    pub single_instance: bool,
     pub minimize_to_tray: bool,
     pub minimize_to_tray_on_close: bool,
     pub tray_balloon: bool,
@@ -509,6 +517,7 @@ impl Default for Settings {
             autosave_minutes: AUTOSAVE_MINUTES,
             skip_existing: true,
             dblclick_expand: false,
+            single_instance: true,
             minimize_to_tray: true,
             minimize_to_tray_on_close: true,
             tray_balloon: true,

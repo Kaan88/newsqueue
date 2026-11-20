@@ -361,7 +361,7 @@ pub fn spin(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, value:
     let mut changed = false;
     let commit = |text: &str, value: &mut f64| -> bool {
         match text.trim().replace(',', ".").parse::<f64>() {
-            Ok(v) => {
+            Ok(v) if v.is_finite() => {
                 let v = v.clamp(min, max);
                 let v = if decimals == 0 { v.round() } else { v };
                 if v != *value {
@@ -370,7 +370,7 @@ pub fn spin(ui: &mut Ui, id_salt: impl std::hash::Hash + std::fmt::Debug, value:
                 }
                 false
             }
-            Err(_) => false,
+            _ => false,
         }
     };
     if r.has_focus() {
@@ -516,7 +516,8 @@ fn menu_row(ui: &mut Ui, text: &str, shortcut: &str, enabled: bool, check: Optio
     let w = menu_width(ui, tw + sw + 46.0);
     let (rect, resp) = ui.allocate_exact_size(vec2(w, 19.0), Sense::click());
     let p = ui.painter();
-    let hot = resp.hovered();
+    let tracking = ui.data(|d| d.get_temp::<bool>(Id::unique("menu-drag-tracking"))).unwrap_or(false);
+    let hot = if tracking { resp.contains_pointer() } else { resp.hovered() };
     if hot {
         p.rect_filled(rect, 0.0, SEL());
     }
@@ -544,7 +545,7 @@ fn menu_row(ui: &mut Ui, text: &str, shortcut: &str, enabled: bool, check: Optio
         }
     }
     crate::audit::item(ui,text,rect);
-    enabled && resp.clicked()
+    enabled && (resp.clicked() || (tracking && hot && ui.input(|i| i.pointer.primary_released())))
 }
 
 pub fn menu_separator(ui: &mut Ui) {
@@ -569,6 +570,8 @@ pub fn context_menu(resp: &Response, add: impl FnOnce(&mut Ui)) {
 pub fn menu_bar(ui: &mut Ui, titles: &[&str], mut add: impl FnMut(&mut Ui, usize) -> bool) {
     let id = ui.scope_id().with("menubar");
     let mut open: Option<usize> = ui.data(|d| d.get_temp(id)).flatten();
+    let tracking_id = Id::unique("menu-drag-tracking");
+    let mut tracking = ui.data(|d| d.get_temp::<bool>(tracking_id)).unwrap_or(false);
     let mut rects = Vec::new();
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
@@ -586,14 +589,18 @@ pub fn menu_bar(ui: &mut Ui, titles: &[&str], mut add: impl FnMut(&mut Ui, usize
             }
             let d = if open == Some(i) { 1.0 } else { 0.0 };
             p.text(rect.center() + vec2(d, d), Align2::CENTER_CENTER, t, theme::font(BODY), TEXT());
-            if resp.clicked() {
+            let pressed = resp.contains_pointer() && ui.input(|inp| inp.pointer.primary_pressed());
+            let keyboard_click = resp.clicked() && !ui.input(|inp| inp.pointer.primary_released());
+            if pressed || keyboard_click {
                 open = if open == Some(i) { None } else { Some(i) };
-            } else if open.is_some() && open != Some(i) && resp.hovered() {
+                tracking = pressed && open.is_some();
+            } else if open.is_some() && open != Some(i) && resp.contains_pointer() {
                 // With one menu open, pointing at another opens that one.
                 open = Some(i);
             }
         }
     });
+    ui.data_mut(|d| d.insert_temp(tracking_id, tracking));
     let ctx = ui.ctx().clone();
     if let Some(i) = open {
         let anchor = rects[i];
@@ -613,11 +620,14 @@ pub fn menu_bar(ui: &mut Ui, titles: &[&str], mut add: impl FnMut(&mut Ui, usize
         menu_edge(&ctx, &shown.response);
         let clicked_outside = ctx.input(|inp| inp.pointer.any_pressed())
             && ctx.input(|inp| inp.pointer.interact_pos()).is_some_and(|p| !shown.response.rect.contains(p) && !rects.iter().any(|r| r.contains(p)));
-        if shown.inner || clicked_outside || ctx.input(|inp| inp.key_pressed(egui::Key::Escape)) {
+        let released_outside = tracking && ctx.input(|inp| inp.pointer.primary_released())
+            && ctx.input(|inp| inp.pointer.interact_pos()).is_some_and(|p| !shown.response.rect.contains(p) && !rects.iter().any(|r| r.contains(p)));
+        if shown.inner || clicked_outside || released_outside || ctx.input(|inp| inp.key_pressed(egui::Key::Escape)) {
             open = None;
         }
     }
-    ui.data_mut(|d| d.insert_temp(id, open));
+    if open.is_none() || ctx.input(|inp| inp.pointer.primary_released() || !inp.pointer.primary_down()) { tracking = false; }
+    ui.data_mut(|d| { d.insert_temp(id, open); d.insert_temp(tracking_id, tracking); });
 }
 
 // ----------------------------------------------------------------- tabs ---
@@ -909,7 +919,7 @@ pub fn label(ui: &mut Ui, text: &str) -> Response {
 
 /// Grey explanatory text that wraps.
 pub fn note(ui: &mut Ui, text: &str) {
-    ui.add(egui::Label::new(egui::RichText::new(text).font(theme::font(theme::SMALL)).color(theme::NOTE_TEXT())).wrap());
+    ui.add(egui::Label::new(egui::RichText::new(text).font(theme::font(theme::SMALL)).color(theme::NOTE_TEXT())).selectable(false).wrap());
 }
 
 // ----------------------------------------------------------- status bar ---

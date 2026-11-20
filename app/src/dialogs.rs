@@ -4,7 +4,7 @@
 
 use crate::form::{self, Ev, IDCANCEL_, IDOK_};
 use crate::util::*;
-use crate::{send_cmd, setting, setting_bool, setting_u8, ui, update, with_engine};
+use crate::{send_cmd, setting, setting_bool, ui, update, with_engine};
 use newsqueue_core::command::Command;
 use newsqueue_core::model::*;
 use std::cell::RefCell;
@@ -211,6 +211,7 @@ fn build_about(owner: HWND) -> HWND {
     form::note(d, "Independent project, not affiliated with the application whose layout it follows. UnRAR and par2cmdline are used under their own licenses (see the tools folder).", 80, 100, 324, 64);
     form::hline(d, 16, 182, 388);
     form::button(d, 20, "Home page", 16, 198, 100);
+    form::button(d, 21, "Check for updates", 124, 198, 160);
     form::button(d, IDOK_, "OK", 324, 198, 80);
     d
 }
@@ -222,6 +223,7 @@ pub fn about(owner: HWND) {
         Some(owner),
         Box::new(|d, ev| {
             match ev {
+                Ev::Cmd(21, _) => version(d),
                 Ev::Cmd(20, _) => {
                     let _ = std::process::Command::new("explorer").arg(HOME_URL).spawn();
                 }
@@ -694,47 +696,53 @@ pub fn pause_for(owner: HWND) {
 // ---------------------------------------------------------- speed limit ---
 
 fn build_speed_limit(owner: HWND) -> HWND {
-    let d = form::create(Some(owner), "Speed limit", 280, 376, false);
-    let (ceiling, tag) = with_engine(|e| (e.speed_ceiling_mbps, e.speed_limit_tag));
-    let mode = setting_u8("speed_bytes_mode");
-    form::note(d, &format!("Full speed: {}", format_speed(ceiling * BPS_PER_MBPS, mode)), 14, 10, 252, 18);
-    form::radio(d, 100, "No limit", 20, 36, 240, true);
-    for t in 1..=9u8 {
-        let bps = speed_limit_bps(t, ceiling);
-        form::radio(d, 100 + t as i32, &format!("{}%   ({})", t as u32 * 10, format_speed(bps, mode)), 20, 36 + t as i32 * 24, 240, false);
-    }
-    form::set_check(form::item(d, 100 + tag.unwrap_or(0) as i32), true);
-    form::note(
-        d,
-        "The limit applies to all connections together. Full speed is the line speed set in Setup > Connection, or the fastest speed seen so far.",
-        14,
-        276,
-        252,
-        48,
-    );
-    form::button(d, IDOK_, "OK", 100, 340, 80);
-    form::button(d, IDCANCEL_, "Cancel", 186, 340, 80);
+    let d = form::create(Some(owner), "Speed limit", 370, 302, false);
+    let (tag, custom) = with_engine(|e| (e.speed_limit_tag, e.custom_speed_limit_mbs));
+    form::radio(d, 100, "No limit", 20, 16, 330, true);
+    form::radio(d, 110, "Custom limit", 20, 48, 330, false);
+    form::edit(d, 112, &format!("{:.2}", custom.unwrap_or(15.0)), 40, 78, 130, 0);
+    form::label(d, "MB/s", 182, 81, 75);
+    form::radio(d, 111, "Percentage of configured line speed", 20, 118, 330, false);
+    form::combo(d, 113, &["90%", "80%", "70%", "60%", "50%", "40%", "30%", "20%", "10%"], (9-tag.unwrap_or(9).clamp(1,9)) as usize, 40, 148, 110);
+    form::set_check(form::item(d, if custom.is_some() { 110 } else if tag.is_some() { 111 } else { 100 }), true);
+    form::note(d, "Total across all servers and connections.\r\n1 MB/s = 1,000,000 bytes per second.", 20, 192, 330, 46);
+    form::button(d, IDCANCEL_, "Cancel", 176, 264, 80);
+    form::button(d, IDOK_, "Apply", 266, 264, 84);
     d
+}
+
+fn speed_limit_command(d: HWND) -> Result<Command, ()> {
+    if form::checked(form::item(d,110)) {
+        let mbs = form::text(form::item(d,112)).trim().replace(',', ".").parse::<f64>().map_err(|_| ())?;
+        if !valid_custom_speed(mbs) { return Err(()); }
+        Ok(Command::SetCustomSpeedLimit(mbs))
+    } else {
+        Ok(Command::SetSpeedLimit(if form::checked(form::item(d,111)) { Some(9-form::combo_sel(form::item(d,113)) as u8) } else { None }))
+    }
 }
 
 pub fn speed_limit(owner: HWND) {
     let d = build_speed_limit(owner);
-    form::run_modal(
-        d,
-        Some(owner),
-        Box::new(|d, ev| {
-            match ev {
-                Ev::Cmd(IDOK_, _) => {
-                    let tag = (0..=9u8).find(|t| form::checked(form::item(d, 100 + *t as i32))).unwrap_or(0);
-                    send_cmd(Command::SetSpeedLimit((tag > 0).then_some(tag)));
-                    form::end(d, IDOK_);
-                }
-                Ev::Cmd(IDCANCEL_, _) | Ev::Close => form::end(d, IDCANCEL_),
-                _ => {}
+    form::run_modal(d, Some(owner), Box::new(|d, ev| {
+        match ev {
+            Ev::Cmd(112, code) if code == EN_CHANGE => {
+                for id in [100,110,111] { form::set_check(form::item(d,id), id == 110); }
             }
-            0
-        }),
-    );
+            Ev::Cmd(113, code) if code == CBN_SELCHANGE => {
+                for id in [100,110,111] { form::set_check(form::item(d,id), id == 111); }
+            }
+            Ev::Cmd(IDOK_, _) => {
+                match speed_limit_command(d) {
+                    Ok(command) => send_cmd(command),
+                    Err(()) => { form::message(Some(d), "Speed limit", "Enter a positive number in MB/s.", MB_ICONWARNING); return 0; }
+                }
+                form::end(d, IDOK_);
+            }
+            Ev::Cmd(IDCANCEL_, _) | Ev::Close => form::end(d, IDCANCEL_),
+            _ => {}
+        }
+        0
+    }));
 }
 
 // ------------------------------------------------------------ shutdown ----
@@ -956,6 +964,24 @@ pub fn filter_help(owner: HWND) {
 // ------------------------------------------------------- screenshot mode --
 
 pub(crate) fn audit_smoke(main: HWND) {
+    let speed = build_speed_limit(main);
+    form::set_check(form::item(speed,100), false);
+    form::set_check(form::item(speed,110), true);
+    form::set_text(form::item(speed,112), "22,50");
+    assert_eq!(speed_limit_command(speed), Ok(Command::SetCustomSpeedLimit(22.5)));
+    form::set_text(form::item(speed,112), "NaN");
+    assert!(speed_limit_command(speed).is_err());
+    form::set_check(form::item(speed,110), false);
+    form::set_check(form::item(speed,111), true);
+    send(form::item(speed,113), CB_SETCURSEL, 4, 0);
+    assert_eq!(speed_limit_command(speed), Ok(Command::SetSpeedLimit(Some(5))));
+    form::set_check(form::item(speed,111), false);
+    assert_eq!(speed_limit_command(speed), Ok(Command::SetSpeedLimit(None)));
+    unsafe { DestroyWindow(speed).unwrap(); }
+    let about = build_about(main);
+    assert_eq!(form::text(form::item(about,21)), "Check for updates");
+    unsafe { DestroyWindow(about).unwrap(); }
+
     let d=build_stats(main,0);
     show_offscreen(d);
     for index in 0..5 {

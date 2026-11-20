@@ -48,6 +48,7 @@ fn static_file(dir: &std::path::Path, path: &str) -> Option<(Vec<u8>, &'static s
         "js" => "text/javascript; charset=utf-8",
         "wasm" => "application/wasm",
         "css" => "text/css",
+        "txt" if matches!(rel, "Inter-LICENSE.txt" | "IBM-Plex-LICENSE.txt" | "DejaVu-LICENSE.txt") => "text/plain; charset=utf-8",
         "png" => "image/png",
         "ico" => "image/x-icon",
         _ => return None,
@@ -316,12 +317,22 @@ impl Api {
                 Ok(_) => error(404, "no such PAR2 set"),
                 Err(_) => error(400, "bad PAR2 index"),
             },
-            ("POST", ["api", "speed-limit"]) => match query_value(query, "tag").as_deref() {
-                None | Some("") | Some("none") => send(Command::SetSpeedLimit(None)),
-                Some(tag) => match tag.parse::<u8>() {
-                    Ok(t) => send(Command::SetSpeedLimit(Some(t))),
-                    Err(_) => error(400, "tag must be a number or none"),
-                },
+            ("POST", ["api", "speed-limit"]) => {
+                if let Some(raw) = query_value(query, "mbs") {
+                    if query_value(query, "tag").is_some() { return error(400, "choose mbs or tag, not both"); }
+                    match raw.parse::<f64>() {
+                        Ok(mbs) if newsqueue_core::model::valid_custom_speed(mbs) => send(Command::SetCustomSpeedLimit(mbs)),
+                        _ => error(400, "mbs must be a positive finite number of MB/s"),
+                    }
+                } else {
+                    match query_value(query, "tag").as_deref() {
+                        None | Some("") | Some("none") => send(Command::SetSpeedLimit(None)),
+                        Some(tag) => match tag.parse::<u8>() {
+                            Ok(t @ 0..=10) => send(Command::SetSpeedLimit(Some(t))),
+                            _ => error(400, "tag must be 0..10 or none"),
+                        },
+                    }
+                }
             },
             ("POST", ["api", "nzb"]) => self.add_nzb(query, body),
             ("POST", ["api", "nzb", "url"]) => self.add_nzb_url(query, body),
@@ -524,6 +535,22 @@ mod tests {
     }
 
     #[test]
+    fn custom_speed_api_validates_and_publishes_effective_limit() {
+        let (mut host, api) = demo();
+        for query in ["mbs=0", "mbs=-1", "mbs=NaN", "mbs=inf", "mbs=1e309", "mbs=no", "mbs=2&tag=5", "tag=255"] {
+            assert_eq!(api.route("POST", &format!("/api/speed-limit?{query}"), Some("k3y"), b"").status, 400, "{query}");
+        }
+        assert_eq!(api.route("POST", "/api/speed-limit?mbs=12.5", Some("k3y"), b"").status, 202);
+        host.tick_local();
+        let snap = api.handle.snapshot();
+        assert_eq!(snap.custom_speed_limit_mbs, Some(12.5));
+        assert_eq!(snap.speed_limit_bps, 12_500_000.0);
+        assert_eq!(api.route("POST", "/api/speed-limit?tag=none", Some("k3y"), b"").status, 202);
+        host.tick_local();
+        assert_eq!(api.handle.snapshot().custom_speed_limit_mbs, None);
+    }
+
+    #[test]
     fn health_is_open_and_the_rest_needs_the_key() {
         let (_host, api) = demo();
         assert_eq!(api.route("GET", "/api/health", None, b"").status, 200);
@@ -548,6 +575,10 @@ mod tests {
         assert!(static_file(&dir, "/../secret.html").is_none());
         assert!(static_file(&dir, "/pkg//a.wasm").is_none());
         assert!(static_file(&dir, "/newsqueue-settings.json").is_none());
+        std::fs::write(dir.join("Inter-LICENSE.txt"), "OFL").unwrap();
+        std::fs::write(dir.join("private.txt"), "private").unwrap();
+        assert_eq!(static_file(&dir, "/Inter-LICENSE.txt").unwrap().1, "text/plain; charset=utf-8");
+        assert!(static_file(&dir, "/private.txt").is_none());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

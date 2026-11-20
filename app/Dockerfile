@@ -4,7 +4,7 @@
 #   docker compose up -d                   (see compose.yaml)
 #
 # Volumes: /config (settings, queue, history, stats, logs), /downloads
-# (finished jobs), /incomplete (temporary files), /watch (NZB files dropped
+# (job payloads, including partial files), /incomplete (reserved, unused), /watch (NZB files dropped
 # here are queued). A first start points the settings at these folders.
 # Servers, folders, PAR2/unpack, scheduler and RSS are set in the web UI
 # (Settings); passwords are never sent back to the browser.
