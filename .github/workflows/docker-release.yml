@@ -24,7 +24,6 @@ jobs:
           id=$(docker create newsqueue:1.0.8-web.1)
           docker cp "$id:/opt/newsqueue/web" release-output/web
           docker rm "$id"
-          cp app/assets/fonts/IBM-Plex-LICENSE.txt release-output/web/
           (cd release-output/web && zip -qr ../NewsQueue-1.0.8-web.1-web.zip .)
           git archive --format=zip --prefix=NewsQueue-1.0.8-web.1/ HEAD > release-output/NewsQueue-1.0.8-web.1-source.zip
           cp app/compose.yaml app/.env.example app/DOCKER.md release-output/

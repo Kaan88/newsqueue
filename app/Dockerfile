@@ -25,6 +25,7 @@ RUN cargo build --locked --release -p newsqueue-server \
     && wasm-bindgen --target web --no-typescript --out-dir /out/web/pkg \
         target/wasm32-unknown-unknown/release/newsqueue-web.wasm \
     && cp web/index.html /out/web/ \
+    && cp assets/fonts/*LICENSE.txt /out/web/ \
     && cp target/release/newsqueue-server /out/
 
 FROM debian:trixie-slim
