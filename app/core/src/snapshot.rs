@@ -175,7 +175,7 @@ impl Snapshot {
                     files: c.files.len(),
                     group: c.group.clone(),
                     folder: c.folder.clone(),
-                    unrar: c.unrar,
+                    unrar: c.unpack_after_download(engine.settings.auto_unrar),
                     has_password: !c.password.is_empty(),
                     expanded: c.expanded,
                     age_days: c.age_days,

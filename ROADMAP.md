@@ -480,3 +480,15 @@ None are started. Categories stay cut (see `REMOVED.md`).
 
 Download robustness, PAR2 repair, unrar, tray and shutdown are already in place.
 The remaining gaps need external data or are optional polish.
+
+
+### 2026-11-21: clipboard, unpack choice, hidden tools
+
+- Web queue and expanded file rows support Ctrl+C and right-click Copy name/filename/details. History, PAR2, logs, RSS and connection rows support copying. Text-edit shortcuts remain native to the editor; child selection clears the parent action target.
+- Explicit per-job Unpack after download now overrides the global default and persists as optional `unpack_override`. Legacy queues retain their former default/eligibility behavior. Completion, PAR2 and direct unpack use the same effective choice. Both front ends show the effective checkmark. Web has unpack-on/off queue actions.
+- RAR, direct RAR, 7-Zip, bsdtar and PAR2 subprocesses use the same CREATE_NO_WINDOW launcher on Windows.
+- Validation: 162 workspace tests (30 desktop, 103 core, 15 API, 14 web), plus eight headless clipboard combinations (Classic/Caustica, light/dark, 1440/760 width), actual clipboard reads, text-field copying and child menus. Production WASM renders without audit hooks.
+- Full 59-file / 2,944,891,658-byte NZB on Easynews, eight connections, fresh output, no cache/precheck/unpack/PAR2: TLS AltBinz 62.318 s / 49.328 CPU-s; NewsQueue 55.462 s / 14.188 CPU-s. Plain AltBinz 69.448 s / 35.406 CPU-s; NewsQueue 72.037 s / 13.609 CPU-s. All four downloads match all 59 SHA256 hashes. One run per app/protocol, not a statistical ranking or failure-robustness claim. A short release compilation overlapped the first AltBinz TLS run, so treat wall-time differences as indicative. Results: `app/target/altbinz-perf/full-comparison-20261121-012642/results.json`; test payloads and copied credentials removed.
+- No new public release or Docker deployment in this pass.
+
+- Final review follow-ups: pending automatic unpack rechecks a later Off choice while explicit Unpack now retains priority; log/RSS selection follows text identity instead of shifting row indices. Added queued-extraction and advancing-log regressions. Local Windows executable and bundled web assets updated; saved JSON hashes unchanged.

@@ -155,6 +155,9 @@ pub struct Collection {
     #[serde(default)]
     pub unrar_folder: String,
     pub unrar: bool,
+    /// Older queues used `unrar` as eligibility under the global default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unpack_override: Option<bool>,
     pub execute: String,
     #[serde(default)]
     pub execute_done: bool,
@@ -166,6 +169,9 @@ pub struct Collection {
     pub source: String,
 }
 impl Collection {
+    pub fn unpack_after_download(&self, default: bool) -> bool {
+        self.unpack_override.unwrap_or(default && self.unrar)
+    }
     pub fn progress(&self) -> f32 {
         if self.total_bytes == 0 {
             return 0.0;
@@ -1268,6 +1274,7 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         folder: dl.join(first_name).to_string_lossy().to_string(),
         unrar_folder: String::new(),
         unrar: true,
+        unpack_override: None,
         execute: String::new(),
         execute_done: false,
         expanded: true,
@@ -1293,6 +1300,7 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         folder: dl.join(second_name).to_string_lossy().to_string(),
         unrar_folder: String::new(),
         unrar: true,
+        unpack_override: None,
         execute: String::new(),
         execute_done: false,
         expanded: false,
@@ -1315,6 +1323,7 @@ pub fn sample_queue(settings: &Settings) -> Vec<Collection> {
         folder: dl.join(third_name).to_string_lossy().to_string(),
         unrar_folder: String::new(),
         unrar: false,
+        unpack_override: None,
         execute: String::new(),
         execute_done: false,
         expanded: false,

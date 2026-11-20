@@ -10,7 +10,6 @@ use crate::model::{app_base, sanitize_folder, Collection, Settings};
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::sync::{Arc, Mutex};
@@ -300,7 +299,7 @@ fn run_direct(
     use std::process::Stdio;
     let exe = find_unrar_exe().ok_or_else(|| UnrarError::Failed("UnRAR.exe not found".into()))?;
     fs::create_dir_all(dest).map_err(|e| UnrarError::Failed(format!("Cannot create unrar folder: {e}")))?;
-    let mut command = Command::new(&exe);
+    let mut command = crate::tools::command(&exe);
     command.arg("x").arg("-y").arg("-vp");
     command.arg(if options.overwrite { "-o+" } else if options.rename_existing { "-or" } else { "-o-" });
     if options.password.trim().is_empty() {
@@ -310,11 +309,6 @@ fn run_direct(
     }
     command.arg(first).arg(format!("{}{}", dest.display(), std::path::MAIN_SEPARATOR));
     command.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
-    }
     let mut child = command.spawn().map_err(|e| UnrarError::Failed(format!("Cannot run {}: {e}", exe.display())))?;
     // UnRAR asks for the next volume on stderr; stdout only lists files.
     let mut stdout_pipe = child.stdout.take().unwrap();
@@ -582,7 +576,7 @@ pub fn extract(
     fs::create_dir_all(dest)
         .map_err(|e| UnrarError::Failed(format!("Cannot create unrar folder: {e}")))?;
 
-    let mut command = Command::new(&exe);
+    let mut command = crate::tools::command(&exe);
     command.arg("x").arg("-y").arg("-idq").arg("-ierr");
     command.arg(if options.overwrite {
         "-o+"
@@ -686,7 +680,7 @@ fn run_7z(archive: &Path, dest: &Path, options: &UnrarOptions) -> Result<(i32, S
         .map_err(|e| UnrarError::Failed(format!("Cannot create {}: {e}", dest.display())))?;
     let password = options.password.trim();
     let output = if let Some(exe) = find_7z_exe() {
-        let mut c = Command::new(&exe);
+        let mut c = crate::tools::command(&exe);
         c.arg("x").arg("-y").arg("-bso0").arg("-bsp0");
         c.arg(if options.overwrite {
             "-aoa"
@@ -700,7 +694,7 @@ fn run_7z(archive: &Path, dest: &Path, options: &UnrarOptions) -> Result<(i32, S
         c.arg(archive).arg(format!("-o{}", dest.display()));
         c.output().map_err(|e| UnrarError::Failed(format!("Cannot run {}: {e}", exe.display())))?
     } else if let Some(exe) = find_bsdtar_exe() {
-        let mut c = Command::new(&exe);
+        let mut c = crate::tools::command(&exe);
         c.arg("-x");
         if !options.overwrite {
             c.arg("-k");
@@ -1450,7 +1444,7 @@ mod tests {
     /// Builds `name` from `files` with bsdtar (`format`: zip or 7zip).
     fn make_archive(dir: &Path, name: &str, format: &str, passphrase: Option<&str>) -> bool {
         let Some(tar) = find_bsdtar_exe() else { return false };
-        let mut c = Command::new(tar);
+        let mut c = crate::tools::command(tar);
         c.current_dir(dir).arg("-c").arg("--format").arg(format);
         if let Some(p) = passphrase {
             c.arg("--options").arg("zip:encryption=zipcrypt").arg("--passphrase").arg(p);

@@ -259,8 +259,12 @@ impl Engine {
                     return Applied::Ignored;
                 };
                 c.unrar = v;
+                c.unpack_override = Some(v);
+                for set in self.par2.iter_mut().filter(|set| set.collection_id == Some(id)) {
+                    set.unrar = v;
+                }
                 if v && c.status == ItemStatus::Completed {
-                    self.start_unrar(id);
+                    self.auto_unpack(id);
                 }
             }
             SetUnrarFolder(id, folder) => {
@@ -436,6 +440,99 @@ mod tests {
         }
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn queued_unpack_request_extracts_when_global_default_is_off() {
+        let root = tempfile::tempdir().unwrap();
+        let mut settings = Settings::default();
+        settings.download_dir = root.path().to_string_lossy().into_owned();
+        settings.auto_unrar = false;
+        settings.par2_checking = false;
+        let mut engine = Engine::new(settings, true);
+        engine.queue.clear();
+        let id = engine.add_nzb_from_parsed(nzb_with(&["tiny.rar"]), String::new(), false);
+        engine.apply(Command::SetUnrar(id, true));
+        let source = PathBuf::from(&engine.queue[0].folder);
+        std::fs::create_dir_all(&source).unwrap();
+        let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/tiny.rar");
+        std::fs::copy(fixture, source.join("tiny.rar")).unwrap();
+        engine.queue[0].status = ItemStatus::Completed;
+        engine.schedule_after_download(id);
+        assert!(engine.active_unrar.is_some());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while engine.active_unrar.is_some() && std::time::Instant::now() < deadline {
+            engine.poll_unrar();
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let extracted = walk(root.path()).into_iter().find(|p| p.ends_with("readme.txt")).unwrap();
+        assert_eq!(std::fs::read_to_string(extracted).unwrap().trim(), "tiny rar fixture");
+        assert_eq!(engine.queue[0].status, ItemStatus::Completed);
+    }
+
+    #[test]
+    fn pending_unpack_rechecks_off_and_preserves_unpack_now() {
+        for manual in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let mut settings = Settings::default();
+            settings.download_dir = root.path().to_string_lossy().into_owned();
+            settings.auto_unrar = true;
+            settings.par2_checking = false;
+            let mut engine = Engine::new(settings, true);
+            engine.queue.clear();
+            let id = engine.add_nzb_from_parsed(nzb_with(&["tiny.rar"]), String::new(), false);
+            let source = PathBuf::from(&engine.queue[0].folder);
+            std::fs::create_dir_all(&source).unwrap();
+            let fixture = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../tests/fixtures/tiny.rar");
+            std::fs::copy(fixture, source.join("tiny.rar")).unwrap();
+            engine.queue[0].status = ItemStatus::Completed;
+
+            let (tx, rx) = std::sync::mpsc::channel();
+            engine.active_unrar = Some(crate::unrar::ActiveUnrar { collection_id: 999, rx });
+            engine.schedule_after_download(id);
+            if manual {
+                engine.apply(Command::Unpack(id));
+            }
+            engine.apply(Command::SetUnrar(id, true));
+            engine.apply(Command::SetUnrar(id, false));
+            tx.send(Ok("Previous unpack finished".into())).unwrap();
+            engine.poll_unrar();
+
+            assert_eq!(engine.active_unrar.as_ref().map(|a| a.collection_id), manual.then_some(id));
+            assert_eq!(engine.queue[0].execute_done, !manual);
+            if manual {
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+                while engine.active_unrar.is_some() && std::time::Instant::now() < deadline {
+                    engine.poll_unrar();
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+                assert!(engine.active_unrar.is_none());
+            }
+        }
+    }
+
+    #[test]
+    fn unpack_after_download_honors_explicit_choices_across_reload() {
+        let mut engine = Engine::new(Settings::default(), true);
+        engine.queue.clear();
+        let id = engine.add_nzb_from_parsed(nzb_with(&["tiny.rar"]), String::new(), false);
+        let stored = serde_json::to_value(&engine.queue[0]).unwrap();
+        assert!(stored.get("unpack_override").is_none());
+        let inherited: Collection = serde_json::from_value(stored).unwrap();
+        assert!(!inherited.unpack_after_download(false));
+        assert!(inherited.unpack_after_download(true));
+        for enabled in [true, false] {
+            engine.apply(Command::SetUnrar(id, enabled));
+            let bytes = serde_json::to_vec(&engine.queue[0]).unwrap();
+            let restored: Collection = serde_json::from_slice(&bytes).unwrap();
+            for default in [false, true] {
+                assert_eq!(restored.unpack_after_download(default), enabled);
+            }
+        }
+        let mut legacy_off = inherited;
+        legacy_off.unrar = false;
+        assert!(!legacy_off.unpack_after_download(true));
+    }
+
     #[test]
     fn duplicates_are_warned_or_added_paused() {
         let mut e = Engine::new(Settings::default(), true);
@@ -557,7 +654,7 @@ mod tests {
         s.download_dir = root.to_string_lossy().to_string();
         s.low_free_space_mb = 0;
         s.direct_unpack = true;
-        s.auto_unrar = true;
+        s.auto_unrar = false;
         s.par2_checking = false;
         s.sort_folder = root.join("sorted").to_string_lossy().to_string();
         s.sort_pattern = "{date}/{name}".into();
@@ -570,8 +667,7 @@ mod tests {
             file.segments[0].bytes = len;
         }
         let id = e.add_nzb_from_parsed(nzb, String::new(), false);
-        let i = e.index_of(id).unwrap();
-        e.queue[i].unrar = true;
+        e.apply(Command::SetUnrar(id, true));
         e.connect();
         let started = std::time::Instant::now();
         let mut saw_direct = false;

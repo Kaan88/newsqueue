@@ -32,6 +32,8 @@ pub struct WebApp {
     key_draft: String,
     tab: usize,
     selected: Option<u64>,
+    selected_file: Option<(u64, usize)>,
+    copy_row: Option<(usize, String, String)>,
     hist_sel: Option<usize>,
     par2_sel: Option<usize>,
     last_poll: f64,
@@ -159,6 +161,8 @@ impl WebApp {
             key_draft: key,
             tab: 0,
             selected: None,
+            selected_file: None,
+            copy_row: None,
             hist_sel: None,
             par2_sel: None,
             last_poll: -10.0,
@@ -338,6 +342,22 @@ impl WebApp {
         if pressed(Modifiers::COMMAND, Key::O) {
             self.dialog = Some(Dialog::AddNzb);
         }
+        let copy = ctx.input_mut(|i| {
+            let event = i.events.iter().any(|e| matches!(e, egui::Event::Copy));
+            i.events.retain(|e| !matches!(e, egui::Event::Copy));
+            event | i.consume_key(Modifiers::COMMAND, Key::C)
+        });
+        if copy {
+            let text = self.copy_row.as_ref().filter(|(tab, _, _)| *tab == self.tab).map(|(_, _, text)| text.clone()).or_else(|| match self.tab {
+                0 => self.selected_file.and_then(|(id, fi)| snap.queue.iter().find(|c| c.id == id)?.file_rows.get(fi).map(|f| f.name.clone()))
+                    .or_else(|| self.selected_row(snap).map(|c| c.subject.clone())),
+                1 => self.hist_sel.and_then(|i| snap.history.get(i)).map(|h| format!("{}\t{}\t{}\t{}", h.name, h.status, h.size, h.date)),
+                2 => self.par2_sel.and_then(|i| snap.par2.get(i)).map(|p| format!("{}\t{}\t{}", p.name, p.info, p.status)),
+                3 => Some(snap.log_tail.iter().filter(|l| self.log_filter.is_empty() || l.message.to_lowercase().contains(&self.log_filter.to_lowercase()) || l.level.to_lowercase().contains(&self.log_filter.to_lowercase())).map(|l| format!("{}\t{}\t{}", l.time, l.level, l.message)).collect::<Vec<_>>().join("\n")),
+                _ => None,
+            });
+            if let Some(text) = text { ctx.copy_text(text); }
+        }
         if self.tab != 0 {
             return;
         }
@@ -364,15 +384,23 @@ impl WebApp {
             }
         }
         if pressed(Modifiers::NONE, Key::ArrowDown) && !ids.is_empty() {
+            self.copy_row = None;
+            self.selected_file = None;
             self.selected = Some(ids[pos.map_or(0, |p| (p + 1).min(ids.len() - 1))]);
         }
         if pressed(Modifiers::NONE, Key::ArrowUp) && !ids.is_empty() {
+            self.copy_row = None;
+            self.selected_file = None;
             self.selected = Some(ids[pos.map_or(0, |p| p.saturating_sub(1))]);
         }
         if pressed(Modifiers::NONE, Key::Home) && !ids.is_empty() {
+            self.copy_row = None;
+            self.selected_file = None;
             self.selected = Some(ids[0]);
         }
         if pressed(Modifiers::NONE, Key::End) && !ids.is_empty() {
+            self.copy_row = None;
+            self.selected_file = None;
             self.selected = Some(ids[ids.len() - 1]);
         }
     }
@@ -822,6 +850,8 @@ impl WebApp {
         let mut actions: Vec<(u64, &'static str)> = Vec::new();
         let mut open_dialog: Option<Dialog> = None;
         let mut select: Option<u64> = None;
+        let mut select_file = None;
+        let selected_file = self.selected_file;
         let mut start_drag: Option<(u64, usize)> = None;
         let drag = self.drag;
         let selected = self.selected;
@@ -839,14 +869,15 @@ impl WebApp {
                 new_target = Some(ci);
             }
             let p = ui.painter().clone();
-            let sel = file.is_none() && (selected == Some(c.id) || drag.is_some_and(|d| d.0 == c.id));
+            let sel = file.map_or_else(|| selected == Some(c.id) || drag.is_some_and(|d| d.0 == c.id), |fi| selected_file == Some((c.id, fi)));
             let fg = row_ground(ui, r, sel);
             let done = c.status.as_deref() == Some("Completed");
             let dim = if sel { fg } else if done { GRAY_TEXT() } else { fg };
             if let Some(fi) = file {
+                crate::audit::item(ui, &format!("file:{}:{}", c.id, fi), r);
                 let f = &c.file_rows[fi];
                 let fdone = f.done || f.progress >= 1.0;
-                let color = if f.held || fdone || done { GRAY_TEXT() } else { TEXT() };
+                let color = if sel { fg } else if f.held || fdone || done { GRAY_TEXT() } else { TEXT() };
                 let name_cell = Rect::from_min_size(pos2(lefts[0], r.top()), vec2(cols.widths[0], r.height()));
                 theme::paint_icon(&p, Rect::from_min_size(pos2(name_cell.left() + 24.0, r.center().y - 8.0), vec2(16.0, 16.0)), Icon::File, true);
                 p.with_clip_rect(name_cell.shrink2(vec2(4.0, 0.0)).intersect(p.clip_rect())).text(pos2(name_cell.left() + 44.0, r.center().y), Align2::LEFT_CENTER, elide(&p, &f.name, theme::font(BODY), name_cell.width() - 48.0), theme::font(BODY), color);
@@ -866,6 +897,18 @@ impl WebApp {
                         _ => {}
                     }
                 }
+                if resp.clicked() || resp.secondary_clicked() { select_file = Some((c.id, fi)); }
+                skin::context_menu(&resp, |ui| {
+                    if skin::menu_item(ui, "Copy filename", "Ctrl+C", true) {
+                        ui.ctx().copy_text(f.name.clone()); ui.close();
+                    }
+                    if skin::menu_item(ui, "Copy details", "", true) {
+                        ui.ctx().copy_text(format!("{}\t{}\t{}", f.name, size(f.bytes as f64), status)); ui.close();
+                    }
+                    if skin::menu_item(ui, "Copy download folder", "", !c.folder.is_empty()) {
+                        ui.ctx().copy_text(c.folder.clone()); ui.close();
+                    }
+                });
                 return;
             }
             crate::audit::item(ui, &format!("job:{}",c.id), r);
@@ -935,6 +978,13 @@ impl WebApp {
             }
             let paused = c.status.as_deref() == Some("Paused");
             skin::context_menu(&resp, |ui| {
+                if skin::menu_item(ui, "Copy name", "Ctrl+C", true) {
+                    ui.ctx().copy_text(c.subject.clone()); ui.close();
+                }
+                if skin::menu_item(ui, "Copy details", "", true) {
+                    ui.ctx().copy_text(format!("{}\t{}\t{}\t{}\t{}", c.subject, size(c.total_bytes as f64), status_text(c), c.group, c.poster)); ui.close();
+                }
+                skin::menu_separator(ui);
                 let mut pick: Option<&'static str> = None;
                 if skin::menu_item(ui, if paused { "Resume" } else { "Pause" }, "", true) {
                     pick = Some(if paused { "resume" } else { "pause" });
@@ -954,6 +1004,9 @@ impl WebApp {
                 }
                 if skin::menu_item(ui, if c.has_password { "Change archive password..." } else { "Archive password..." }, "", true) {
                     pick = Some("password");
+                }
+                if skin::menu_check(ui, "Unpack after download", c.unrar, false) {
+                    pick = Some(if c.unrar { "unpack-off" } else { "unpack-on" });
                 }
                 if skin::menu_item(ui, "Unpack now", "", true) {
                     pick = Some("unpack");
@@ -979,7 +1032,14 @@ impl WebApp {
             self.cols_queue = cols;
         }
         if let Some(s) = select {
+            self.copy_row = None;
             self.selected = Some(s);
+            self.selected_file = None;
+        }
+        if let Some(f) = select_file {
+            self.copy_row = None;
+            self.selected_file = Some(f);
+            self.selected = None;
         }
         if let Some(d) = start_drag {
             self.drag = Some(d);
@@ -1028,6 +1088,10 @@ impl WebApp {
             let empty = if snap.connected { "No connection is busy." } else { "Not connected. Queue > Connected, or the Connect button, connects." };
             list_view(ui, &mut cols, "conns", 0.0, threads.len(), if theme::is_caustica() { 24.0 } else { 18.0 }, empty, false, |ui, i, r, lefts, cols| {
                 let t = &threads[i];
+                if copyable_row(ui, r, "connection", i, 0, format!("{}\t{}\t{}\t{}\t{}", t.number, t.action, t.description, t.status, t.server), &mut self.copy_row) {
+                    self.selected = None;
+                    self.selected_file = None;
+                }
                 let p = ui.painter();
                 cell(p, r, lefts, &cols, 0, &t.number.to_string(), TEXT());
                 cell(p, r, lefts, &cols, 1, &t.action, TEXT());
@@ -1061,6 +1125,7 @@ impl WebApp {
         list_view(ui, &mut cols, "history", 0.0, n, if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "No history yet. Finished and failed jobs are listed here.", false, |ui, row, r, lefts, cols| {
             let i = index_of(row);
             let h = &snap.history[i];
+            crate::audit::item(ui, &format!("history:{i}"), r);
             let resp = ui.interact(r, ui.scope_id().with(("hrow", i)), Sense::click());
             let fg = row_ground(ui, r, sel == Some(i));
             let p = ui.painter().clone();
@@ -1081,6 +1146,9 @@ impl WebApp {
             }
             let has_source = !h.source.is_empty();
             skin::context_menu(&resp, |ui| {
+                if skin::menu_item(ui, "Copy details", "Ctrl+C", true) {
+                    ui.ctx().copy_text(format!("{}\t{}\t{}\t{}", h.name, h.status, h.size, h.date)); ui.close();
+                }
                 if skin::menu_item(ui, "Download again", "", has_source) {
                     retry = Some(i);
                     ui.close();
@@ -1090,6 +1158,7 @@ impl WebApp {
         cols.widths[0] = desktop_w;
         self.cols_hist = cols;
         if select.is_some() {
+            self.copy_row = None;
             self.hist_sel = select;
         }
         if let Some(i) = retry {
@@ -1116,6 +1185,7 @@ impl WebApp {
         let mut select = None;
         list_view(ui, &mut cols, "par2", 0.0, n, if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "No PAR2 sets.", false, |ui, i, r, lefts, cols| {
             let s = &snap.par2[i];
+            crate::audit::item(ui, &format!("par2:{i}"), r);
             let resp = ui.interact(r, ui.scope_id().with(("prow", i)), Sense::click());
             let fg = row_ground(ui, r, sel == Some(i));
             let p = ui.painter().clone();
@@ -1133,6 +1203,11 @@ impl WebApp {
             if resp.clicked() || resp.secondary_clicked() {
                 select = Some(i);
             }
+            skin::context_menu(&resp, |ui| {
+                if skin::menu_item(ui, "Copy details", "Ctrl+C", true) {
+                    ui.ctx().copy_text(format!("{}\t{}\t{}", s.name, s.info, s.status)); ui.close();
+                }
+            });
             if resp.double_clicked() {
                 start = Some(i);
             }
@@ -1140,6 +1215,7 @@ impl WebApp {
         cols.widths[0] = desktop_w;
         self.cols_par2 = cols;
         if select.is_some() {
+            self.copy_row = None;
             self.par2_sel = select;
         }
         if let Some(i) = start {
@@ -1151,6 +1227,9 @@ impl WebApp {
         let ctx = ui.ctx().clone();
         let f = self.log_filter.trim().to_lowercase();
         let lines: Vec<&net::LogLine> = snap.log_tail.iter().filter(|l| f.is_empty() || l.message.to_lowercase().contains(&f) || l.level.to_lowercase().contains(&f)).collect();
+        if self.copy_row.as_ref().is_some_and(|(tab, _, text)| *tab == 3 && !lines.iter().any(|l| format!("{}\t{}\t{}", l.time, l.level, l.message) == *text)) {
+            self.copy_row = None;
+        }
         button_row(ui, |ui| {
             if skin::button(ui, "Copy").on_hover_text("Copy the lines shown").clicked() {
                 let text: Vec<String> = lines.iter().map(|l| format!("{}\t{}\t{}", l.time, l.level, l.message)).collect();
@@ -1164,6 +1243,7 @@ impl WebApp {
         let mut cols = self.cols_log.clone();
         list_view(ui, &mut cols, "log", 0.0, lines.len(), if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "The log is empty.", true, |ui, i, r, lefts, cols| {
             let l = lines[i];
+            copyable_row(ui, r, "log", i, 3, format!("{}\t{}\t{}", l.time, l.level, l.message), &mut self.copy_row);
             let color = match l.level.as_str() {
                 "Error" => theme::RED(),
                 "Warning" | "Shutdown" => theme::ORANGE(),
@@ -1180,6 +1260,9 @@ impl WebApp {
 
     fn rss_page(&mut self, ui: &mut Ui, snap: &Snapshot, narrow: bool) {
         let ctx = ui.ctx().clone();
+        if self.copy_row.as_ref().is_some_and(|(tab, _, text)| *tab == 4 && !snap.rss.iter().any(|item| format!("{}\t{}\t{}", item.name, item.date, item.description) == *text)) {
+            self.copy_row = None;
+        }
         button_row(ui, |ui| {
             if skin::icon_button(ui, "Refresh", Icon::Refresh, 90.0).clicked() {
                 self.client.post(&ctx, "/api/rss/refresh", vec![], Some("RSS refresh started".into()));
@@ -1196,6 +1279,7 @@ impl WebApp {
         let desktop_w = fit_first_column(ui, &mut cols, narrow);
         list_view(ui, &mut cols, "rss", 0.0, snap.rss.len(), if narrow { 26.0 } else if theme::is_caustica() { 24.0 } else { 18.0 }, "No feed items. Add feeds with Feeds..., then Refresh.", false, |ui, i, r, lefts, cols| {
             let it = &snap.rss[i];
+            copyable_row(ui, r, "rss", i, 4, format!("{}\t{}\t{}", it.name, it.date, it.description), &mut self.copy_row);
             let p = ui.painter();
             cell(p, r, lefts, &cols, 0, &it.name, TEXT());
             cell(p, r, lefts, &cols, 1, &it.date, TEXT());
@@ -1589,4 +1673,29 @@ fn chart(p: &egui::Painter, r: Rect, values: &[f64], unit: &str, labels: &[Strin
             }
         }
     }
+}
+
+/// Painted list rows need explicit selection/copy handling; they are not text edits.
+fn copyable_row(ui: &mut Ui, rect: Rect, kind: &str, index: usize, tab: usize, text: String, selected: &mut Option<(usize, String, String)>) -> bool {
+    let row_id = format!("{kind}:{index}");
+    // Log and RSS rows can shift when new entries arrive. Keep the selected
+    // entry's text as its identity; a connection row intentionally stays live.
+    let id = if kind == "connection" { row_id.clone() } else { format!("{kind}:{text}") };
+    crate::audit::item(ui, &row_id, rect);
+    let response = ui.interact(rect, ui.scope_id().with((&id, index)), Sense::click());
+    if response.clicked() || response.secondary_clicked() {
+        *selected = Some((tab, id.clone(), text.clone()));
+    }
+    if selected.as_ref().is_some_and(|(t, key, _)| *t == tab && *key == id) {
+        if kind == "connection" {
+            if let Some((_, _, current)) = selected.as_mut() { *current = text.clone(); }
+        }
+        ui.painter().rect_stroke(rect.shrink(1.0), 0.0, Stroke::new(1.0, theme::BAR()), egui::StrokeKind::Inside);
+    }
+    skin::context_menu(&response, |ui| {
+        if skin::menu_item(ui, "Copy details", "Ctrl+C", true) {
+            ui.ctx().copy_text(text.clone()); ui.close();
+        }
+    });
+    response.clicked() || response.secondary_clicked()
 }

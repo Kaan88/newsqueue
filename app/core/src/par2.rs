@@ -6,7 +6,6 @@
 use crate::model::{app_base, Settings};
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 
 pub struct ActivePar2 {
@@ -283,7 +282,7 @@ pub fn verify_or_repair(
 }
 
 fn run_par2(exe: &Path, source: &Path, args: &[&str]) -> Result<(i32, String), String> {
-    let output = Command::new(exe)
+    let output = crate::tools::command(exe)
         .args(args)
         .current_dir(source)
         .output()
@@ -366,7 +365,7 @@ mod tests {
         drop(file);
 
         let exe = find_par2_exe().expect("par2.exe missing");
-        let output = Command::new(&exe)
+        let output = crate::tools::command(&exe)
             .args(["c", "-q", "-r10", "payload.par2", "payload.rar"])
             .current_dir(&root)
             .output()
@@ -416,7 +415,7 @@ mod tests {
         let data: Vec<u8> = (0..60_000u32).map(|i| (i.wrapping_mul(13) % 251) as u8).collect();
         fs::write(root.join("payload.rar"), &data).unwrap();
         let exe = find_par2_exe().unwrap();
-        let out = Command::new(&exe)
+        let out = crate::tools::command(&exe)
             .args(["c", "-q", "-s4000", "-r20", "payload.par2", "payload.rar"])
             .current_dir(&root)
             .output()
@@ -491,7 +490,7 @@ mod tests {
         fs::write(root.join("payload.rar"), &data).unwrap();
         fs::write(root.join("release.nfo"), b"release notes that were never posted").unwrap();
         let exe = find_par2_exe().unwrap();
-        let output = Command::new(&exe)
+        let output = crate::tools::command(&exe)
             .args(["c", "-q", "-r10", "payload.par2", "payload.rar", "release.nfo"])
             .current_dir(&root)
             .output()
@@ -536,7 +535,7 @@ mod tests {
         let payload = root.join("payload.rar");
         fs::copy(&fixture, &payload).unwrap();
         let exe = find_par2_exe().expect("par2.exe missing");
-        let output = Command::new(&exe)
+        let output = crate::tools::command(&exe)
             .args(["c", "-q", "-r20", "payload.par2", "payload.rar"])
             .current_dir(&root)
             .output()

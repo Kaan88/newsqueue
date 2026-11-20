@@ -46,6 +46,18 @@ fn pick(path: &str) -> Option<PathBuf> {
     (!path.is_empty()).then(|| PathBuf::from(path)).filter(|p| p.is_file())
 }
 
+/// Run a bundled console tool without creating a visible console on Windows.
+pub fn command(program: impl AsRef<std::ffi::OsStr>) -> std::process::Command {
+    #[allow(unused_mut)]
+    let mut command = std::process::Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    command
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

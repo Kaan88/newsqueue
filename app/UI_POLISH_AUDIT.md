@@ -317,3 +317,8 @@ Installed `--ui-smoke` passed without activation, and hashes of all existing
 settings/queue/history/statistics/picker JSON files were unchanged. The desktop
 shortcut still points to the same installation. Docker and public release assets
 remain unchanged.
+
+
+## Clipboard and unpack follow-up (2026-11-21)
+
+`web/qa/clipboard.py` exercises the real WASM UI in headless Chrome with an isolated demo server and synthetic rows: queue names, expanded filenames/details, history, PAR2, log, RSS and connection Ctrl+C/context menus; editor Ctrl+C; safe child selection; per-job unpack API dispatch. Both skins, both brightness settings, 1440 and 760 pixel widths. Audit build assets belong in `target/copy-web-audit` (build web with `--features ui-audit`, run wasm-bindgen there and copy `web/index.html`). Run from the repository root with `python app/web/qa/clipboard.py`. Production web is separately rebuilt without the feature and checked for absent audit globals. Screenshots: `target/web-audit/copy-*.png`.

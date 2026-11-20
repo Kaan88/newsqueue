@@ -67,7 +67,7 @@ fn fields(page: usize) -> Vec<(&'static str, &'static str, Kind, &'static str)> 
             ("par2_repairing", "Repair with PAR2", Check, ""),
             ("par2_on_demand", "Fetch PAR2 volumes only when needed", Check, ""),
             ("cleanup_after_repair", "Delete PAR2 files after a repair", Check, ""),
-            ("auto_unrar", "Unpack finished jobs", Check, ""),
+            ("auto_unrar", "Unpack downloads by default", Check, ""),
             ("direct_unpack", "Unpack while downloading", Check, ""),
             ("delete_archives", "Delete archives after unpacking", Check, ""),
             ("overwrite_existing", "Overwrite existing files", Check, ""),

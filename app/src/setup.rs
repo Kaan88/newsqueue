@@ -129,7 +129,7 @@ static FIELDS: &[F] = &[
     f(9, "par2_on_demand", "Download recovery volumes only when a repair needs them", K::Check),
     f(9, "par2_path", "par2.exe (empty = bundled)", K::Exe),
     // Unpack
-    f(10, "auto_unrar", "Unpack archives after download", K::Check),
+    f(10, "auto_unrar", "Unpack downloads by default", K::Check),
     f(10, "direct_unpack", "Unpack while the rest of the set downloads", K::Check),
     f(10, "overwrite_existing", "Overwrite existing files", K::Check),
     f(10, "rename_existing", "Rename existing files instead", K::Check),

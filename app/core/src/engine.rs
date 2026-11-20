@@ -27,6 +27,12 @@ pub enum Event {
     RssFeedsNeeded,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UnpackSource {
+    Automatic,
+    Manual,
+}
+
 pub struct Engine {
     /// Free space on the download drive, refreshed every tick.
     pub free_gb: f64,
@@ -83,7 +89,7 @@ pub struct Engine {
     pub draining_dl: Option<std::thread::JoinHandle<()>>,
     pub active_unrar: Option<unrar::ActiveUnrar>,
     pub active_par2: Option<par2::ActivePar2>,
-    pub pending_unrar: VecDeque<u64>,
+    pending_unrar: VecDeque<(u64, UnpackSource)>,
     /// Direct unpack: extraction running while its collection downloads.
     pub active_direct: Option<unrar::DirectUnrar>,
     /// Servers of the running job (address, port, user) and the bytes
@@ -577,6 +583,7 @@ impl Engine {
             folder,
             unrar_folder,
             unrar,
+            unpack_override: None,
             execute: String::new(),
             execute_done: false,
             expanded: true,
@@ -842,7 +849,7 @@ impl Engine {
         }) {
             set.name = name;
             set.size_mb = size_mb;
-            set.unrar = collection.unrar;
+            set.unrar = collection.unpack_after_download(self.settings.auto_unrar);
             set.folder = collection.folder.clone();
             set.collection_id = Some(collection.id);
             set.status = "Checking".into();
@@ -854,7 +861,7 @@ impl Engine {
                 size_mb,
                 blocks: 0,
                 info: "Queued".into(),
-                unrar: collection.unrar,
+                unrar: collection.unpack_after_download(self.settings.auto_unrar),
                 progress: 0.0,
                 status: "Checking".into(),
                 folder: collection.folder.clone(),
@@ -926,18 +933,8 @@ impl Engine {
                 }
                 self.log("PAR2", &message);
                 self.toast("PAR2 check complete");
-                let auto_unrar = active.collection_id != 0
-                    && self.settings.auto_unrar
-                    && self
-                        .queue
-                        .iter()
-                        .find(|collection| collection.id == active.collection_id)
-                        .map(|collection| collection.unrar)
-                        .unwrap_or(false);
-                if auto_unrar {
-                    if self.start_unrar(active.collection_id) {
-                        return;
-                    }
+                if active.collection_id != 0 && self.auto_unpack(active.collection_id) {
+                    return;
                 }
                 self.run_execute_hook(active.collection_id);
             }
@@ -1032,6 +1029,11 @@ impl Engine {
         self.events.push(Event::Message("PAR2".into(), error));
     }
 
+    fn should_unpack(&self, id: u64) -> bool {
+        self.queue.iter().find(|c| c.id == id)
+            .is_some_and(|c| c.unpack_after_download(self.settings.auto_unrar))
+    }
+
     pub fn schedule_after_download(&mut self, id: u64) {
         match self.direct_result.get(&id).copied() {
             Some(None) => {
@@ -1072,15 +1074,7 @@ impl Engine {
         if check_par2 && self.start_par2(id) {
             return;
         }
-        if self.settings.auto_unrar
-            && self
-                .queue
-                .iter()
-                .find(|collection| collection.id == id)
-                .map(|collection| collection.unrar)
-                .unwrap_or(false)
-            && self.start_unrar(id)
-        {
+        if self.auto_unpack(id) {
             return;
         }
         self.run_execute_hook(id);
@@ -1171,7 +1165,6 @@ impl Engine {
             return;
         }
         if !self.settings.direct_unpack
-            || !self.settings.auto_unrar
             || snapshot.missing > 0
             || matches!(snapshot.stage, download::Stage::Error | download::Stage::Incomplete | download::Stage::Stopped)
             || self.active_direct.is_some()
@@ -1181,7 +1174,8 @@ impl Engine {
         {
             return;
         }
-        let Some(collection) = self.queue.iter().find(|c| c.id == id).filter(|c| c.unrar).cloned() else {
+        let Some(collection) = self.queue.iter().find(|c| c.id == id)
+            .filter(|c| c.unpack_after_download(self.settings.auto_unrar)) else {
             return;
         };
         let Some(first) = ready.iter().find(|p| {
@@ -1189,10 +1183,11 @@ impl Engine {
         }) else {
             return;
         };
-        let options = unrar::UnrarOptions::from_collection(&self.settings, &collection);
-        let dest = unrar::target_dir(&self.settings, &collection);
+        let options = unrar::UnrarOptions::from_collection(&self.settings, collection);
+        let dest = unrar::target_dir(&self.settings, collection);
+        let source = PathBuf::from(&collection.folder);
         self.log("Unrar", &format!("Direct unpack started: {} -> {}", collection.subject, dest.display()));
-        let direct = unrar::spawn_direct(id, first.clone(), PathBuf::from(&collection.folder), dest, options);
+        let direct = unrar::spawn_direct(id, first.clone(), source, dest, options);
         if let Ok(mut list) = direct.ready.lock() {
             *list = ready.clone();
         }
@@ -1247,9 +1242,24 @@ impl Engine {
     /// Start unpacking a completed collection. Returns true when a worker was
     /// started or the request was queued; false when there is nothing to unpack.
     pub fn start_unrar(&mut self, id: u64) -> bool {
+        self.request_unpack(id, UnpackSource::Manual)
+    }
+
+    pub(crate) fn auto_unpack(&mut self, id: u64) -> bool {
+        self.request_unpack(id, UnpackSource::Automatic)
+    }
+
+    fn request_unpack(&mut self, id: u64, source: UnpackSource) -> bool {
+        if source == UnpackSource::Automatic && !self.should_unpack(id) {
+            return false;
+        }
         if self.active_unrar.is_some() {
-            if !self.pending_unrar.contains(&id) {
-                self.pending_unrar.push_back(id);
+            if let Some((_, queued_source)) = self.pending_unrar.iter_mut().find(|(queued, _)| *queued == id) {
+                if source == UnpackSource::Manual {
+                    *queued_source = source;
+                }
+            } else {
+                self.pending_unrar.push_back((id, source));
             }
             return true;
         }
@@ -1285,11 +1295,22 @@ impl Engine {
         true
     }
 
+    fn start_next_unpack(&mut self) {
+        while let Some((id, source)) = self.pending_unrar.pop_front() {
+            if self.request_unpack(id, source) {
+                break;
+            }
+            if source == UnpackSource::Automatic && self.queue.iter().any(|c|
+                c.id == id && matches!(c.status, ItemStatus::Completed | ItemStatus::Incomplete)
+            ) {
+                self.run_execute_hook(id);
+            }
+        }
+    }
+
     pub fn poll_unrar(&mut self) {
         let Some(active) = self.active_unrar.take() else {
-            if let Some(id) = self.pending_unrar.pop_front() {
-                self.start_unrar(id);
-            }
+            self.start_next_unpack();
             return;
         };
         match unrar::poll(&active) {
@@ -1336,9 +1357,7 @@ impl Engine {
             }
         }
         if self.active_unrar.is_none() {
-            if let Some(id) = self.pending_unrar.pop_front() {
-                self.start_unrar(id);
-            }
+            self.start_next_unpack();
         }
     }
 

@@ -414,6 +414,8 @@ impl Api {
                     "top" => Command::Move(id, MoveDir::Top),
                     "bottom" => Command::Move(id, MoveDir::Bottom),
                     "unpack" => Command::Unpack(id),
+                    "unpack-on" => Command::SetUnrar(id, true),
+                    "unpack-off" => Command::SetUnrar(id, false),
                     "expand" => Command::SetExpanded(id, true),
                     "collapse" => Command::SetExpanded(id, false),
                     "move" => match query_value(query, "to").and_then(|t| t.parse::<usize>().ok()) {
@@ -612,6 +614,25 @@ mod tests {
         assert!(host.queue.iter().all(|c| c.id != ids[0]));
         let snap = api.handle.snapshot();
         assert_eq!(snap.queue[0].id, last);
+    }
+
+    #[test]
+    fn unpack_choice_overrides_default_and_updates_snapshot() {
+        let (mut host, api) = demo();
+        host.settings.auto_unrar = false;
+        let id = host.queue[0].id;
+        host.queue[0].status = newsqueue_core::model::ItemStatus::Queued;
+        host.tick_local();
+        assert!(!api.handle.snapshot().queue[0].unrar);
+        for (action, enabled) in [("unpack-on", true), ("unpack-off", false)] {
+            assert_eq!(api.route("POST", &format!("/api/queue/{id}/{action}"), Some("k3y"), b"").status, 202);
+            host.tick_local();
+            assert_eq!(api.handle.snapshot().queue[0].unrar, enabled);
+            assert_eq!(host.queue[0].unpack_override, Some(enabled));
+        }
+        host.settings.auto_unrar = true;
+        host.tick_local();
+        assert!(!api.handle.snapshot().queue[0].unrar);
     }
 
     #[test]
