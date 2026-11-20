@@ -19,11 +19,11 @@ The user approved the polished native Compact mockup in `app/native-mockups`.
 The production desktop now uses its common-controls v6 styling and OS-managed
 chrome, with existing commands and saved dimensions retained. The web UI must remain egui and retain its
 layout, with Caustica as default and Classic selectable, separately from
-System/Light/Dark brightness. Release 1.0.9 ships matching Windows, server and web builds.
+System/Light/Dark brightness. Release 1.0.10 ships matching Windows, server and web builds.
 See `ROADMAP.md` for active blockers and `CONTINUATION_PLAN.md` for gates.
 
-- Current app version: **1.0.9**
-- Current build date: **2026-11-20**
+- Current app version: **1.0.10**
+- Current build date: **2026-11-21**
 - Historical reference: **AltBinz 0.48.4**
 - Platforms: Windows x64 desktop; headless server on Windows/Linux
 - UI: native Win32 (`windows` 0.61), light only; web UI egui 0.37 (WASM)
@@ -190,7 +190,7 @@ The engine runs on its own thread, so the window can be hidden normally:
 minimize-to-tray and close-to-tray call `ShowWindow(SW_HIDE)` (which also drops
 the taskbar button) and the tray restores with `SW_SHOW`/`SW_RESTORE`. The tray
 thread owns the icon and message loop and finds the main window by its exact
-title (`NewsQueue 1.0.9`). It uses:
+title (`NewsQueue 1.0.10`). It uses:
 - `Shell_NotifyIconW` for the icon, tooltip and balloons.
 - `WM_TIMER` for the speed tooltip.
 - A shared exit flag for tray Exit (the main window then closes normally).
@@ -333,7 +333,7 @@ requested. `app/PICKER_SMOKE.md` records the completed picker interaction run.
 
 ## 8. Versioning, packaging and releases
 
-NewsQueue uses independent versions. Current version is **1.0.9** (1.0.2 was the first release that can self-update).
+NewsQueue uses independent versions. Current version is **1.0.10** (1.0.2 was the first release that can self-update).
 `v1.0.0` was rebuilt in place once (yEnc decode fix) and then superseded by
 `v1.0.1`, which adds content-based naming for obfuscated posts. About → Check for updates and a timer (`check_version_minutes`, 0 = never) check GitHub
 releases; with `auto_update` the app installs a newer setup silently when idle.

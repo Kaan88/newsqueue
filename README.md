@@ -6,11 +6,11 @@ A Rust Usenet downloader with a native Win32 desktop, a headless server and
 an egui/WASM web UI. The shared engine, queue and settings live in `app/`.
 Originally inspired by AltBinz, NewsQueue now follows its own product direction.
 
-The current release is **1.0.9** for Windows, server and web.
+The current release is **1.0.10** for Windows, server and web.
 
 ## Download and run
 
-- **Windows x64:** use the [1.0.9 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.9).
+- **Windows x64:** use the [1.0.10 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.10).
   The native Compact design retains its original Windows font.
 - **Docker / web UI:** use the Linux amd64 image archive and Compose files from
   the same release. Follow the [Docker Compose guide](app/DOCKER.md) for setup,
@@ -21,7 +21,7 @@ Quick start after downloading the image, `compose.yaml` and `env.example`:
 ```sh
 cp env.example .env
 # Edit .env and replace NQ_API_KEY with a long random key.
-docker load -i NewsQueue-1.0.9-linux-amd64.tar.gz
+docker load -i NewsQueue-1.0.10-linux-amd64.tar.gz
 docker compose up -d --no-build
 ```
 
@@ -35,9 +35,16 @@ and preserves stored credentials when editing or removing server rows.
 Classic's layout and appearance remain intact. Windows includes the same updated
 web UI for its optional Web access feature.
 
-For matching source, download `NewsQueue-1.0.9-source.zip` or check out `v1.0.9`.
+For matching source, download `NewsQueue-1.0.10-source.zip` or check out `v1.0.10`.
 
-## New in 1.0.9
+## New in 1.0.10
+
+- Multi-file downloads start streaming immediately, with actual connection activity and progress shown during preparation and retries.
+- Web Ctrl+C and right-click copying for queue rows, individual files, history, PAR2, logs, RSS and connections.
+- Per-job **Unpack after download** overrides the global default and survives restart; queued automatic extraction respects a later Off choice.
+- Windows extraction and PAR2 tools run without console windows.
+
+## Previously in 1.0.9
 
 Desktop **Setup → User interface → Allow only one instance** is enabled by
 default, including for existing configurations. Opening NewsQueue again restores
@@ -154,7 +161,7 @@ Build the per-user installer:
 .\build-installer.ps1
 ```
 
-This writes `app/dist/NewsQueue-1.0.9-Setup.exe` and a `.sha256` checksum. The
+This writes `app/dist/NewsQueue-1.0.10-Setup.exe` and a `.sha256` checksum. The
 installer copies the app and tools to `%LOCALAPPDATA%\Programs\NewsQueue`,
 creates Start Menu and Desktop shortcuts, registers Add/Remove Programs, and
 includes an uninstaller. It does not need administrator rights.

@@ -1,6 +1,6 @@
 [package]
 name = "newsqueue-web"
-version = "1.0.9"
+version = "1.0.10"
 edition = "2024"
 description = "NewsQueue web UI: the egui front end compiled to WebAssembly, talking to newsqueue-server."
 

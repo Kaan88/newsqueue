@@ -7,7 +7,7 @@ import urllib.request
 
 NAME = 'newsqueue-release-smoke'
 KEY = 'isolated-container-release-test'
-IMAGE = 'newsqueue:1.0.9'
+IMAGE = 'newsqueue:1.0.10'
 
 def docker(*args):
     return subprocess.check_output(['docker', *args], text=True).strip()

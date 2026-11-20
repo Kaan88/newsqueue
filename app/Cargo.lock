@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "newsqueue"
-version = "1.0.9"
+version = "1.0.10"
 dependencies = [
  "chrono",
  "embed-resource",
@@ -1393,7 +1393,7 @@ dependencies = [
 
 [[package]]
 name = "newsqueue-core"
-version = "1.0.9"
+version = "1.0.10"
 dependencies = [
  "chrono",
  "crc32fast",
@@ -1408,7 +1408,7 @@ dependencies = [
 
 [[package]]
 name = "newsqueue-server"
-version = "1.0.9"
+version = "1.0.10"
 dependencies = [
  "ctrlc",
  "native-tls",
@@ -1420,7 +1420,7 @@ dependencies = [
 
 [[package]]
 name = "newsqueue-web"
-version = "1.0.9"
+version = "1.0.10"
 dependencies = [
  "eframe",
  "egui",

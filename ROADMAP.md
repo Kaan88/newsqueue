@@ -492,3 +492,8 @@ The remaining gaps need external data or are optional polish.
 - No new public release or Docker deployment in this pass.
 
 - Final review follow-ups: pending automatic unpack rechecks a later Off choice while explicit Unpack now retains priority; log/RSS selection follows text identity instead of shifting row indices. Added queued-extraction and advancing-log regressions. Local Windows executable and bundled web assets updated; saved JSON hashes unchanged.
+
+
+### Release 1.0.10 (2026-11-21)
+
+Packages the immediate multi-file startup, live connection progress, clipboard/context menus, persisted unpack overrides and hidden Windows tool fixes. Matching Windows, Linux Docker and web artifacts; existing Compose mounts and configuration retained during deployment.

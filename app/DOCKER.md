@@ -1,19 +1,19 @@
 # NewsQueue with Docker Compose
 
-Release **1.0.9** includes matching Windows, server and web builds. The prebuilt
+Release **1.0.10** includes matching Windows, server and web builds. The prebuilt
 container targets **Linux amd64** (x86-64 Linux hosts, or Docker Desktop using
 Linux containers).
 
 ## Start with the prebuilt image
 
 Install Docker Engine with the Compose plugin, or Docker Desktop. From the
-[1.0.9 release](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.9), download
+[1.0.10 release](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.10), download
 these files into a new directory:
 
-- `NewsQueue-1.0.9-linux-amd64.tar.gz`
+- `NewsQueue-1.0.10-linux-amd64.tar.gz`
 - `compose.yaml`
 - `env.example`
-- `NewsQueue-1.0.9-SHA256SUMS.txt`
+- `NewsQueue-1.0.10-SHA256SUMS.txt`
 
 On Linux/macOS, copy the environment template and generate a key:
 
@@ -39,7 +39,7 @@ Set `TZ` to your time zone, for example `Europe/Istanbul`.
 Load the image and start (the same commands work in PowerShell):
 
 ```sh
-docker load -i NewsQueue-1.0.9-linux-amd64.tar.gz
+docker load -i NewsQueue-1.0.10-linux-amd64.tar.gz
 docker compose up -d --no-build
 docker compose ps
 ```
@@ -91,11 +91,11 @@ the project network, while these host directories remain.
 
 ## Build from source instead
 
-Download `NewsQueue-1.0.9-source.zip` from the release and extract it.
+Download `NewsQueue-1.0.10-source.zip` from the release and extract it.
 It contains the matching desktop, server and web source.
 
 ```sh
-cd NewsQueue-1.0.9/app
+cd NewsQueue-1.0.10/app
 cp env.example .env
 # Edit .env as above.
 docker compose build
@@ -103,7 +103,7 @@ docker compose up -d
 ```
 
 Alternatively clone the repository and check out the immutable
-`v1.0.9` tag. The multi-stage Dockerfile compiles Rust and egui/WASM;
+`v1.0.10` tag. The multi-stage Dockerfile compiles Rust and egui/WASM;
 Rust is not needed on the host. Other Linux architectures require a source
 build and have not been validated for this release.
 
@@ -114,7 +114,7 @@ bundle and deployment files. Compare `sha256sum <file>` on Linux or
 `Get-FileHash <file> -Algorithm SHA256` in PowerShell against the sums file.
 The Windows installer has a separate SHA-256 checksum.
 
-`NewsQueue-1.0.9-web.zip` contains production static web files and the
+`NewsQueue-1.0.10-web.zip` contains production static web files and the
 Inter, IBM Plex and DejaVu font licenses. Serve its extracted directory with the matching
 `newsqueue-server --web <directory>`; it needs the API and will not work by
 opening `index.html` as a local file. The Windows downloads include this updated web UI too.
