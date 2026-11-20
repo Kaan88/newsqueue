@@ -6,14 +6,14 @@ A Rust Usenet downloader with a native Win32 desktop, a headless server and
 an egui/WASM web UI. The shared engine, queue and settings live in `app/`.
 Originally inspired by AltBinz, NewsQueue now follows its own product direction.
 
-The current release combines **Windows 1.0.8** with **server/web 1.0.8-web.1**.
+The current release is **1.0.10** for Windows, server and web.
 
 ## Download and run
 
-- **Windows x64:** use the [1.0.8 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.8).
-  These are the existing, tested native Compact release binaries, unchanged.
+- **Windows x64:** use the [1.0.10 installer or portable ZIP](https://github.com/Kaan88/newsqueue/releases/tag/v1.0.10).
+  The native Compact design retains its original Windows font.
 - **Docker / web UI:** use the Linux amd64 image archive and Compose files from
-  the same release. Follow the [Docker Compose guide](app/DOCKER.md) for setup,
+  the same release. Follow the [Docker Compose guide](https://github.com/Kaan88/newsqueue/blob/v1.0.10/app/DOCKER.md) for setup,
   authentication, persistent folders, updates and source builds.
 
 Quick start after downloading the image, `compose.yaml` and `env.example`:
@@ -21,7 +21,7 @@ Quick start after downloading the image, `compose.yaml` and `env.example`:
 ```sh
 cp env.example .env
 # Edit .env and replace NQ_API_KEY with a long random key.
-docker load -i NewsQueue-1.0.8-web.1-linux-amd64.tar.gz
+docker load -i NewsQueue-1.0.10-linux-amd64.tar.gz
 docker compose up -d --no-build
 ```
 
@@ -29,15 +29,68 @@ On PowerShell, replace `cp` with `Copy-Item`. Open **http://localhost:8480/**,
 sign in with your API key, and configure servers in **Tools → Options**.
 The image archive needs no registry account. The default port is loopback-only.
 
-The updated web UI restores **Caustica** alongside **Classic**, with independent
-**System / Light / Dark** preferences. It also fixes asynchronous server saves
-and preserves stored credentials when editing or removing server rows.
-Classic's layout and appearance remain intact. The existing Windows assets
-retain their originally bundled web UI; use the Docker build for the complete
-updated server/web pair.
+The web UI offers **Caustica** and **Classic**, with independent
+**System / Light / Dark** preferences. Windows includes the same web UI
+for its optional Web access feature.
 
-For the matching source, download `NewsQueue-1.0.8-web.1-source.zip` or check
-out `web-v1.0.8-1-release`. The original `v1.0.8` tag remains tied to the Windows build.
+For matching source, download `NewsQueue-1.0.10-source.zip` or check out `v1.0.10`.
+
+## New in 1.0.10
+
+- Named multi-file NZBs start transferring without first inspecting every file. Obfuscated jobs begin transferring prepared files while discovery continues. Connection rows show actual preparation, transfer, retry and waiting activity.
+- Web Ctrl+C and right-click copying for queue rows, individual files, history, PAR2, logs, RSS and connections.
+- Per-job **Unpack after download** overrides the global default and survives restart; queued automatic extraction respects a later Off choice.
+- Windows extraction and PAR2 tools run without console windows.
+
+## Controls and download behavior
+
+Desktop **Setup → User interface → Allow only one instance** is enabled by
+default, including for existing configurations. Opening NewsQueue again restores
+the running window and forwards NZB files to it. The setting applies on the next
+launch; separate configuration folders remain independent. The connections
+divider no longer grows the toolbar or progressively shrinks the queue.
+
+Desktop and web support custom speed caps in decimal MB/s, applied live
+across all download connections. Percentage limits and No limit remain available.
+The web connections divider is draggable and remembers its height in the browser.
+Caustica uses bundled Inter at 14 px; Classic retains its original font. Native
+controls retain the original Windows font and sizing. Both toolbars begin
+with Connect and expose the same common actions, including Speed. Desktop update
+checking is in About; desktop-only actions remain in menus.
+
+Hold the primary mouse button and drag over settings categories to switch pages.
+The web TLS checkbox now switches the standard ports 119/563 while preserving
+custom ports. Non-editable web surfaces use an arrow cursor.
+
+**Temporary folder:** this is currently a reserved setting, not an operational
+incomplete-download staging area. Partial payloads and `.nqpart` resume sidecars
+stay in each job's download folder. The Docker `/incomplete` mount is retained for
+compatibility. Custom speed caps are session controls, like percentage caps; the
+existing startup-speed setting still determines the limit after a restart.
+
+Download integrity has also been hardened: article sizes/ranges and CRCs are
+checked, advertised whole-file CRCs are verified when supplied, and resumed bytes
+are rechecked against saved range checksums. `.nqverified` receipts let completed
+files be checked before skipping them. Older ID-only `.nqpart` records cannot
+prove disk integrity, so their articles are downloaded again. Missing/corrupt
+articles remain incomplete and enter the configured PAR2 path.
+
+Queue/settings/history/statistics saves now replace files atomically. Cancelled
+workers finish before a replacement download can write to the same output, and
+direct-unpack cleanup waits for verified download completion.
+
+### Copying and automatic unpacking
+
+In the web UI, select a queue row or an expanded file and press **Ctrl+C**
+to copy its name. Right-click for copying names, details or the download
+folder. History, PAR2, log, RSS and connection rows also support copying.
+Text fields keep their normal editing shortcuts.
+
+**Unpack downloads by default** sets the global policy. A job's
+**Unpack after download** choice overrides that policy and survives restart.
+Turning it off also cancels a waiting automatic extraction. **Unpack now**
+is an explicit request and is kept even if automatic unpacking is later disabled.
+RAR, ZIP/7z and PAR2 tools run without console popups on Windows.
 
 ## Features
 
@@ -70,7 +123,7 @@ out `web-v1.0.8-1-release`. The original `v1.0.8` tag remains tied to the Window
 
 ## Build and test
 
-Run from `app/`:
+For the published build, check out `v1.0.10` first. Run from `app/`:
 
 ```powershell
 cargo build
@@ -80,10 +133,12 @@ cargo run -- --screenshot shots/now.png
 ```
 
 For all workspace packages, including web theme tests, use
-`cargo test --workspace -- --test-threads=1`. The latest theme/API pass has
-133 passing tests plus hidden browser visual and interaction checks; see
-[the detailed web QA report](app/web/QA_REPORT.md) for coverage and limits.
-Build the web UI on Windows with `app/web/build-web.ps1` (requires the
+`cargo test --workspace -- --test-threads=1`. The 1.0.10 release passed
+**162 workspace tests**, hidden desktop and browser checks, installer
+upgrade/uninstall verification, and Docker health, authentication and restart
+checks. See [the UI verification record](https://github.com/Kaan88/newsqueue/blob/v1.0.10/app/UI_POLISH_AUDIT.md)
+for coverage and limits.
+Build the web UI on Windows with `.\web\build-web.ps1` (requires the
 `wasm32-unknown-unknown` target and wasm-bindgen CLI 0.2.130), or use Docker's
 multi-stage build on Linux.
 
@@ -119,15 +174,15 @@ Build the per-user installer:
 .\build-installer.ps1
 ```
 
-This writes `app/dist/NewsQueue-1.0.8-Setup.exe` and a `.sha256` checksum. The
+This writes `app/dist/NewsQueue-1.0.10-Setup.exe` and a `.sha256` checksum. The
 installer copies the app and tools to `%LOCALAPPDATA%\Programs\NewsQueue`,
 creates Start Menu and Desktop shortcuts, registers Add/Remove Programs, and
 includes an uninstaller. It does not need administrator rights.
 
-Verify install and uninstall end to end (requires no existing NewsQueue install):
+Verify install and uninstall using an isolated test installation:
 
 ```powershell
-.\installer-test.ps1
+.\installer-test.ps1 -Hidden
 ```
 
 The release build uses the Windows GUI subsystem and does not open a console
@@ -149,9 +204,12 @@ Regenerate the golden UI screenshots:
 
 ## Configuration
 
-The app reads `app/newsqueue-settings.json`, `app/newsqueue-queue.json`,
-`app/newsqueue-history.json` and `app/newsqueue-stats.json`. They are created
-locally and ignored by git. Download history and transfer statistics are real
+Desktop settings, queue, history and statistics are stored in
+`newsqueue-settings.json`, `newsqueue-queue.json`, `newsqueue-history.json`
+and `newsqueue-stats.json` beside the installed executable. Development builds
+use `app/`; `NQ_CONFIG` can select a separate configuration folder. Docker uses
+`/config`, backed by the persistent host folder in Compose. These files are
+created locally and ignored by git. Download history and transfer statistics are real
 and persist across restarts; demo data is only used by `--screenshot`.
 Configure your Usenet server and RSS feeds in the app; do not commit
 credentials or feed API keys.
@@ -175,7 +233,7 @@ collection `Incomplete`, which then flows into the PAR2 check/repair stage.
 
 - `AGENTS.md` - commands, layout and gotchas for coding agents
 - `ROADMAP.md` - current priorities and verification status
-- `app/DOCKER.md` - Docker Compose installation and operations
+- [Docker Compose guide for 1.0.10](https://github.com/Kaan88/newsqueue/blob/v1.0.10/app/DOCKER.md) - installation and operations
 - `app/web/QA_REPORT.md` - theme, layout and functionality verification
 - `app/MECHANICS.md` - measured behaviour and function addresses from the
   original binary
