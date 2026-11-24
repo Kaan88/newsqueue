@@ -8,7 +8,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Build Linux amd64 image
         run: docker build --platform linux/amd64 -t newsqueue:1.0.8-web.1 app
       - name: Validate Compose and container
