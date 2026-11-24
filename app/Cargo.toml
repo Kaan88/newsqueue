@@ -20,7 +20,7 @@ native-tls = "0.2"
 ureq = { version = "2.12", default-features = false, features = ["native-tls", "gzip", "charset"] }
 
 [dependencies.windows]
-version = "0.61"
+version = "0.62"
 features = [
   "Win32_Foundation", "Win32_Graphics_Gdi", "Win32_Graphics_Dwm",
   "Win32_UI_Controls", "Win32_UI_Controls_Dialogs", "Win32_UI_HiDpi",
